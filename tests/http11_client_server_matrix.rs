@@ -2944,6 +2944,156 @@ fn server_cdn_loop_helper_rejects_malformed_values_without_losing_raw_headers() 
 }
 
 #[test]
+fn sync_client_and_server_exchange_x_forwarded_metadata_without_trust_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind X-Forwarded metadata server");
+  let addr = server
+    .local_addr()
+    .expect("X-Forwarded metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let forwarded_for = request
+          .x_forwarded_for()
+          .expect("X-Forwarded-For should parse")
+          .expect("X-Forwarded-For should be present");
+        let forwarded_host = request
+          .x_forwarded_host()
+          .expect("X-Forwarded-Host should parse")
+          .expect("X-Forwarded-Host should be present");
+        let forwarded_proto = request
+          .x_forwarded_proto()
+          .expect("X-Forwarded-Proto should parse")
+          .expect("X-Forwarded-Proto should be present");
+        observed_tx
+          .send((
+            request.header("X-Forwarded-For").map(str::to_string),
+            request.header("X-Forwarded-Host").map(str::to_string),
+            request.header("X-Forwarded-Proto").map(str::to_string),
+            forwarded_for
+              .nodes()
+              .iter()
+              .map(|node| (node.value().to_string(), node.is_unknown()))
+              .collect::<Vec<_>>(),
+            forwarded_host
+              .hosts()
+              .iter()
+              .map(|host| (host.host().to_string(), host.port().map(str::to_string)))
+              .collect::<Vec<_>>(),
+            forwarded_proto.schemes().to_vec(),
+          ))
+          .expect("send observed X-Forwarded metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve X-Forwarded metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/x-forwarded-metadata"))
+    .x_forwarded_for("192.0.2.60, unknown")
+    .expect("first X-Forwarded-For value should be accepted")
+    .x_forwarded_for("[2001:db8:cafe::17]")
+    .expect("second X-Forwarded-For value should be accepted")
+    .x_forwarded_host("example.test:443")
+    .expect("first X-Forwarded-Host value should be accepted")
+    .x_forwarded_host("[2001:db8::1]:8443")
+    .expect("second X-Forwarded-Host value should be accepted")
+    .x_forwarded_proto("https")
+    .expect("first X-Forwarded-Proto value should be accepted")
+    .x_forwarded_proto("http")
+    .expect("second X-Forwarded-Proto value should be accepted")
+    .emit()
+    .expect("X-Forwarded metadata request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  let (raw_for, raw_host, raw_proto, forwarded_for, forwarded_host, forwarded_proto) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe X-Forwarded metadata");
+  assert_eq!(
+    Some("192.0.2.60, unknown, [2001:db8:cafe::17]".to_string()),
+    raw_for
+  );
+  assert_eq!(
+    Some("example.test:443, [2001:db8::1]:8443".to_string()),
+    raw_host
+  );
+  assert_eq!(Some("https, http".to_string()), raw_proto);
+  assert_eq!(
+    vec![
+      ("192.0.2.60".to_string(), false),
+      ("unknown".to_string(), true),
+      ("[2001:db8:cafe::17]".to_string(), false),
+    ],
+    forwarded_for
+  );
+  assert_eq!(
+    vec![
+      ("example.test".to_string(), Some("443".to_string())),
+      ("[2001:db8::1]".to_string(), Some("8443".to_string())),
+    ],
+    forwarded_host
+  );
+  assert_eq!(
+    vec!["https".to_string(), "http".to_string()],
+    forwarded_proto
+  );
+  handle.join().expect("X-Forwarded metadata server thread");
+}
+
+#[test]
+fn server_x_forwarded_helpers_reject_malformed_values_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind malformed X-Forwarded metadata server");
+  let addr = server
+    .local_addr()
+    .expect("malformed X-Forwarded metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request.header("X-Forwarded-For").map(str::to_string),
+            request.header("X-Forwarded-Host").map(str::to_string),
+            request.header("X-Forwarded-Proto").map(str::to_string),
+            request.x_forwarded_for().is_err(),
+            request.x_forwarded_host().is_err(),
+            request.x_forwarded_proto().is_err(),
+          ))
+          .expect("send malformed X-Forwarded observation");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve malformed X-Forwarded request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed X-Forwarded request");
+  stream
+    .write_all(
+      b"GET /matrix/malformed-x-forwarded HTTP/1.1\r\nHost: example.test\r\nX-Forwarded-For: client.example\r\nX-Forwarded-Host: https://example.test\r\nX-Forwarded-Proto: https://\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed X-Forwarded request");
+
+  assert_eq!(
+    (
+      Some("client.example".to_string()),
+      Some("https://example.test".to_string()),
+      Some("https://".to_string()),
+      true,
+      true,
+      true,
+    ),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed X-Forwarded metadata"),
+  );
+  handle
+    .join()
+    .expect("malformed X-Forwarded metadata server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_authentication_metadata() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind authentication server");
@@ -3084,6 +3234,75 @@ fn sync_client_and_server_exchange_bounded_depth_metadata_without_policy() {
   assert_eq!(Some("infinity".to_string()), raw);
   assert_eq!(207, response.code());
   handle.join().expect("Depth server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_version_metadata_without_upgrade() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind sec websocket version server");
+  let addr = server
+    .local_addr()
+    .expect("sec websocket version server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .sec_websocket_version()
+            .expect("Sec-WebSocket-Version should parse")
+            .map(|versions| versions.header_value()),
+          request.header("Sec-WebSocket-Version").map(str::to_string),
+          request.header("Upgrade").map(str::to_string),
+          request.header("Connection").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket version metadata");
+        HttpResponse::new(400, "Bad Request")
+          .with_sec_websocket_version(["13"])
+          .expect("rejection Sec-WebSocket-Version should be accepted")
+      })
+      .expect("serve sec websocket version request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_version("12")
+    .expect("Sec-WebSocket-Version should be accepted")
+    .emit()
+    .expect("sec websocket version response should parse");
+
+  let (typed, raw, upgrade, connection) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket version metadata");
+  assert_eq!(Some("12".to_string()), typed);
+  assert_eq!(Some("12".to_string()), raw);
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Version metadata must not set an Upgrade field"
+  );
+  assert_ne!(
+    Some("Upgrade".to_string()),
+    connection,
+    "typed Sec-WebSocket-Version metadata must not set Connection: Upgrade"
+  );
+  assert_eq!(400, response.code());
+  let declared = response
+    .sec_websocket_version()
+    .expect("rejection Sec-WebSocket-Version should parse")
+    .expect("rejection Sec-WebSocket-Version should be present");
+  assert_eq!(declared.versions(), ["13"]);
+  assert!(declared.contains("13"));
+  assert_eq!(declared.header_value(), "13");
+  assert_eq!(response.header_value("Upgrade"), None);
+  assert_ne!(
+    response.header_value("Connection").map(String::as_str),
+    Some("Upgrade"),
+    "rejection Sec-WebSocket-Version must not emit Connection: Upgrade"
+  );
+  handle.join().expect("sec websocket version server thread");
 }
 
 #[test]

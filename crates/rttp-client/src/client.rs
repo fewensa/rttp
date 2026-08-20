@@ -32,6 +32,7 @@ use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
@@ -40,6 +41,9 @@ use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::trailer::Trailer;
 use rttp_protocol::upgrade::Upgrade;
 use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
+use rttp_protocol::x_forwarded_for::{XForwardedFor, MAX_X_FORWARDED_FOR_VALUE_BYTES};
+use rttp_protocol::x_forwarded_host::{XForwardedHost, MAX_X_FORWARDED_HOST_VALUE_BYTES};
+use rttp_protocol::x_forwarded_proto::{XForwardedProto, MAX_X_FORWARDED_PROTO_VALUE_BYTES};
 use std::io;
 
 #[derive(Debug)]
@@ -670,6 +674,87 @@ impl HttpClient {
     Ok(self)
   }
 
+  /// Append bounded `X-Forwarded-For` request metadata.
+  ///
+  /// This validates ordered IP and `unknown` node values and combines with any
+  /// existing validated field before a socket is opened. It only emits
+  /// caller-supplied metadata: it does not establish proxy trust, derive a
+  /// client address, or rewrite identity.
+  pub fn x_forwarded_for<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let forwarded_for = XForwardedFor::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("X-Forwarded-For"))
+    {
+      let combined = XForwardedFor::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_x_forwarded_for_header_value(combined)?;
+      header.replace(Header::new("X-Forwarded-For", value));
+    } else {
+      headers.push(Header::new(
+        "X-Forwarded-For",
+        bounded_x_forwarded_for_header_value(forwarded_for)?,
+      ));
+    }
+    Ok(self)
+  }
+
+  /// Append bounded `X-Forwarded-Host` request metadata.
+  ///
+  /// This validates ordered host authority values and combines with any
+  /// existing validated field before a socket is opened. It only emits
+  /// caller-supplied metadata: it does not establish proxy trust, change
+  /// virtual-host routing, or rewrite authority.
+  pub fn x_forwarded_host<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let forwarded_host = XForwardedHost::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("X-Forwarded-Host"))
+    {
+      let combined = XForwardedHost::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_x_forwarded_host_header_value(combined)?;
+      header.replace(Header::new("X-Forwarded-Host", value));
+    } else {
+      headers.push(Header::new(
+        "X-Forwarded-Host",
+        bounded_x_forwarded_host_header_value(forwarded_host)?,
+      ));
+    }
+    Ok(self)
+  }
+
+  /// Append bounded `X-Forwarded-Proto` request metadata.
+  ///
+  /// This validates ordered scheme tokens and combines with any existing
+  /// validated field before a socket is opened. It only emits caller-supplied
+  /// metadata: it does not establish proxy trust, upgrade requests, redirect
+  /// clients, or rewrite URL schemes.
+  pub fn x_forwarded_proto<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let forwarded_proto = XForwardedProto::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("X-Forwarded-Proto"))
+    {
+      let combined = XForwardedProto::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_x_forwarded_proto_header_value(combined)?;
+      header.replace(Header::new("X-Forwarded-Proto", value));
+    } else {
+      headers.push(Header::new(
+        "X-Forwarded-Proto",
+        bounded_x_forwarded_proto_header_value(forwarded_proto)?,
+      ));
+    }
+    Ok(self)
+  }
+
   /// Set a single bounded byte range request header, `Range: bytes=start-end`.
   pub fn range(&mut self, start: u64, end: u64) -> error::Result<&mut Self> {
     if start > end {
@@ -785,6 +870,23 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-WebSocket-Key",
       sec_websocket_key.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-WebSocket-Version` request metadata.
+  ///
+  /// This validates version tokens, duplicates, member count, canonical
+  /// descending order, and size bounds before connecting and replaces any
+  /// existing `Sec-WebSocket-Version` field. It does not perform a WebSocket
+  /// handshake, emit `Connection: Upgrade`, compute `Sec-WebSocket-Accept`,
+  /// negotiate versions, or switch protocols. Use `header` directly for
+  /// unusual values.
+  pub fn sec_websocket_version<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_version = SecWebSocketVersion::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Version",
+      sec_websocket_version.header_value(),
     )))
   }
 
@@ -1615,6 +1717,38 @@ fn bounded_cdn_loop_header_value(cdn_loop: CdnLoop) -> error::Result<String> {
   if value.len() > MAX_CDN_LOOP_VALUE_BYTES {
     return Err(error::builder_with_message(
       "CDN-Loop header value is too large",
+    ));
+  }
+  Ok(value)
+}
+
+fn bounded_x_forwarded_for_header_value(forwarded_for: XForwardedFor) -> error::Result<String> {
+  let value = forwarded_for.header_value();
+  if value.len() > MAX_X_FORWARDED_FOR_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "X-Forwarded-For header value is too large",
+    ));
+  }
+  Ok(value)
+}
+
+fn bounded_x_forwarded_host_header_value(forwarded_host: XForwardedHost) -> error::Result<String> {
+  let value = forwarded_host.header_value();
+  if value.len() > MAX_X_FORWARDED_HOST_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "X-Forwarded-Host header value is too large",
+    ));
+  }
+  Ok(value)
+}
+
+fn bounded_x_forwarded_proto_header_value(
+  forwarded_proto: XForwardedProto,
+) -> error::Result<String> {
+  let value = forwarded_proto.header_value();
+  if value.len() > MAX_X_FORWARDED_PROTO_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "X-Forwarded-Proto header value is too large",
     ));
   }
   Ok(value)

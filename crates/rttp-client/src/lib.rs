@@ -135,6 +135,9 @@ pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
+pub use rttp_protocol::sec_websocket_version::{
+  SecWebSocketVersion, SecWebSocketVersionParseError,
+};
 pub use rttp_protocol::timeout::{Timeout, TimeoutParseError, TimeoutType};
 pub use rttp_protocol::trace_context::{
   TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
@@ -142,6 +145,11 @@ pub use rttp_protocol::trace_context::{
 pub use rttp_protocol::upgrade_insecure_requests::{
   UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
+pub use rttp_protocol::x_forwarded_for::{
+  XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError,
+};
+pub use rttp_protocol::x_forwarded_host::{XForwardedHost, XForwardedHostParseError};
+pub use rttp_protocol::x_forwarded_proto::{XForwardedProto, XForwardedProtoParseError};
 
 mod client;
 mod config;

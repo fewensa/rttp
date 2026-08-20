@@ -15,13 +15,15 @@ use rttp::server::{
   HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
   HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
   HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
   HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
   HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
   HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
-  HttpUpgradeParseError,
+  HttpUpgradeParseError, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
+  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -138,6 +140,18 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp::Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let _: rttp::TimeoutParseError =
     rttp::Timeout::parse("Second-60, second-60").expect_err("duplicate Timeout should be rejected");
+  let x_forwarded_for: rttp::XForwardedFor =
+    rttp::XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
+  let _: rttp::XForwardedForParseError =
+    rttp::XForwardedFor::parse("client.example").expect_err("invalid X-Forwarded-For should fail");
+  let x_forwarded_host: rttp::XForwardedHost =
+    rttp::XForwardedHost::parse("example.test:443").expect("X-Forwarded-Host should parse");
+  let _: rttp::XForwardedHostParseError = rttp::XForwardedHost::parse("https://example.test")
+    .expect_err("invalid X-Forwarded-Host should fail");
+  let x_forwarded_proto: rttp::XForwardedProto =
+    rttp::XForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
+  let _: rttp::XForwardedProtoParseError =
+    rttp::XForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
   let memento_datetime: rttp::MementoDatetime =
     rttp_client::response::MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("Memento-Datetime should parse");
@@ -277,6 +291,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::SupportsLoadingModeParseError =
     rttp_client::response::SupportsLoadingMode::parse("?1")
       .expect_err("non-token should be rejected");
+  let sec_websocket_version: rttp::SecWebSocketVersion =
+    rttp_client::response::SecWebSocketVersion::parse("13")
+      .expect("Sec-WebSocket-Version should parse");
+  let _: rttp::SecWebSocketVersionParseError =
+    rttp_client::response::SecWebSocketVersion::parse("8, 13")
+      .expect_err("unordered Sec-WebSocket-Version should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let sec_purpose: rttp::SecPurpose =
@@ -333,6 +353,9 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(rttp::Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
+  assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
+  assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
+  assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
   assert_eq!(
     &[rttp::TimeoutType::Second(60), rttp::TimeoutType::Infinite],
     timeout.members()
@@ -446,6 +469,9 @@ fn compatibility_facade_exports_client_metadata_types() {
     supports_loading_mode.header_value(),
     "fenced-frame, credentialed-prerender"
   );
+  assert_eq!(sec_websocket_version.versions(), ["13"]);
+  assert!(sec_websocket_version.contains("13"));
+  assert_eq!(sec_websocket_version.header_value(), "13");
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
   assert_eq!(fetch_site.header_value(), "same-origin");
@@ -1068,6 +1094,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpIdempotencyKey::parse("charge-2026-08-19-9f3c").expect("Idempotency-Key should parse");
   let sec_websocket_key: HttpSecWebSocketKey =
     HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+  let sec_websocket_version: HttpSecWebSocketVersion =
+    HttpSecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version should parse");
   let sec_websocket_accept = HttpSecWebSocketAccept::derive_from_key(&sec_websocket_key);
   let baggage: HttpBaggage =
     HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
@@ -1080,10 +1108,24 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("CDN-Loop should parse");
   let _: HttpCdnLoopParseError =
     HttpCdnLoop::parse("cdn; trace").expect_err("valueless CDN-Loop parameter should be rejected");
+  let x_forwarded_for: HttpXForwardedFor =
+    HttpXForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
+  let _: HttpXForwardedForParseError =
+    HttpXForwardedFor::parse("client.example").expect_err("invalid X-Forwarded-For should fail");
+  let x_forwarded_host: HttpXForwardedHost =
+    HttpXForwardedHost::parse("example.test:443").expect("X-Forwarded-Host should parse");
+  let _: HttpXForwardedHostParseError = HttpXForwardedHost::parse("https://example.test")
+    .expect_err("invalid X-Forwarded-Host should fail");
+  let x_forwarded_proto: HttpXForwardedProto =
+    HttpXForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
+  let _: HttpXForwardedProtoParseError =
+    HttpXForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
   let _: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
     HttpIdempotencyKey::parse("key with space");
   let _: Result<HttpSecWebSocketKey, HttpSecWebSocketKeyParseError> =
     HttpSecWebSocketKey::parse("the sample nonce");
+  let _: Result<HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError> =
+    HttpSecWebSocketVersion::parse("8, 13");
   let _: Result<HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError> =
     HttpSecWebSocketAccept::parse("the accept value");
   let if_modified_since: HttpIfModifiedSince =
@@ -1200,6 +1242,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", sec_websocket_key.as_str());
   assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", sec_websocket_key.header_value());
   assert!(!format!("{sec_websocket_key:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert_eq!(sec_websocket_version.versions(), ["13"]);
+  assert!(sec_websocket_version.contains("13"));
+  assert_eq!(sec_websocket_version.header_value(), "13");
   assert_eq!(
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
     sec_websocket_accept.as_str()
@@ -1211,6 +1256,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert!(!format!("{baggage:?}").contains("acme"));
   assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
   assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
+  assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
+  assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
+  assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"

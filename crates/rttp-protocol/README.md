@@ -589,6 +589,26 @@ loops, reject requests because an identifier is already present, insert a
 local CDN identifier, forward the field automatically, or treat
 `CDN-Loop` as hop-by-hop.
 
+## X-Forwarded compatibility metadata
+
+`x_forwarded_for`, `x_forwarded_host`, and `x_forwarded_proto` parse
+compatibility forwarding metadata into ordered protocol-owned representations.
+`XForwardedFor` accepts IP node values and `unknown`; `XForwardedHost` accepts
+host authorities using the same authority validation as `Host`;
+`XForwardedProto` accepts URI scheme tokens. Repeated fields are combined in
+wire order.
+
+Each family bounds every field value, the combined raw field set including
+`", "` separator overhead, and the serialized output to 64 KiB. Each parsed
+member list is bounded to 256 entries. Empty members, malformed node,
+authority, or scheme values, forbidden control bytes, and bound violations are
+errors.
+
+These parsers report compatibility metadata only. They do not trust, rewrite,
+or enforce forwarded identity, select a client address, change authority or
+scheme, or choose trusted proxies. Applications that use these fields must
+choose and enforce their own trusted proxies.
+
 ## Authentication-Info
 
 `authentication_info` parses `#auth-param` lists from `Authentication-Info`
@@ -864,6 +884,25 @@ ASCII control bytes, obs-text, and oversized values are errors. The value is
 redacted from typed `Debug`, and parse errors describe only the header and
 validation category. These helpers do not perform an HTTP upgrade, generate a
 random nonce, or implement WebSocket frames.
+
+## Sec-WebSocket-Version
+
+`sec_websocket_version` parses one or more HTTP `Sec-WebSocket-Version` fields
+as an ordered list of RFC 6455 version tokens. Each field value and the
+combined raw or canonical serialized field set is bounded to 64 KiB, and the
+combined member count is bounded to 32. Surrounding SP and HTAB are trimmed as
+optional whitespace. Members follow the RFC 6455 section 4.3 `version`
+production: canonical decimal `0` through `299` without leading zeros.
+Repeated fields are combined in wire order. Multi-member lists must appear in
+numeric descending order, matching the common rejection response shape
+`13, 8, 7`. Empty members, non-decimal tokens, leading-zero multi-digit
+tokens, values outside the RFC production, duplicates, unordered lists,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text),
+over-limit member counts, and oversized fields are errors. This parser
+reports declared request or response metadata only; it does not perform a
+WebSocket handshake, emit `Connection: Upgrade`, compute
+`Sec-WebSocket-Accept`, negotiate versions, switch protocols, or implement
+WebSocket frames.
 
 ## Upgrade-Insecure-Requests
 

@@ -31,6 +31,9 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/trace_context.rs",
     "tests/baggage.rs",
     "tests/cdn_loop.rs",
+    "tests/x_forwarded_for.rs",
+    "tests/x_forwarded_host.rs",
+    "tests/x_forwarded_proto.rs",
     "tests/expect.rs",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
@@ -52,6 +55,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/sec_gpc.rs",
     "tests/sec_websocket_accept.rs",
     "tests/sec_websocket_key.rs",
+    "tests/sec_websocket_version.rs",
     "tests/service_worker_allowed.rs",
   ] {
     assert!(

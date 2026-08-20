@@ -87,6 +87,10 @@ pub use rttp_protocol::sec_websocket_key::{
   SecWebSocketKey as HttpSecWebSocketKey,
   SecWebSocketKeyParseError as HttpSecWebSocketKeyParseError,
 };
+pub use rttp_protocol::sec_websocket_version::{
+  SecWebSocketVersion as HttpSecWebSocketVersion,
+  SecWebSocketVersionParseError as HttpSecWebSocketVersionParseError,
+};
 pub use rttp_protocol::signature::{
   Signature as HttpSignature, SignatureEntry as HttpSignatureEntry,
   SignatureParseError as HttpSignatureParseError,
@@ -138,6 +142,18 @@ pub use rttp_protocol::want_content_digest::{
 pub use rttp_protocol::want_repr_digest::{
   WantReprDigest as HttpWantReprDigest, WantReprDigestEntry as HttpWantReprDigestEntry,
   WantReprDigestParseError as HttpWantReprDigestParseError,
+};
+pub use rttp_protocol::x_forwarded_for::{
+  XForwardedFor as HttpXForwardedFor, XForwardedForNode as HttpXForwardedForNode,
+  XForwardedForNodeKind as HttpXForwardedForNodeKind,
+  XForwardedForParseError as HttpXForwardedForParseError,
+};
+pub use rttp_protocol::x_forwarded_host::{
+  XForwardedHost as HttpXForwardedHost, XForwardedHostParseError as HttpXForwardedHostParseError,
+};
+pub use rttp_protocol::x_forwarded_proto::{
+  XForwardedProto as HttpXForwardedProto,
+  XForwardedProtoParseError as HttpXForwardedProtoParseError,
 };
 
 pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
@@ -570,6 +586,19 @@ impl Request {
     HttpSecWebSocketKey::parse_values(values).map(Some)
   }
 
+  /// Parses bounded `Sec-WebSocket-Version` request metadata without
+  /// negotiating versions or switching protocols. Malformed fields return a
+  /// parser error while raw headers remain available.
+  pub fn sec_websocket_version(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketVersion>, HttpSecWebSocketVersionParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Version").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketVersion::parse_values(values).map(Some)
+  }
+
   /// Parses received W3C `traceparent` request metadata without creating
   /// identifiers, deciding sampling, or configuring propagation.
   pub fn traceparent(&self) -> Result<Option<HttpTraceParent>, HttpTraceParentParseError> {
@@ -814,6 +843,40 @@ impl Request {
       return Ok(None);
     }
     HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-For` request metadata without applying a
+  /// trusted-proxy policy, deriving identity, or rewriting request addresses.
+  pub fn x_forwarded_for(&self) -> Result<Option<HttpXForwardedFor>, HttpXForwardedForParseError> {
+    let values: Vec<&str> = self.headers_named("X-Forwarded-For").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedFor::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Host` request metadata without applying a
+  /// trusted-proxy policy, changing routing, or rewriting request authority.
+  pub fn x_forwarded_host(
+    &self,
+  ) -> Result<Option<HttpXForwardedHost>, HttpXForwardedHostParseError> {
+    let values: Vec<&str> = self.headers_named("X-Forwarded-Host").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedHost::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Proto` request metadata without applying a
+  /// trusted-proxy policy, upgrading, redirecting, or rewriting schemes.
+  pub fn x_forwarded_proto(
+    &self,
+  ) -> Result<Option<HttpXForwardedProto>, HttpXForwardedProtoParseError> {
+    let values: Vec<&str> = self.headers_named("X-Forwarded-Proto").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedProto::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
@@ -2338,6 +2401,24 @@ impl HttpRequest {
     HttpSecWebSocketKey::parse_values(values).map(Some)
   }
 
+  /// Parses bounded `Sec-WebSocket-Version` request metadata without
+  /// negotiating versions or switching protocols. Malformed fields return a
+  /// parser error while raw headers remain available.
+  pub fn sec_websocket_version(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketVersion>, HttpSecWebSocketVersionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Version"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketVersion::parse_values(values).map(Some)
+  }
+
   /// Parses received W3C `traceparent` request metadata without creating
   /// identifiers, deciding sampling, or configuring propagation.
   pub fn traceparent(&self) -> Result<Option<HttpTraceParent>, HttpTraceParentParseError> {
@@ -2817,6 +2898,55 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-For` request metadata without applying a
+  /// trusted-proxy policy, deriving identity, or rewriting request addresses.
+  pub fn x_forwarded_for(&self) -> Result<Option<HttpXForwardedFor>, HttpXForwardedForParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Forwarded-For"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedFor::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Host` request metadata without applying a
+  /// trusted-proxy policy, changing routing, or rewriting request authority.
+  pub fn x_forwarded_host(
+    &self,
+  ) -> Result<Option<HttpXForwardedHost>, HttpXForwardedHostParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Forwarded-Host"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedHost::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Proto` request metadata without applying a
+  /// trusted-proxy policy, upgrading, redirecting, or rewriting schemes.
+  pub fn x_forwarded_proto(
+    &self,
+  ) -> Result<Option<HttpXForwardedProto>, HttpXForwardedProtoParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Forwarded-Proto"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedProto::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {

@@ -29,18 +29,20 @@ pub use rttp_client::response::{
   OriginTrialParseError, OriginTrials, PermissionsPolicy, PermissionsPolicyAllowlist,
   PermissionsPolicyAllowlistMember, PermissionsPolicyDirective, PermissionsPolicyParseError,
   Pragma, PragmaParseError, ReprDigest, SecWebSocketAccept, SecWebSocketAcceptParseError,
-  ServiceWorkerAllowed, ServiceWorkerAllowedParseError, SpeculationRules,
-  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  SupportsLoadingMode, SupportsLoadingModeParseError, Upgrade, UpgradeParseError,
-  WantContentDigest, WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge,
-  WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  SecWebSocketVersion, SecWebSocketVersionParseError, ServiceWorkerAllowed,
+  ServiceWorkerAllowedParseError, SpeculationRules, SpeculationRulesParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
+  SupportsLoadingModeParseError, Upgrade, UpgradeParseError, WantContentDigest, WantReprDigest,
+  WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, SecFetchDest,
   SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose, Timeout, TimeoutParseError, TimeoutType,
   TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
+  XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError, XForwardedHost,
+  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 
 impl Http {

@@ -759,6 +759,28 @@ inspection. The derived value for the RFC example key
 These helpers parse and emit handshake metadata only. They do not perform an
 HTTP upgrade, generate a random nonce, or implement WebSocket frames.
 
+## Sec-WebSocket-Version request and response metadata
+
+Handlers can call `Request::sec_websocket_version()` and
+`HttpRequest::sec_websocket_version()` to observe bounded typed
+`Sec-WebSocket-Version` request metadata through the shared protocol
+`HttpSecWebSocketVersion` type. Absent fields return `Ok(None)`.
+`HttpResponse::with_sec_websocket_version(versions)` declares validated
+response metadata that replaces attached same-name fields, and
+`HttpResponse::sec_websocket_version()` parses attached response fields.
+Recognized values are RFC 6455 version tokens (`0` through `299` without
+leading zeros) in numeric descending order, such as `13` or `13, 8, 7`.
+Multiple fields are combined in wire order, each field value and the combined
+raw or canonical serialized field set is bounded to 64 KiB, and the combined
+member count is bounded to 32. Empty members, non-decimal tokens, leading-zero
+multi-digit tokens, duplicates, unordered lists, control-byte values, and
+bound violations return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw fields.
+
+These helpers declare and parse metadata only. They do not perform a
+WebSocket handshake, emit `Connection: Upgrade` or `Upgrade: websocket`,
+compute `Sec-WebSocket-Accept`, negotiate versions, or switch protocols.
+
 ## Pragma request and response metadata
 
 Handlers can call `Request::pragma()` and `HttpRequest::pragma()` to observe
@@ -832,6 +854,27 @@ wire order, and repeated CDN identifiers are valid loop-visible metadata.
 These helpers expose loop metadata only; they do not detect or break loops,
 reject requests because an identifier is already present, or forward the
 field automatically.
+
+## X-Forwarded compatibility metadata
+
+Handlers can call `Request::x_forwarded_for()`, `x_forwarded_host()`, and
+`x_forwarded_proto()` plus the matching `HttpRequest` helpers to observe
+bounded compatibility forwarding metadata through shared protocol types.
+Absent fields return `Ok(None)`. Malformed, oversized, empty-member, or
+over-limit values return parser errors while raw request headers remain
+available.
+
+`HttpXForwardedFor` preserves ordered IP node values and `unknown`;
+`HttpXForwardedHost` preserves ordered host authorities; and
+`HttpXForwardedProto` preserves ordered URI scheme tokens. Each field family
+is bounded to 64 KiB per field value, 64 KiB for the combined raw field set
+including `", "` separator overhead, 64 KiB for serialized output, and 256
+members. Repeated fields are combined in wire order.
+
+These helpers expose compatibility metadata only. RTTP does not trust,
+rewrite, or enforce forwarded identity, select a client address, change
+routing, redirect, upgrade, or choose a trusted proxy set. Applications that
+use these fields must choose and enforce their own trusted proxies.
 
 ## Conditional HTTP-date request metadata
 
