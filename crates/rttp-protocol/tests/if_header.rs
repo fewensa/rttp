@@ -165,6 +165,7 @@ fn if_header_rejects_empty_and_unterminated_values() {
     "( )",
     "<http://example.test/src>",
     "<http://example.test/src> ()",
+    "<http://example.test/src> <http://example.test/dst> (<a:b>)",
     "(",
     "(<a:b>",
     "(<a:b>) (",

@@ -269,6 +269,11 @@ fn parse_if_value(value: &str) -> Result<(bool, Vec<IfList>), IfParseError> {
         if !tagged {
           return Err(invalid_value());
         }
+        if tag_needs_list {
+          return Err(IfParseError::new(
+            "If resource tag must be followed by a condition list",
+          ));
+        }
         let tag = parse_resource_tag(value, &mut position)?;
         pending_tag = Some(tag);
         tag_needs_list = true;
