@@ -78,6 +78,7 @@ pub mod lock_token;
 pub mod max_forwards;
 mod media_type;
 pub mod memento_datetime;
+pub mod negotiate;
 pub mod nel;
 pub mod no_vary_search;
 pub mod origin;

@@ -726,6 +726,95 @@ fn a_im_helpers_reject_invalid_members_before_connecting() {
 }
 
 #[test]
+fn negotiate_helpers_emit_validated_directives() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("Trans, 1.0, feature-x=preview, *")
+      .expect("Negotiate directives should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("trans, 1.0, feature-x=preview, *"),
+    header_value(&request, "Negotiate")
+  );
+}
+
+#[test]
+fn negotiate_helpers_replace_existing_fields_with_canonical_values() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("1.0")
+      .expect("first Negotiate value should be accepted")
+      .negotiate("vlist, 2.5")
+      .expect("replacement Negotiate value should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("vlist, 2.5"), header_value(&request, "Negotiate"));
+}
+
+#[test]
+fn negotiate_helpers_reject_invalid_directives_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("trans, TRANS")
+      .expect_err("duplicate directives should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Negotiate helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("1.0=value")
+      .expect_err("valued version should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "valued Negotiate version should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let oversized = format!("feature-x={}", "a".repeat(64 * 1024 + 1));
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate(&oversized)
+      .expect_err("oversized Negotiate value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Negotiate value should not open a socket"
+  );
+}
+
+#[test]
 fn accept_encoding_helpers_emit_validated_codings_and_quality_values() {
   let request = capture_request(|base_url| {
     client()

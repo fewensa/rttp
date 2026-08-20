@@ -53,6 +53,7 @@ use rttp_protocol::location::Location;
 use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::memento_datetime::MementoDatetime;
+use rttp_protocol::negotiate::{Negotiate, NegotiateDirective};
 use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
@@ -298,6 +299,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
   let a_im = AIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
+  let negotiate =
+    Negotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
   let baggage =
     Baggage::parse("tenant=acme;source=gateway,release=2026-08-19").expect("baggage should parse");
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
@@ -622,6 +625,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(a_im.members()[0].token(), "diffe");
   assert_eq!(a_im.members()[1].quality(), 300);
   assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
+  assert_eq!(negotiate.members()[0], NegotiateDirective::Trans);
+  assert_eq!(negotiate.members()[3], NegotiateDirective::Any);
+  assert_eq!("trans, 1.0, feature-x=preview, *", negotiate.header_value());
   assert_eq!(2, baggage.members().len());
   assert_eq!("tenant", baggage.members()[0].key());
   assert_eq!("acme", baggage.members()[0].value());

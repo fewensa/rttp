@@ -84,6 +84,10 @@ pub use rttp_protocol::lock_token::{
 pub use rttp_protocol::max_forwards::{
   MaxForwards as HttpMaxForwards, MaxForwardsParseError as HttpMaxForwardsParseError,
 };
+pub use rttp_protocol::negotiate::{
+  Negotiate as HttpNegotiate, NegotiateDirective as HttpNegotiateDirective,
+  NegotiateParseError as HttpNegotiateParseError,
+};
 pub use rttp_protocol::overwrite::{
   Overwrite as HttpOverwrite, OverwriteParseError as HttpOverwriteParseError,
 };
@@ -621,6 +625,17 @@ impl Request {
       return Ok(None);
     }
     HttpTimeout::parse_values(values).map(Some)
+  }
+
+  /// Parses received RFC 2295 `Negotiate` request metadata without selecting
+  /// a variant, running transparent content negotiation, or changing cache
+  /// selection.
+  pub fn negotiate(&self) -> Result<Option<HttpNegotiate>, HttpNegotiateParseError> {
+    let values: Vec<&str> = self.headers_named("Negotiate").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpNegotiate::parse_values(values).map(Some)
   }
 
   /// Parses received WebDAV `Overwrite` request metadata without overwriting
@@ -2532,6 +2547,22 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpTimeout::parse_values(values).map(Some)
+  }
+
+  /// Parses received RFC 2295 `Negotiate` request metadata without selecting
+  /// a variant, running transparent content negotiation, or changing cache
+  /// selection.
+  pub fn negotiate(&self) -> Result<Option<HttpNegotiate>, HttpNegotiateParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Negotiate"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpNegotiate::parse_values(values).map(Some)
   }
 
   /// Parses received WebDAV `Overwrite` request metadata without overwriting

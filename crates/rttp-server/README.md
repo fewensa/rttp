@@ -136,6 +136,24 @@ continue to expose the original request.
 These helpers parse request metadata only. They do not select a preferred
 instance manipulation or apply delta encodings.
 
+## Negotiate request metadata
+
+Handlers can call `Request::negotiate()` and `HttpRequest::negotiate()` to
+observe bounded typed RFC 2295 `Negotiate` request metadata through the
+shared `rttp-protocol` primitive. The helpers combine case-insensitive
+fields in wire order into `HttpNegotiate`. Each `HttpNegotiateDirective` is a
+`trans`, `vlist`, `guess-small`, or `*` flag, a `major.minor` remote variant
+selection algorithm version, or a `token[=token]` extension. The shared
+protocol type is the authority for token, version, feature value, duplicate,
+member-count, and size validation. Each field value and the combined raw
+field set are limited to 64 KiB, and the combined list is limited to 32
+members. Absent metadata returns `Ok(None)`. Malformed, oversized, duplicate,
+empty, or over-limit values return a parse error while `Request::header()`
+and `Request::body()` continue to expose the original request.
+
+These helpers parse request metadata only. They do not select a variant, run
+transparent content negotiation, or change cache selection.
+
 ## Accept-Encoding request metadata
 
 Handlers can call `Request::accept_encoding()` and

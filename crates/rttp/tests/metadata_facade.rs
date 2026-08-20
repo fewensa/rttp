@@ -11,11 +11,12 @@ use rttp::server::{
   HttpDepthParseError, HttpDestination, HttpDestinationParseError, HttpEntityTag, HttpExpectations,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfScheduleTagMatch,
   HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError,
-  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSaveData, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
+  HttpNegotiateDirective, HttpNegotiateParseError, HttpNel, HttpOriginTrialParseError,
+  HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError,
+  HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSaveData,
+  HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
   HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
@@ -363,6 +364,11 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp::AIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
   let _: &rttp::AImMember = &a_im.members()[0];
   let _: Option<&rttp::AImParameter> = a_im.members()[1].parameters().first();
+  let negotiate: rttp::Negotiate =
+    rttp::Negotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
+  let _: rttp::NegotiateParseError =
+    rttp::Negotiate::parse("trans, TRANS").expect_err("duplicate Negotiate should be rejected");
+  let _: &rttp::NegotiateDirective = &negotiate.members()[0];
   let baggage: rttp::Baggage =
     rttp_client::Baggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
   let _: rttp::BaggageParseError = rttp_client::Baggage::parse("tenant=1,tenant=2")
@@ -411,6 +417,9 @@ fn compatibility_facade_exports_client_metadata_types() {
     "gzip, br;q=0.8, identity;q=0"
   );
   assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
+  assert_eq!(negotiate.members()[0], rttp::NegotiateDirective::Trans);
+  assert_eq!(negotiate.members()[3], rttp::NegotiateDirective::Any);
+  assert_eq!("trans, 1.0, feature-x=preview, *", negotiate.header_value());
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
@@ -1416,6 +1425,75 @@ fn client_a_im_helpers_parse_through_shared_server_type() {
 
 #[test]
 #[cfg(feature = "client")]
+fn client_negotiate_helpers_parse_through_shared_server_type() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .negotiate("Trans, 1.0, feature-x=preview, *")
+    .expect("Negotiate directives should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle.join().expect("Negotiate capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("trans, 1.0, feature-x=preview, *"),
+    header_value(&captured_request_text, "Negotiate")
+  );
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let negotiate: rttp::Negotiate = server_request
+    .negotiate()
+    .expect("server Negotiate should parse")
+    .expect("server Negotiate should be present");
+
+  assert_eq!(negotiate.len(), 4);
+  assert_eq!(negotiate.members()[0], rttp::NegotiateDirective::Trans);
+  assert_eq!(
+    negotiate.members()[1],
+    rttp::NegotiateDirective::RvsaVersion { major: 1, minor: 0 }
+  );
+  assert_eq!(
+    negotiate.members()[2],
+    rttp::NegotiateDirective::Extension {
+      name: "feature-x".to_owned(),
+      value: Some("preview".to_owned()),
+    }
+  );
+  assert_eq!(negotiate.members()[3], rttp::NegotiateDirective::Any);
+  assert_eq!(negotiate.header_value(), "trans, 1.0, feature-x=preview, *");
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nNegotiate: trans, TRANS\r\n\r\n",
+  )
+  .expect("malformed Negotiate request should still parse");
+  assert!(
+    malformed.negotiate().is_err(),
+    "duplicate Negotiate directives must fail closed"
+  );
+  assert_eq!(malformed.header("Negotiate"), Some("trans, TRANS"));
+
+  assert!(
+    rttp::Negotiate::parse(format!("feature-x={}", "a".repeat(64 * 1024 + 1))).is_err(),
+    "oversized Negotiate values must fail closed"
+  );
+  let too_many = (0..33)
+    .map(|index| format!("feature-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(
+    rttp::server::HttpNegotiate::parse(too_many).is_err(),
+    "more than 32 Negotiate members must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn client_accept_encoding_helpers_parse_through_shared_server_type() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
@@ -1488,6 +1566,11 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpAIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
   let _: HttpAImParseError =
     HttpAIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
+  let negotiate: HttpNegotiate =
+    HttpNegotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
+  let _: HttpNegotiateParseError =
+    HttpNegotiate::parse("trans, TRANS").expect_err("duplicate Negotiate should be rejected");
+  let _: HttpNegotiateDirective = negotiate.members()[0].clone();
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5")
       .expect("Accept-Charset should parse");
@@ -1673,6 +1756,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
+  assert_eq!(negotiate.members()[0], HttpNegotiateDirective::Trans);
+  assert_eq!(negotiate.members()[3], HttpNegotiateDirective::Any);
+  assert_eq!("trans, 1.0, feature-x=preview, *", negotiate.header_value());
   assert_eq!(accept_charsets.charsets()[0].charset(), "utf-8");
   assert_eq!(accept_charsets.charsets()[1].quality(), 500);
   assert_eq!(accept_charsets.header_value(), "utf-8, iso-8859-1;q=0.5");
