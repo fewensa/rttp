@@ -20,6 +20,8 @@ use rttp::server::{
   HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
   HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
   HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -125,6 +127,18 @@ fn compatibility_facade_exports_client_metadata_types() {
   let depth: rttp::Depth = rttp::Depth::parse("infinity").expect("Depth should parse");
   let _: rttp::DepthParseError =
     rttp::Depth::parse("2").expect_err("malformed Depth should be rejected");
+  let x_forwarded_for: rttp::XForwardedFor =
+    rttp::XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
+  let _: rttp::XForwardedForParseError =
+    rttp::XForwardedFor::parse("client.example").expect_err("invalid X-Forwarded-For should fail");
+  let x_forwarded_host: rttp::XForwardedHost =
+    rttp::XForwardedHost::parse("example.test:443").expect("X-Forwarded-Host should parse");
+  let _: rttp::XForwardedHostParseError = rttp::XForwardedHost::parse("https://example.test")
+    .expect_err("invalid X-Forwarded-Host should fail");
+  let x_forwarded_proto: rttp::XForwardedProto =
+    rttp::XForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
+  let _: rttp::XForwardedProtoParseError =
+    rttp::XForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
   let memento_datetime: rttp::MementoDatetime =
     rttp_client::response::MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("Memento-Datetime should parse");
@@ -308,6 +322,9 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(rttp::Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
+  assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
+  assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
+  assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -975,6 +992,18 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("CDN-Loop should parse");
   let _: HttpCdnLoopParseError =
     HttpCdnLoop::parse("cdn; trace").expect_err("valueless CDN-Loop parameter should be rejected");
+  let x_forwarded_for: HttpXForwardedFor =
+    HttpXForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
+  let _: HttpXForwardedForParseError =
+    HttpXForwardedFor::parse("client.example").expect_err("invalid X-Forwarded-For should fail");
+  let x_forwarded_host: HttpXForwardedHost =
+    HttpXForwardedHost::parse("example.test:443").expect("X-Forwarded-Host should parse");
+  let _: HttpXForwardedHostParseError = HttpXForwardedHost::parse("https://example.test")
+    .expect_err("invalid X-Forwarded-Host should fail");
+  let x_forwarded_proto: HttpXForwardedProto =
+    HttpXForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
+  let _: HttpXForwardedProtoParseError =
+    HttpXForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
   let _: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
     HttpIdempotencyKey::parse("key with space");
   let _: Result<HttpSecWebSocketKey, HttpSecWebSocketKeyParseError> =
@@ -1092,6 +1121,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert!(!format!("{baggage:?}").contains("acme"));
   assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
   assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
+  assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
+  assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
+  assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"

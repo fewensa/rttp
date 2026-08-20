@@ -32,7 +32,9 @@ use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, HttpClient,
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose,
   TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
-  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
+  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, XForwardedFor,
+  XForwardedForParseError, XForwardedHost, XForwardedHostParseError, XForwardedProto,
+  XForwardedProtoParseError,
 };
 use rttp_protocol::expect::Expect;
 use rttp_test_support as support;
@@ -85,6 +87,17 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
   let depth = Depth::parse("infinity").expect("Depth should parse");
   let _: DepthParseError = Depth::parse("2").expect_err("malformed Depth should be rejected");
+  let x_forwarded_for =
+    XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
+  let _: XForwardedForParseError =
+    XForwardedFor::parse("client.example").expect_err("invalid X-Forwarded-For should fail");
+  let x_forwarded_host =
+    XForwardedHost::parse("example.test:443").expect("X-Forwarded-Host should parse");
+  let _: XForwardedHostParseError = XForwardedHost::parse("https://example.test")
+    .expect_err("invalid X-Forwarded-Host should fail");
+  let x_forwarded_proto = XForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
+  let _: XForwardedProtoParseError =
+    XForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
   let _: DeprecationParseError =
     Deprecation::parse("true").expect_err("historical Deprecation token should be rejected");
   let content_security_policy =
@@ -284,6 +297,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
+  assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
+  assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
+  assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"

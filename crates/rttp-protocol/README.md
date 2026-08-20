@@ -577,6 +577,26 @@ loops, reject requests because an identifier is already present, insert a
 local CDN identifier, forward the field automatically, or treat
 `CDN-Loop` as hop-by-hop.
 
+## X-Forwarded compatibility metadata
+
+`x_forwarded_for`, `x_forwarded_host`, and `x_forwarded_proto` parse
+compatibility forwarding metadata into ordered protocol-owned representations.
+`XForwardedFor` accepts IP node values and `unknown`; `XForwardedHost` accepts
+host authorities using the same authority validation as `Host`;
+`XForwardedProto` accepts URI scheme tokens. Repeated fields are combined in
+wire order.
+
+Each family bounds every field value, the combined raw field set including
+`", "` separator overhead, and the serialized output to 64 KiB. Each parsed
+member list is bounded to 256 entries. Empty members, malformed node,
+authority, or scheme values, forbidden control bytes, and bound violations are
+errors.
+
+These parsers report compatibility metadata only. They do not trust, rewrite,
+or enforce forwarded identity, select a client address, change authority or
+scheme, or choose trusted proxies. Applications that use these fields must
+choose and enforce their own trusted proxies.
+
 ## Authentication-Info
 
 `authentication_info` parses `#auth-param` lists from `Authentication-Info`

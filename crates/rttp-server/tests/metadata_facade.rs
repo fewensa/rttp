@@ -35,7 +35,9 @@ use rttp_server::server::{
   HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
   HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
+  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -149,6 +151,18 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("CDN-Loop should parse");
   let _: HttpCdnLoopParseError =
     HttpCdnLoop::parse("cdn; trace").expect_err("valueless CDN-Loop parameter should be rejected");
+  let x_forwarded_for: HttpXForwardedFor =
+    HttpXForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
+  let _: HttpXForwardedForParseError =
+    HttpXForwardedFor::parse("client.example").expect_err("invalid X-Forwarded-For should fail");
+  let x_forwarded_host: HttpXForwardedHost =
+    HttpXForwardedHost::parse("example.test:443").expect("X-Forwarded-Host should parse");
+  let _: HttpXForwardedHostParseError = HttpXForwardedHost::parse("https://example.test")
+    .expect_err("invalid X-Forwarded-Host should fail");
+  let x_forwarded_proto: HttpXForwardedProto =
+    HttpXForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
+  let _: HttpXForwardedProtoParseError =
+    HttpXForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
   let content_range = HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
   let content_range_error: Result<HttpContentRange, HttpContentRangeParseError> =
     HttpContentRange::parse("bytes */*");
@@ -321,6 +335,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
   assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
+  assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
+  assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
+  assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
   assert_eq!(report_only_policy.header_value(), "require-corp");
   assert_eq!(
     HttpCrossOriginOpenerPolicy::SameOrigin,
