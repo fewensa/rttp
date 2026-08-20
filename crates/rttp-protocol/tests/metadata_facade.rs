@@ -45,10 +45,12 @@ use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
 use rttp_protocol::idempotency_key::IdempotencyKey;
 use rttp_protocol::if_modified_since::IfModifiedSince;
+use rttp_protocol::if_schedule_tag_match::IfScheduleTagMatch;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
+use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::nel::Nel;
@@ -144,6 +146,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let destination = Destination::parse("https://dav.example.test/archive/report.txt")
     .expect("Destination should parse");
   let depth = Depth::parse("infinity").expect("Depth should parse");
+  let lock_token = LockToken::parse("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+    .expect("Lock-Token metadata should parse");
   let timeout = Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let overwrite = Overwrite::parse("F").expect("Overwrite should parse");
   let _: OverwriteParseError =
@@ -163,6 +167,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect_err("multi-token Sec-WebSocket-Protocol selection should be rejected");
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
+  let if_schedule_tag_match =
+    IfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
+  let if_schedule_tag_match_weak =
+    IfScheduleTagMatch::parse("W/\"sched-17\"").expect("weak If-Schedule-Tag-Match should parse");
   let if_unmodified_since = IfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Unmodified-Since should parse");
   let memento_datetime =
@@ -381,6 +389,15 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert_eq!(
+    lock_token.as_str(),
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"
+  );
+  assert_eq!(
+    lock_token.header_value(),
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"
+  );
+  assert!(!format!("{lock_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+  assert_eq!(
     &[TimeoutType::Second(60), TimeoutType::Infinite],
     timeout.members()
   );
@@ -411,6 +428,16 @@ fn protocol_exports_representative_bounded_metadata_types() {
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
+  assert_eq!(
+    if_schedule_tag_match.entity_tag().header_value(),
+    "\"sched-17\""
+  );
+  assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
+  assert!(!if_schedule_tag_match.is_weak());
+  assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
+  assert_eq!(if_schedule_tag_match_weak.opaque_tag(), "sched-17");
+  assert!(if_schedule_tag_match_weak.is_weak());
+  assert_eq!(if_schedule_tag_match_weak.header_value(), "W/\"sched-17\"");
   assert_eq!(
     if_unmodified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"

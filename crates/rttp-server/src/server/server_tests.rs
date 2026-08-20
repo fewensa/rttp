@@ -3425,6 +3425,104 @@ fn request_depth_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_lock_token_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"UNLOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.lock_token().expect("missing value should be valid")
+  );
+
+  for value in [
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    "<http://example.test/locks/1>",
+    "<urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00>",
+  ] {
+    let valid = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: {value}\r\n\r\n")
+        .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .lock_token()
+      .expect("value should parse")
+      .expect("Lock-Token should be present");
+    assert_eq!(value, parsed.as_str());
+    assert_eq!(value, parsed.header_value());
+  }
+  let redacted = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n\r\n",
+  )
+  .expect("request should parse")
+  .lock_token()
+  .expect("value should parse")
+  .expect("Lock-Token should be present");
+  assert!(!format!("{redacted:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  for value in ["", "<>", "<relative>", "</locks/1>"] {
+    let request = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: {value}\r\n\r\n")
+        .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.lock_token().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Lock-Token"));
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Lock-Token".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.lock_token().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Lock-Token")
+  );
+
+  let injected_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      (
+        "Lock-Token".to_string(),
+        "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nX-Injected: 1".to_string(),
+      ),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(injected_request.lock_token().is_err());
+  assert_eq!(
+    Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nX-Injected: 1"),
+    injected_request.header("Lock-Token")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nlock-token: <http://example.test/locks/2>\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.lock_token().is_err());
+  assert_eq!(
+    Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
+    duplicate.header("Lock-Token")
+  );
+}
+
+#[test]
 fn request_timeout_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"LOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");
@@ -3492,6 +3590,83 @@ fn request_timeout_is_optional_bounded_and_preserves_invalid_headers() {
   assert_eq!(
     &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
     split_timeout.members()
+  );
+}
+
+#[test]
+fn request_if_schedule_tag_match_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent =
+    Request::from_raw_frame(b"PUT / HTTP/1.1\r\nHost: cal.example.test\r\n\r\n")
+      .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .if_schedule_tag_match()
+      .expect("missing value should be valid")
+  );
+
+  for (value, expected) in [
+    ("\"sched-17\"", "\"sched-17\""),
+    ("W/\"sched-17\"", "W/\"sched-17\""),
+    (" \"sched-17\" ", "\"sched-17\""),
+  ] {
+    let valid = Request::from_raw_frame(
+      format!(
+        "PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .if_schedule_tag_match()
+      .expect("value should parse")
+      .expect("If-Schedule-Tag-Match should be present");
+    assert_eq!(expected, parsed.header_value());
+  }
+
+  for value in ["", "*", "\"unterminated", "\"one\", \"two\"", "sched-17"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(
+      request.if_schedule_tag_match().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("If-Schedule-Tag-Match"));
+  }
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024 - 1));
+  let oversized_request = Request {
+    method: "PUT".to_string(),
+    target: "/calendars/alice/inbox/invite.ics".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "cal.example.test".to_string()),
+      ("If-Schedule-Tag-Match".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.if_schedule_tag_match().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("If-Schedule-Tag-Match")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: \"sched-16\"\r\nif-schedule-tag-match: \"sched-17\"\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.if_schedule_tag_match().is_err());
+  assert_eq!(
+    Some("\"sched-16\""),
+    duplicate.header("If-Schedule-Tag-Match")
   );
 }
 
@@ -3997,6 +4172,54 @@ fn response_sec_websocket_accept_preserves_invalid_raw_headers() {
   let message = error.to_string();
   assert!(message.contains("Sec-WebSocket-Accept"));
   assert!(!message.contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+}
+
+#[test]
+fn response_lock_token_can_replace_and_parse_metadata() {
+  let response = HttpResponse::new(200, "OK")
+    .header("Lock-Token", "<http://example.test/locks/legacy>")
+    .with_lock_token(" \t<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\t ")
+    .expect("Lock-Token should parse");
+  let token = response
+    .lock_token()
+    .expect("Lock-Token should parse")
+    .expect("Lock-Token should be present");
+
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    token.as_str()
+  );
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(serialized.contains(
+    "\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n"
+  ));
+  assert!(!serialized.contains("\r\nLock-Token: <http://example.test/locks/legacy>\r\n"));
+  assert!(!format!("{token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+}
+
+#[test]
+fn response_lock_token_preserves_invalid_raw_headers() {
+  let duplicate = HttpResponse::new(200, "OK")
+    .header(
+      "Lock-Token",
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    )
+    .header("lock-token", "<http://example.test/locks/2>");
+  assert!(duplicate.lock_token().is_err());
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_response = HttpResponse::new(200, "OK").header("Lock-Token", oversized);
+  let error = oversized_response
+    .lock_token()
+    .expect_err("oversized Lock-Token should fail");
+  let message = error.to_string();
+  assert!(message.contains("Lock-Token"));
+  assert!(!message.contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  let rejected = HttpResponse::ok([])
+    .with_lock_token("<relative>")
+    .expect_err("malformed Lock-Token should fail");
+  assert!(!rejected.to_string().contains("relative"));
 }
 
 #[test]
@@ -4972,6 +5195,51 @@ hello\r\n\
     assert!(header_debug.contains("Idempotency-Key"));
     assert!(header_debug.contains("[REDACTED]"));
     assert!(!header_debug.contains("charge-2026-08-19-9f3c"));
+  }
+
+  #[test]
+  fn lock_token_debug_redacts_values_in_request_and_http_request() {
+    let raw = concat!(
+      "UNLOCK /resource HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Lock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    let lock_token = request
+      .lock_token()
+      .expect("Lock-Token should parse")
+      .expect("Lock-Token should be present");
+    assert_eq!(
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+      lock_token.as_str()
+    );
+    assert!(!format!("{lock_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+    let request_debug = format!("{request:?}");
+    assert!(request_debug.contains("Lock-Token"));
+    assert!(request_debug.contains("[REDACTED]"));
+    assert!(!request_debug.contains("550e8400-e29b-41d4-a716-446655440000"));
+
+    let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+    let http_request_debug = format!("{http_request:?}");
+    assert!(http_request_debug.contains("Lock-Token"));
+    assert!(http_request_debug.contains("[REDACTED]"));
+    assert!(!http_request_debug.contains("550e8400-e29b-41d4-a716-446655440000"));
+
+    let header_debug = format!(
+      "{:?}",
+      HttpHeader::new(
+        "Lock-Token",
+        "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"
+      )
+    );
+    assert!(header_debug.contains("Lock-Token"));
+    assert!(header_debug.contains("[REDACTED]"));
+    assert!(!header_debug.contains("550e8400-e29b-41d4-a716-446655440000"));
   }
 
   #[test]

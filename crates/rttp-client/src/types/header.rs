@@ -121,6 +121,7 @@ pub(crate) fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("lock-token")
     || name.eq_ignore_ascii_case("origin-trial")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("sec-websocket-accept")
@@ -294,6 +295,10 @@ mod tests {
       ("Cookie", "session=private"),
       ("Set-Cookie", "session=private"),
       ("Idempotency-Key", "charge-2026-08-19-9f3c"),
+      (
+        "Lock-Token",
+        "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+      ),
       ("Origin-Trial", "secret-origin-trial-token"),
       ("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
       ("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="),

@@ -587,6 +587,10 @@ fn facade_debug_redacts_sensitive_header_values() {
     .header(("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"))
     .header(("Cookie", "session=private"))
     .header(("Idempotency-Key", "charge-2026-08-19-9f3c"))
+    .header(Header::new(
+      "Lock-Token",
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    ))
     .header(("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="))
     .header(("Accept", "application/json"));
 
@@ -595,6 +599,7 @@ fn facade_debug_redacts_sensitive_header_values() {
   assert!(debug.contains("Proxy-Authorization"));
   assert!(debug.contains("Cookie"));
   assert!(debug.contains("Idempotency-Key"));
+  assert!(debug.contains("Lock-Token"));
   assert!(debug.contains("Sec-WebSocket-Key"));
   assert!(debug.contains("Accept"));
   assert!(debug.contains("application/json"));
@@ -604,6 +609,7 @@ fn facade_debug_redacts_sensitive_header_values() {
     "cHJveHk6c2VjcmV0",
     "session=private",
     "charge-2026-08-19-9f3c",
+    "550e8400-e29b-41d4-a716-446655440000",
     "dGhlIHNhbXBsZSBub25jZQ==",
   ] {
     assert!(!debug.contains(secret));
@@ -2593,6 +2599,131 @@ fn destination_helper_rejects_invalid_values_before_connecting() {
 }
 
 #[test]
+fn lock_token_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    (
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    ),
+    (
+      "<http://example.test/locks/1>",
+      "<http://example.test/locks/1>",
+    ),
+    (
+      " \t<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\t ",
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("UNLOCK")
+        .url(format!("{}/resource", base_url))
+        .lock_token(value)
+        .expect("Lock-Token should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Lock-Token"));
+  }
+}
+
+#[test]
+fn lock_token_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("UNLOCK")
+      .url(format!("{}/resource", base_url))
+      .header(("Lock-Token", "legacy-token"))
+      .lock_token("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+      .expect("Lock-Token should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
+    header_value(&request, "Lock-Token")
+  );
+  assert!(
+    !request.contains("legacy"),
+    "the typed helper must replace an existing same-name field"
+  );
+}
+
+#[test]
+fn lock_token_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "opaquelocktoken:550e8400-e29b-41d4-a716-446655440000",
+    "<>",
+    "<relative>",
+    "</locks/1>",
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>, <http://example.test/locks/2>",
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nX-Injected: 1",
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\0value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("UNLOCK")
+        .url(format!("{}/resource", base_url))
+        .lock_token(value)
+        .expect_err("invalid Lock-Token should be rejected");
+
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Lock-Token helper input should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn lock_token_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("UNLOCK")
+      .url(format!("{}/resource", base_url))
+      .lock_token(oversized.as_str())
+      .expect_err("oversized Lock-Token should be rejected");
+
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Lock-Token helper input should not open a socket"
+  );
+}
+
+#[test]
+fn raw_lock_token_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("UNLOCK")
+      .url(format!("{}/resource", base_url))
+      .header(("Lock-Token", "opaque custom value"))
+      .emit()
+      .expect("manual Lock-Token header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Lock-Token")
+  );
+}
+
+#[test]
 fn depth_helper_rejects_invalid_values_before_connecting() {
   for value in ["", "2", "-1", "1.0", "0, 1", "infinite", "1\r\nX: y"] {
     let request = capture_optional_request(|base_url| {
@@ -2729,6 +2860,113 @@ fn manual_timeout_header_remains_available_as_escape_hatch() {
   let request = request_text(&request);
 
   assert_eq!(Some("unusual-value"), header_value(&request, "Timeout"));
+}
+
+#[test]
+fn if_schedule_tag_match_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("\"sched-17\"", "\"sched-17\""),
+    ("W/\"sched-17\"", "W/\"sched-17\""),
+    (" \t\"sched-17\"\t ", "\"sched-17\""),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("PUT")
+        .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+        .if_schedule_tag_match(value)
+        .expect("If-Schedule-Tag-Match should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(
+      Some(expected),
+      header_value(&request, "If-Schedule-Tag-Match")
+    );
+  }
+}
+
+#[test]
+fn if_schedule_tag_match_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("PUT")
+      .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+      .header(("If-Schedule-Tag-Match", "\"sched-16\""))
+      .if_schedule_tag_match("\"sched-17\"")
+      .expect("If-Schedule-Tag-Match should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("\"sched-17\""),
+    header_value(&request, "If-Schedule-Tag-Match")
+  );
+}
+
+#[test]
+fn if_schedule_tag_match_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " \t ",
+    "sched-17",
+    "\"unterminated",
+    "*",
+    "\"one\", \"two\"",
+    "\"sched-17\"\r\nX: y",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("PUT")
+        .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+        .if_schedule_tag_match(value)
+        .expect_err("invalid If-Schedule-Tag-Match should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid If-Schedule-Tag-Match helper input should not open a socket"
+    );
+  }
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024 - 1));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("PUT")
+      .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+      .if_schedule_tag_match(oversized.as_str())
+      .expect_err("oversized If-Schedule-Tag-Match should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized If-Schedule-Tag-Match helper input should not open a socket"
+  );
+}
+
+#[test]
+fn manual_if_schedule_tag_match_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("PUT")
+      .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+      .header(("If-Schedule-Tag-Match", "unusual-value"))
+      .emit()
+      .expect("manual If-Schedule-Tag-Match header should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("unusual-value"),
+    header_value(&request, "If-Schedule-Tag-Match")
+  );
 }
 
 #[test]

@@ -7,6 +7,7 @@ pub(crate) fn is_sensitive_redirect_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("lock-token")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
     || name.eq_ignore_ascii_case("baggage")
@@ -92,6 +93,7 @@ fn raw_request_has_sensitive_header(raw: &str) -> bool {
       || name.trim().eq_ignore_ascii_case("set-cookie")
       || name.trim().eq_ignore_ascii_case("sec-websocket-accept")
       || name.trim().eq_ignore_ascii_case("sec-websocket-key")
+      || name.trim().eq_ignore_ascii_case("lock-token")
   })
 }
 
@@ -440,11 +442,15 @@ mod tests {
     request
       .headers_mut()
       .push(Header::new("Idempotency-Key", "charge-2026-08-19-9f3c"));
+    request.headers_mut().push(Header::new(
+      "Lock-Token",
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    ));
     request
       .trailers_mut()
       .push(Header::new("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"));
     request.raw_set(
-      "GET / HTTP/1.1\r\nAuthorization: Bearer raw-token\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nHost: example.test\r\n\r\n",
+      "GET / HTTP/1.1\r\nAuthorization: Bearer raw-token\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nHost: example.test\r\n\r\n",
     );
 
     let debug = format!("{request:?}");
@@ -455,6 +461,7 @@ mod tests {
       "cHJveHk6c2VjcmV0",
       "raw-token",
       "charge-2026-08-19-9f3c",
+      "550e8400-e29b-41d4-a716-446655440000",
       "dGhlIHNhbXBsZSBub25jZQ==",
     ] {
       assert!(!debug.contains(secret));

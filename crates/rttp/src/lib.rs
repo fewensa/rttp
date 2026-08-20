@@ -40,9 +40,10 @@ pub use rttp_client::response::{
 #[cfg(feature = "client")]
 pub use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, Baggage, BaggageMember, BaggageParseError,
-  BaggageProperty, Depth, DepthParseError, Destination, DestinationParseError, Overwrite,
-  OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose, Timeout,
-  TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  BaggageProperty, Depth, DepthParseError, Destination, DestinationParseError, IfScheduleTagMatch,
+  IfScheduleTagMatchParseError, LockToken, LockTokenParseError, Overwrite, OverwriteParseError,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose, Timeout, TimeoutParseError,
+  TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
   TraceStateParseError, Via, ViaMember, ViaParseError, XForwardedFor, XForwardedForNode,
   XForwardedForNodeKind, XForwardedForParseError, XForwardedHost, XForwardedHostParseError,
   XForwardedProto, XForwardedProtoParseError,

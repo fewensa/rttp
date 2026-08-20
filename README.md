@@ -972,6 +972,24 @@ when the typed parser reports an error. RTTP does not resolve the
 destination, authorize the target URI, select WebDAV methods, or copy, move,
 or delete application resources.
 
+### Bounded WebDAV Lock-Token metadata
+
+`HttpClient::lock_token()` validates and emits one WebDAV `Lock-Token`
+request field through the shared protocol `LockToken` type, replacing any
+existing same-name field before a socket is opened. `Request::lock_token()`
+and `HttpRequest::lock_token()` parse received request fields into the same
+`HttpLockToken` representation, returning `Ok(None)` when absent.
+`HttpResponse::with_lock_token()` validates and replaces one response field,
+and `HttpResponse::lock_token()` plus client `Response::lock_token()` parse
+attached or received response metadata. A recognized value is exactly one
+angle-bracketed absolute URI, bounded to 64 KiB with optional surrounding SP
+or HTAB; empty, unbracketed, relative, comma-list, extra-bracket, duplicate,
+oversized, and control-byte values are rejected while raw headers remain
+available when the typed parser reports an error. The token is redacted from
+typed `Debug`, and parse or builder errors do not expose the full token.
+These helpers declare and observe metadata only: RTTP does not create,
+refresh, release, persist, compare ownership of, or enforce WebDAV locks.
+
 `HttpClient::timeout()` validates and emits one WebDAV `Timeout` request
 field through the shared protocol `Timeout` type, replacing any existing
 same-name field before a socket is opened. `Request::timeout()` and
@@ -983,6 +1001,22 @@ duplicate, oversized, too-many-member, and control-byte values are rejected
 while raw request headers remain available when the typed parser reports an
 error. RTTP does not create locks, refresh locks, or select an application
 timeout.
+
+`HttpClient::if_schedule_tag_match()` validates and emits one
+`If-Schedule-Tag-Match` request field through the shared protocol
+`IfScheduleTagMatch` type, which reuses the shared `EntityTag`
+representation, replacing any existing same-name field before a socket is
+opened. `Request::if_schedule_tag_match()` and
+`HttpRequest::if_schedule_tag_match()` parse received fields into the same
+representation, returning `Ok(None)` when absent. A recognized value is one
+entity-tag-shaped schedule validator such as `"sched-17"` or `W/"sched-17"`,
+bounded to 64 KiB with optional surrounding SP or HTAB and weak syntax
+preserved; malformed, wildcard, comma-list, duplicate, oversized, and
+control-byte values are rejected while raw request headers remain available
+when the typed parser reports an error. These helpers declare and observe
+request metadata only: RTTP does not compare the validator to stored calendar
+state, inspect calendars, select scheduling behavior, or apply 412 or
+scheduling policy.
 
 `HttpClient::overwrite()` validates and emits one WebDAV `Overwrite` request
 field through the shared protocol `Overwrite` type, replacing any existing
@@ -1473,7 +1507,9 @@ gain additional HTTP/2 header-block handling.
 | Upgrade-Insecure-Requests | Client `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata; server `Request::upgrade_insecure_requests()` and `HttpRequest::upgrade_insecure_requests()` parse typed received values while preserving raw headers on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Depth | Client `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::depth()` and `HttpRequest::depth()` parse typed received values while preserving raw headers on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Destination | Client `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::destination()` and `HttpRequest::destination()` parse typed received values while preserving raw headers on errors | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
+| Lock-Token | Client `lock_token` emits bounded singleton WebDAV `Lock-Token` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::lock_token()` and `HttpRequest::lock_token()` parse typed request values, server responses can declare or parse `Lock-Token`, and client `Response::lock_token()` parses typed response values while preserving raw headers on errors and redacting tokens from typed debug output | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
 | Timeout | Client `timeout` emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::timeout()` and `HttpRequest::timeout()` parse typed received values while preserving raw headers on errors | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
+| If-Schedule-Tag-Match | Client `if_schedule_tag_match` emits bounded singleton `If-Schedule-Tag-Match` request metadata through the shared protocol type, reusing the shared `EntityTag` representation for strong and weak validators and replacing an existing same-name field; server `Request::if_schedule_tag_match()` and `HttpRequest::if_schedule_tag_match()` parse typed received values while preserving raw headers on errors | No schedule-tag comparison, calendar inspection, scheduling policy, retry, or 412/status-policy behavior |
 | Overwrite | Client `overwrite` emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F` and replacing an existing same-name field; server `Request::overwrite()` and `HttpRequest::overwrite()` parse typed received values while preserving raw headers on errors | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
 | Idempotency-Key | Client `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::idempotency_key()` and `HttpRequest::idempotency_key()` parse typed received values while preserving raw headers on errors, and the key is redacted from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | Client `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::sec_websocket_key()` and `HttpRequest::sec_websocket_key()` parse typed received values while preserving raw headers on errors; server responses can derive `Sec-WebSocket-Accept` with the RFC GUID plus SHA-1/base64 transform; client responses can parse and verify it against a validated key; key and accept material is redacted from typed debug output | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
@@ -2628,6 +2664,7 @@ TLS or async accept loops.
 | Upgrade-Insecure-Requests | `Request::upgrade_insecure_requests` and `HttpRequest::upgrade_insecure_requests` parse bounded singleton `Upgrade-Insecure-Requests` `1`-token metadata and preserve raw values on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Depth | `Request::depth` and `HttpRequest::depth` parse bounded singleton WebDAV `Depth` request metadata through the shared protocol type and preserve raw values on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Destination | `Request::destination` and `HttpRequest::destination` parse bounded singleton WebDAV `Destination` request metadata through the shared protocol type and preserve raw values on errors | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
+| Lock-Token | `HttpLockToken`, `Request::lock_token`, `HttpRequest::lock_token`, `HttpResponse::with_lock_token`, and `HttpResponse::lock_token` parse or declare bounded singleton WebDAV `Lock-Token` metadata through the shared protocol type while preserving raw headers on errors and redacting tokens from typed debug output | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
 | Timeout | `Request::timeout` and `HttpRequest::timeout` parse bounded ordered WebDAV `Timeout` request metadata through the shared protocol type and preserve raw values on errors | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
 | Overwrite | `Request::overwrite` and `HttpRequest::overwrite` parse bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type and preserve raw values on errors | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
 | DAV | `Dav`, `HttpDav`, `HttpResponse::with_dav`/`dav`, and client `Response::dav` parse or declare bounded ordered WebDAV `DAV` response metadata through the shared protocol type, accepting `1`, `2`, `3`, extension tokens, and `<absolute-URI>` Coded-URLs while preserving raw headers on parse failures | No WebDAV feature inference, feature negotiation, method support enforcement, route dispatch, lock behavior, or application resource policy |

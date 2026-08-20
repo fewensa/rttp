@@ -736,6 +736,26 @@ original raw field.
 These helpers parse request metadata only. They do not traverse resources,
 select WebDAV methods, or enforce method policy.
 
+## WebDAV Lock-Token request and response metadata
+
+Handlers can call `Request::lock_token()` and `HttpRequest::lock_token()` to
+observe bounded typed WebDAV `Lock-Token` request metadata through the shared
+protocol `HttpLockToken` type. Absent fields return `Ok(None)`. A recognized
+value is exactly one angle-bracketed absolute URI with optional surrounding
+SP or HTAB, bounded to 64 KiB. `as_str()` returns the stored coded URL and
+`header_value()` emits it unchanged. Malformed, oversized, duplicate, or
+control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field. The token
+is redacted from typed `Debug`.
+
+`HttpResponse::with_lock_token(value)` validates and replaces one bounded
+`Lock-Token` response field. `HttpResponse::lock_token()` parses attached
+response metadata for inspection. Unusual values can still be attached with
+`header()`.
+
+These helpers parse and emit metadata only. They do not create, refresh,
+release, persist, compare ownership of, or enforce WebDAV locks.
+
 ## WebDAV DAV response metadata
 
 Handlers can call `HttpResponse::with_dav(value)` to validate and replace
@@ -778,6 +798,23 @@ original raw field.
 
 These helpers parse request metadata only. They do not create locks, refresh
 locks, or select an application timeout.
+
+## If-Schedule-Tag-Match request metadata
+
+Handlers can call `Request::if_schedule_tag_match()` and
+`HttpRequest::if_schedule_tag_match()` to observe bounded typed
+`If-Schedule-Tag-Match` request metadata through the shared protocol
+`HttpIfScheduleTagMatch` type, which reuses the shared `HttpEntityTag`
+representation. Absent fields return `Ok(None)`. A recognized value is one
+entity-tag-shaped schedule validator such as `"sched-17"` or `W/"sched-17"`,
+with optional surrounding SP or HTAB trimmed and weak syntax preserved.
+Malformed, wildcard, comma-list, duplicate, oversized, or control-byte values
+return a parser error while `Request::header()` and `HttpRequest::header()`
+continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not compare the validator
+to stored calendar state, inspect calendars, select scheduling behavior, or
+apply 412 or scheduling policy.
 
 ## WebDAV Overwrite request metadata
 

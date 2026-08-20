@@ -70,9 +70,16 @@ pub use rttp_protocol::if_modified_since::{
   IfModifiedSince as HttpIfModifiedSince,
   IfModifiedSinceParseError as HttpIfModifiedSinceParseError,
 };
+pub use rttp_protocol::if_schedule_tag_match::{
+  IfScheduleTagMatch as HttpIfScheduleTagMatch,
+  IfScheduleTagMatchParseError as HttpIfScheduleTagMatchParseError,
+};
 pub use rttp_protocol::if_unmodified_since::{
   IfUnmodifiedSince as HttpIfUnmodifiedSince,
   IfUnmodifiedSinceParseError as HttpIfUnmodifiedSinceParseError,
+};
+pub use rttp_protocol::lock_token::{
+  LockToken as HttpLockToken, LockTokenParseError as HttpLockTokenParseError,
 };
 pub use rttp_protocol::max_forwards::{
   MaxForwards as HttpMaxForwards, MaxForwardsParseError as HttpMaxForwardsParseError,
@@ -263,6 +270,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("lock-token")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("sec-websocket-accept")
     || name.eq_ignore_ascii_case("sec-websocket-key")
@@ -365,6 +373,18 @@ impl Request {
       return Ok(None);
     }
     HttpIfModifiedSince::parse_values(values).map(Some)
+  }
+
+  /// Parses one entity-tag-shaped `If-Schedule-Tag-Match` validator without
+  /// comparing it to stored calendar state or applying scheduling policy.
+  pub fn if_schedule_tag_match(
+    &self,
+  ) -> Result<Option<HttpIfScheduleTagMatch>, HttpIfScheduleTagMatchParseError> {
+    let values: Vec<&str> = self.headers_named("If-Schedule-Tag-Match").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfScheduleTagMatch::parse_values(values).map(Some)
   }
 
   /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
@@ -573,6 +593,17 @@ impl Request {
       return Ok(None);
     }
     HttpDestination::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded WebDAV `Lock-Token` field as typed metadata.
+  /// Duplicate fields are rejected to avoid ambiguous tokens. This accessor
+  /// does not create, refresh, release, persist, or enforce locks.
+  pub fn lock_token(&self) -> Result<Option<HttpLockToken>, HttpLockTokenParseError> {
+    let values: Vec<&str> = self.headers_named("Lock-Token").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpLockToken::parse_values(values).map(Some)
   }
 
   /// Parses received WebDAV `Timeout` request metadata without creating locks,
@@ -2286,6 +2317,23 @@ impl HttpRequest {
     HttpIfModifiedSince::parse_values(values).map(Some)
   }
 
+  /// Parses one entity-tag-shaped `If-Schedule-Tag-Match` validator without
+  /// comparing it to stored calendar state or applying scheduling policy.
+  pub fn if_schedule_tag_match(
+    &self,
+  ) -> Result<Option<HttpIfScheduleTagMatch>, HttpIfScheduleTagMatchParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("If-Schedule-Tag-Match"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfScheduleTagMatch::parse_values(values).map(Some)
+  }
+
   /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
   pub fn if_unmodified_since(
     &self,
@@ -2432,6 +2480,22 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpDestination::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded WebDAV `Lock-Token` field as typed metadata.
+  /// Duplicate fields are rejected to avoid ambiguous tokens. This accessor
+  /// does not create, refresh, release, persist, or enforce locks.
+  pub fn lock_token(&self) -> Result<Option<HttpLockToken>, HttpLockTokenParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Lock-Token"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpLockToken::parse_values(values).map(Some)
   }
 
   /// Parses received WebDAV `Timeout` request metadata without creating locks,
