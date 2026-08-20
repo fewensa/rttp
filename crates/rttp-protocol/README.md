@@ -59,8 +59,7 @@ parameters. Tokens are RFC 9110 tokens and are retained with their accepted
 spelling. Duplicate tokens are rejected case-insensitively across one or more
 fields while the first-seen spelling is retained. Each member may carry
 parameters whose names are tokens and whose values are tokens or
-quoted-strings; `q` is rejected as a parameter name because it is reserved
-for A-IM. Duplicate parameter names on one member are rejected
+quoted-strings. Duplicate parameter names on one member are rejected
 case-insensitively. Empty members, invalid tokens, invalid parameter names or
 values, forbidden ASCII control bytes other than HTAB, oversized values,
 oversized combined input, too many members or parameters, and a present

@@ -796,8 +796,7 @@ empty, oversized, or over-limit members. `HttpResponse::im()` and client
 when the header is absent. Present values expose `members()` with `token()`
 and `parameters()` per member. Each field value and the combined raw field
 set are limited to 64 KiB, the combined list is limited to 32 members, and
-each member is limited to 16 parameters. The `q` parameter name is rejected
-because it is reserved for A-IM. Malformed, duplicate, or over-limit values
+each member is limited to 16 parameters. Malformed, duplicate, or over-limit values
 return an error while raw `IM` fields remain observable as ordinary headers.
 
 These helpers only declare and inspect response metadata. They do not decode

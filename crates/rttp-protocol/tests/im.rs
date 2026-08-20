@@ -69,6 +69,30 @@ fn im_builds_lists_from_members() {
 }
 
 #[test]
+fn im_accepts_q_named_extension_parameters() {
+  let im = Im::parse("gzip;q=0.3").expect("q-named IM parameters should parse");
+  assert_eq!("gzip", im.members()[0].token());
+  assert_eq!("q", im.members()[0].parameters()[0].name());
+  assert_eq!(Some("0.3"), im.members()[0].parameters()[0].value());
+  assert_eq!(im.header_value(), "gzip;q=0.3");
+
+  let quoted = Im::parse(r#"gzip;q="0.3""#).expect("quoted q-named IM parameters should parse");
+  assert_eq!("q", quoted.members()[0].parameters()[0].name());
+  assert_eq!(Some("0.3"), quoted.members()[0].parameters()[0].value());
+  assert_eq!(quoted.header_value(), r#"gzip;q="0.3""#);
+
+  let valueless = Im::parse("gzip;q").expect("valueless q-named IM parameters should parse");
+  assert_eq!("q", valueless.members()[0].parameters()[0].name());
+  assert_eq!(None, valueless.members()[0].parameters()[0].value());
+  assert_eq!(valueless.header_value(), "gzip;q");
+
+  let upper = Im::parse("gzip;Q=1").expect("case-insensitive q-named IM parameters should parse");
+  assert_eq!("Q", upper.members()[0].parameters()[0].name());
+  assert_eq!(Some("1"), upper.members()[0].parameters()[0].value());
+  assert_eq!(upper.header_value(), "gzip;Q=1");
+}
+
+#[test]
 fn im_rejects_invalid_members() {
   for value in [
     "",
@@ -77,11 +101,7 @@ fn im_rejects_invalid_members() {
     "diffe,",
     "diffe,,gzip",
     "bad token",
-    "gzip;q=0.3",
-    "gzip;q",
     "gzip;q=",
-    r#"gzip;q="0.3""#,
-    "gzip;Q=1",
     "gzip;profile=",
     "gzip;=",
     "gzip: diffe",

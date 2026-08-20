@@ -146,8 +146,7 @@ raw `IM` fields in wire order into `HttpIm`, the shared protocol parser also
 used by the client facade, and returns `Ok(None)` when the header is absent.
 Each entry exposes `token()` and ordered `parameters()`. Each field value and
 the combined raw field set are limited to 64 KiB, the combined list is
-limited to 32 members, and each member is limited to 16 parameters. The `q`
-parameter name is rejected because it is reserved for A-IM. Malformed,
+limited to 32 members, and each member is limited to 16 parameters. Malformed,
 duplicate, or over-limit values return `HttpImParseError` while `HttpResponse`
 raw headers continue to expose the original fields.
 

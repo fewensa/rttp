@@ -4745,8 +4745,35 @@ fn test_im_response_helper_preserves_order_across_fields_and_body() {
 }
 
 #[test]
+fn test_im_response_helper_accepts_q_named_extension_parameters() {
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 2\r\n",
+      "IM: gzip;q=0.3\r\n",
+      "\r\n",
+      "OK"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let im: Im = response
+    .im()
+    .expect("q-named IM parameters should parse")
+    .expect("IM should be present");
+  assert_eq!("gzip", im.members()[0].token());
+  assert_eq!("q", im.members()[0].parameters()[0].name());
+  assert_eq!(Some("0.3"), im.members()[0].parameters()[0].value());
+  assert_eq!(im.header_value(), "gzip;q=0.3");
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
 fn test_im_response_helper_fails_closed_without_hiding_raw_headers() {
-  for value in ["diffe, DIFFE", "gzip;q=0.3", "diffe,"] {
+  for value in ["diffe, DIFFE", "gzip;q=", "diffe,"] {
     let raw = format!("HTTP/1.1 200 OK\r\nIM: {value}\r\nContent-Length: 2\r\n\r\nOK");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
       .expect("raw response remains usable");

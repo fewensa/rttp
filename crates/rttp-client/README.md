@@ -839,7 +839,7 @@ for serialization.
 The helper is bounded and validation-oriented. Each header field value is
 limited to 64 KiB, the parsed header set is limited to 32 members, and each
 member is limited to 16 parameters. Empty members, invalid tokens or
-parameters, the reserved `q` parameter name, duplicates across all parsed
+parameters, duplicates across all parsed
 header fields, and oversized or over-limit values return an error while the
 original response remains usable: raw `IM` fields stay available through
 `Response::header_value()`, `Response::header_values()`, and the other

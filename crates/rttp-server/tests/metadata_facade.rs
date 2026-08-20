@@ -1182,6 +1182,18 @@ fn response_facade_builds_and_parses_im_metadata() {
   assert_eq!(Some("compact"), im.members()[1].parameters()[0].value());
   assert_eq!("diffe, gzip;profile=compact", im.header_value());
 
+  let with_q = HttpResponse::ok("")
+    .with_im(["gzip;q=0.3"])
+    .expect("q-named IM parameters should be accepted");
+  let q_im = with_q
+    .im()
+    .expect("q-named IM metadata should parse")
+    .expect("q-named IM metadata should be present");
+  assert_eq!("gzip", q_im.members()[0].token());
+  assert_eq!("q", q_im.members()[0].parameters()[0].name());
+  assert_eq!(Some("0.3"), q_im.members()[0].parameters()[0].value());
+  assert_eq!("gzip;q=0.3", q_im.header_value());
+
   let mut serialized = Vec::new();
   response.write_to(&mut serialized).expect("response writes");
   let serialized = String::from_utf8(serialized).expect("response is utf8");

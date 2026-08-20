@@ -1462,8 +1462,8 @@ fn compatibility_facade_roundtrips_im_response_metadata() {
 
   let _: rttp::ImParseError =
     rttp::Im::parse("diffe, DIFFE").expect_err("duplicate IM members must fail closed");
-  let _: rttp::ImParseError =
-    rttp::Im::parse("gzip;q=0.3").expect_err("IM q-parameters must fail closed");
+  let q_named = rttp::Im::parse("gzip;q=0.3").expect("q-named IM parameters should parse");
+  assert_eq!(Some("0.3"), q_named.members()[0].parameters()[0].value());
   assert!(
     rttp::Im::parse("x".repeat(64 * 1024 + 1)).is_err(),
     "oversized IM values must fail closed"

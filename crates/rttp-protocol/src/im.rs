@@ -231,9 +231,6 @@ fn parse_member(value: &str, position: &mut usize) -> Result<ImMember, ImParseEr
     }
     skip_ows(value, position);
     let name = parse_token(value, position)?;
-    if name.eq_ignore_ascii_case("q") {
-      return Err(ImParseError::new("invalid IM q-parameter"));
-    }
     skip_ows(value, position);
     let parameter_value = if take_if(value, position, b'=') {
       skip_ows(value, position);
