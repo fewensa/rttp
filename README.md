@@ -806,6 +806,22 @@ These helpers are metadata-only. RTTP does not select alternative services,
 rewrite origins, migrate sockets, retry, or change connection policy from
 `Alt-Used`.
 
+### Bounded Alternates response metadata
+
+`Response::alternates()` and server `HttpResponse::with_alternates()` /
+`HttpResponse::alternates()` parse or declare bounded RFC 2295-style
+`Alternates` variant metadata through the shared protocol `Alternates` type.
+Valid metadata preserves ordered variant URI-references, source quality text,
+standard attributes such as `type`, `language`, and `length`, quoted attribute
+values, and extension attributes. Malformed entries, invalid URIs, invalid
+quality values, duplicate variants or attributes, oversized values, and excess
+variant or attribute counts are rejected while raw headers remain available on
+parse failures; typed server declaration replaces existing raw `Alternates`
+fields.
+
+These helpers are metadata-only. RTTP does not select, rank, fetch, replay,
+redirect to, or cache variants from `Alternates`.
+
 ### Bounded Origin-Trial response metadata
 
 `Response::origin_trials()` and server `HttpResponse::with_origin_trials()` /
@@ -1002,6 +1018,22 @@ while raw request headers remain available when the typed parser reports an
 error. RTTP does not create locks, refresh locks, or select an application
 timeout.
 
+`HttpClient::if_schedule_tag_match()` validates and emits one
+`If-Schedule-Tag-Match` request field through the shared protocol
+`IfScheduleTagMatch` type, which reuses the shared `EntityTag`
+representation, replacing any existing same-name field before a socket is
+opened. `Request::if_schedule_tag_match()` and
+`HttpRequest::if_schedule_tag_match()` parse received fields into the same
+representation, returning `Ok(None)` when absent. A recognized value is one
+entity-tag-shaped schedule validator such as `"sched-17"` or `W/"sched-17"`,
+bounded to 64 KiB with optional surrounding SP or HTAB and weak syntax
+preserved; malformed, wildcard, comma-list, duplicate, oversized, and
+control-byte values are rejected while raw request headers remain available
+when the typed parser reports an error. These helpers declare and observe
+request metadata only: RTTP does not compare the validator to stored calendar
+state, inspect calendars, select scheduling behavior, or apply 412 or
+scheduling policy.
+
 `HttpClient::overwrite()` validates and emits one WebDAV `Overwrite` request
 field through the shared protocol `Overwrite` type, replacing any existing
 same-name field before a socket is opened. `Request::overwrite()` and
@@ -1079,6 +1111,18 @@ fields as a selection singleton; a multi-token value returns a parse error.
 These helpers declare and observe metadata only: RTTP does not perform a
 WebSocket handshake, emit `Connection: Upgrade`, choose an application
 subprotocol, or switch protocols. Applications own the selection decision.
+
+`HttpClient::sec_websocket_extensions()` validates and emits
+`Sec-WebSocket-Extensions` request metadata as ordered extension offers
+through the shared protocol `SecWebSocketExtensions` type, replacing any
+existing same-name field before a socket is opened. The canonical
+representation validates extension tokens, ordered parameters, token and
+quoted-string parameter values, duplicate extension tokens, duplicate
+parameter names, member counts, and total size. Server request helpers parse
+received offers, and `HttpResponse::with_sec_websocket_extensions()` plus
+client/server response accessors parse one selected extension member. These
+helpers declare and observe metadata only: RTTP does not activate compression,
+negotiate extensions, emit `Connection: Upgrade`, or switch protocols.
 
 `HttpClient::traceparent()` and `HttpClient::tracestate()` validate and emit
 bounded W3C Trace Context request metadata through shared protocol types,
@@ -1493,11 +1537,13 @@ gain additional HTTP/2 header-block handling.
 | Destination | Client `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::destination()` and `HttpRequest::destination()` parse typed received values while preserving raw headers on errors | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Lock-Token | Client `lock_token` emits bounded singleton WebDAV `Lock-Token` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::lock_token()` and `HttpRequest::lock_token()` parse typed request values, server responses can declare or parse `Lock-Token`, and client `Response::lock_token()` parses typed response values while preserving raw headers on errors and redacting tokens from typed debug output | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
 | Timeout | Client `timeout` emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::timeout()` and `HttpRequest::timeout()` parse typed received values while preserving raw headers on errors | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
+| If-Schedule-Tag-Match | Client `if_schedule_tag_match` emits bounded singleton `If-Schedule-Tag-Match` request metadata through the shared protocol type, reusing the shared `EntityTag` representation for strong and weak validators and replacing an existing same-name field; server `Request::if_schedule_tag_match()` and `HttpRequest::if_schedule_tag_match()` parse typed received values while preserving raw headers on errors | No schedule-tag comparison, calendar inspection, scheduling policy, retry, or 412/status-policy behavior |
 | Overwrite | Client `overwrite` emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F` and replacing an existing same-name field; server `Request::overwrite()` and `HttpRequest::overwrite()` parse typed received values while preserving raw headers on errors | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
 | Idempotency-Key | Client `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::idempotency_key()` and `HttpRequest::idempotency_key()` parse typed received values while preserving raw headers on errors, and the key is redacted from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | Client `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::sec_websocket_key()` and `HttpRequest::sec_websocket_key()` parse typed received values while preserving raw headers on errors; server responses can derive `Sec-WebSocket-Accept` with the RFC GUID plus SHA-1/base64 transform; client responses can parse and verify it against a validated key; key and accept material is redacted from typed debug output | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | Client `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type; server `Request`/`HttpRequest` helpers parse received fields; `HttpResponse::with_sec_websocket_version`/`sec_websocket_version` and client `Response::sec_websocket_version` declare or parse rejection-response version lists while preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Sec-WebSocket-Protocol | Client `sec_websocket_protocol` emits bounded `Sec-WebSocket-Protocol` offer metadata in preference order through the shared protocol type; server `Request`/`HttpRequest` helpers parse received offers; `HttpResponse::with_sec_websocket_protocol`/`sec_websocket_protocol` and client `Response::sec_websocket_protocol` declare or parse selection singletons while preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |
+| Sec-WebSocket-Extensions | Client `sec_websocket_extensions` emits bounded ordered `Sec-WebSocket-Extensions` offer metadata through the shared protocol type; server `Request`/`HttpRequest` helpers parse received offers; `HttpResponse::with_sec_websocket_extensions`/`sec_websocket_extensions` and client `Response::sec_websocket_extensions` declare or parse one-extension selection singletons while preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, compression activation, extension negotiation, protocol switch, or frames |
 | Pragma | Client `pragma`/`pragma_no_cache` and `Response::pragma` share the bounded protocol `Pragma` representation with server `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` across client construction, server request access, server response construction, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | Client `traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types; server `Request`/`HttpRequest` helpers parse received fields, preserve raw headers on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | Client `baggage` validates and emits bounded W3C Baggage request metadata through the shared protocol type; server `Request`/`HttpRequest` helpers parse received fields, preserve raw headers on errors, preserve member order, and redact member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
@@ -1530,6 +1576,7 @@ gain additional HTTP/2 header-block handling.
 | Proxy-Status | Client `Response::proxy_status` and server `HttpProxyStatus`, `HttpResponse::with_proxy_status`, and `HttpResponse::proxy_status` parse or declare bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Alt-Used | Client `Response::alt_used` and server `HttpAltUsed`, `HttpResponse::with_alt_used`, and `HttpResponse::alt_used` parse or declare bounded singleton response authority metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No alternative service selection, origin rewriting, socket migration, retry, or connection-policy behavior |
+| Alternates | Client `Response::alternates` and server `HttpAlternates`, `HttpResponse::with_alternates`, and `HttpResponse::alternates` parse or declare bounded RFC 2295-style response variant metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No variant selection, ranking, fetching, request replay, redirect, cache storage, or transparent negotiation behavior |
 | Origin-Trial | Client `Response::origin_trials` and server `HttpOriginTrials`, `HttpResponse::with_origin_trials`, and `HttpResponse::origin_trials` parse or declare bounded opaque `Origin-Trial` tokens in wire order, preserve duplicates, redact token material from debug output, and replace raw response fields on typed declaration | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Speculation-Rules | Client `Response::speculation_rules` and server `HttpSpeculationRules`, `HttpResponse::with_speculation_rules`, and `HttpResponse::speculation_rules` preserve one bounded opaque `Speculation-Rules` response field, reject duplicates and response-field injection bytes, redact debug output, and replace raw response fields on typed declaration | No speculation rule fetching, parsing, validation, prefetching, prerendering, execution, navigation changes, cache behavior, retry, or redirect behavior |
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
@@ -2469,6 +2516,27 @@ the combined raw or canonical serialized field set to 64 KiB, and members to
 `Connection: Upgrade` or `Upgrade: websocket`, choose an application
 subprotocol, or switch protocols; applications own the selection decision.
 
+### Bounded Sec-WebSocket-Extensions metadata
+
+Server-side `Sec-WebSocket-Extensions` helpers expose request offers and
+response selection metadata without activating compression, negotiating
+extensions, or switching protocols. `Request::sec_websocket_extensions()` and
+`HttpRequest::sec_websocket_extensions()` parse received fields into
+`HttpSecWebSocketExtensions` as ordered offers. The representation validates
+extension tokens, ordered parameters, token and quoted-string parameter
+values, duplicate extension tokens, duplicate parameter names, member count,
+and total size. `HttpResponse::with_sec_websocket_extensions(value)` validates
+one selected extension member and replaces any existing
+`Sec-WebSocket-Extensions` response fields with one canonical value, while
+`HttpResponse::sec_websocket_extensions()` parses attached raw fields as a
+selection singleton.
+
+The helpers are bounded and metadata-only. Field values are limited to 64 KiB,
+the combined raw or canonical serialized field set to 64 KiB, and extension
+members to 32 per header set. They do not perform a WebSocket handshake, emit
+`Connection: Upgrade` or `Upgrade: websocket`, activate compression, negotiate
+extensions, or switch protocols; applications own all extension behavior.
+
 ### Bounded Speculation-Rules response metadata
 
 `HttpResponse::with_speculation_rules(value)` validates and replaces any raw
@@ -2655,6 +2723,7 @@ TLS or async accept loops.
 | WebSocket handshake metadata | `Request::sec_websocket_key` and `HttpRequest::sec_websocket_key` parse bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type and preserve raw values on errors; `HttpResponse` can derive and parse bounded singleton `Sec-WebSocket-Accept` metadata from a validated key using the RFC GUID plus SHA-1/base64 transform; typed debug output redacts key and accept material | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `HttpSecWebSocketVersion`, `Request::sec_websocket_version`, `HttpRequest::sec_websocket_version`, `HttpResponse::with_sec_websocket_version`, and `HttpResponse::sec_websocket_version` parse and declare bounded version-list metadata through the shared protocol type, requiring canonical descending order, replacing raw duplicates on declaration, and preserving raw headers on parse failures | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Sec-WebSocket-Protocol | `HttpSecWebSocketProtocol`, `Request::sec_websocket_protocol`, `HttpRequest::sec_websocket_protocol`, `HttpResponse::with_sec_websocket_protocol`, and `HttpResponse::sec_websocket_protocol` parse and declare bounded protocol-token metadata through the shared protocol type: request offers preserve preference order while response values are selection singletons, with case-sensitive duplicates rejected and raw headers preserved on parse failures | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |
+| Sec-WebSocket-Extensions | `HttpSecWebSocketExtensions`, `Request::sec_websocket_extensions`, `HttpRequest::sec_websocket_extensions`, `HttpResponse::with_sec_websocket_extensions`, and `HttpResponse::sec_websocket_extensions` parse and declare bounded extension-list metadata through the shared protocol type: request offers preserve extension and parameter order while response values are one-extension selection singletons, with duplicates rejected and raw headers preserved on parse failures | No WebSocket handshake, `Connection: Upgrade` emission, compression activation, extension negotiation, protocol switch, or frames |
 | Pragma | `HttpPragma`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation for server request access and server response construction, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `Request::traceparent`/`tracestate` and `HttpRequest` helpers parse bounded W3C Trace Context request metadata, preserve raw values on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `Request::baggage` and `HttpRequest::baggage` parse bounded W3C Baggage request metadata, preserve raw values on errors, preserve member order, and redact member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
@@ -2685,6 +2754,7 @@ TLS or async accept loops.
 | Cross-Origin-Opener-Policy-Report-Only | `HttpCrossOriginOpenerPolicyReportOnly`, `HttpResponse::with_cross_origin_opener_policy_report_only`, and `HttpResponse::cross_origin_opener_policy_report_only` declare or parse bounded singleton COOP Report-Only metadata, reuse the canonical COOP directives, retain reporting parameters including `report-to`, and preserve raw headers on parse failures | No browsing-context isolation, report scheduling, sending, persistence, retry, routing, or `Reporting-Endpoints` validation |
 | Server-Timing | `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` declare or parse bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Alt-Used | `HttpAltUsed`, `HttpResponse::with_alt_used`, and `HttpResponse::alt_used` declare or parse bounded singleton response authority metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No alternative service selection, origin rewriting, socket migration, retry, or connection-policy behavior |
+| Alternates | `HttpAlternates`, `HttpResponse::with_alternates`, and `HttpResponse::alternates` declare or parse bounded RFC 2295-style response variant metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No variant selection, ranking, fetching, request replay, redirect, cache storage, or transparent negotiation behavior |
 | Origin-Trial | `HttpOriginTrials`, `HttpResponse::with_origin_trials`, and `HttpResponse::origin_trials` declare or parse bounded opaque `Origin-Trial` tokens in wire order, preserve duplicates, redact token material from debug output, and replace raw response fields on typed declaration | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Speculation-Rules | `HttpSpeculationRules`, `HttpResponse::with_speculation_rules`, and `HttpResponse::speculation_rules` preserve one bounded opaque `Speculation-Rules` response field, reject duplicates and response-field injection bytes, redact debug output, and replace raw response fields on typed declaration | No speculation rule fetching, parsing, validation, prefetching, prerendering, execution, navigation changes, cache behavior, retry, or redirect behavior |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpHandoff::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |

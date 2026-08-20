@@ -64,6 +64,22 @@ fn alternates_round_trips_illustrative_value_and_keeps_qvalue_text() {
 }
 
 #[test]
+fn alternates_accepts_unquoted_parameterized_type_attribute() {
+  let alternates =
+    Alternates::parse(r#"{ "/resource.html" 1 {type text/html;charset=utf-8;profile=compact} }"#)
+      .expect("unquoted parameterized media type should parse");
+
+  assert_eq!(
+    Some("text/html;charset=utf-8;profile=compact"),
+    alternates.variants()[0].attribute("type")
+  );
+  assert_eq!(
+    r#"{ "/resource.html" 1 {type text/html;charset=utf-8;profile=compact} }"#,
+    alternates.header_value()
+  );
+}
+
+#[test]
 fn alternates_accepts_qvalue_grammar_and_rejects_invalid_weights() {
   for quality in [
     "0", "1", "0.", "1.", "0.5", "0.80", "0.123", "1.0", "1.00", "1.000",

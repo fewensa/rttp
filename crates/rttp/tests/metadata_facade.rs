@@ -1,31 +1,33 @@
 use rttp::server::{
-  HttpAcceptCh, HttpAcceptCharsetParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
-  HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork, HttpAltUsed,
-  HttpAltUsedParseError, HttpAlternates, HttpAlternatesParseError, HttpAuthorization, HttpBaggage,
-  HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty, HttpCdnLoop,
-  HttpCdnLoopParseError, HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpAIm, HttpAImParseError, HttpAcceptCh, HttpAcceptCharsetParseError,
+  HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAccessControlRequestMethod,
+  HttpAccessControlRequestPrivateNetwork, HttpAltUsed, HttpAltUsedParseError, HttpAlternates,
+  HttpAlternatesParseError, HttpAuthorization, HttpBaggage, HttpBaggageMember,
+  HttpBaggageParseError, HttpBaggageProperty, HttpCdnLoop, HttpCdnLoopParseError,
+  HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
+  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
   HttpDepthParseError, HttpDestination, HttpDestinationParseError, HttpEntityTag, HttpExpectations,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince,
-  HttpLockToken, HttpLockTokenParseError, HttpMaxForwards, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNel, HttpOriginTrialParseError, HttpOriginTrials,
-  HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma,
-  HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
-  HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
-  HttpUpgradeParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfScheduleTagMatch,
+  HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError,
+  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
+  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -99,6 +101,14 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::SecWebSocketAcceptParseError =
     rttp_client::response::SecWebSocketAccept::parse("the accept value")
       .expect_err("invalid Sec-WebSocket-Accept should fail");
+  let client_sec_websocket_extensions: rttp::SecWebSocketExtensions =
+    rttp_client::response::SecWebSocketExtensions::parse(
+      r#"permessage-deflate; client_max_window_bits; mode="safe""#,
+    )
+    .expect("Sec-WebSocket-Extensions should parse");
+  let _: rttp::SecWebSocketExtensionsParseError =
+    rttp_client::response::SecWebSocketExtensions::parse_selection("permessage-deflate, x-test")
+      .expect_err("multi-extension Sec-WebSocket-Extensions selection should fail");
   let critical_ch: rttp::CriticalCh =
     rttp_client::response::CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let cache_status: rttp::CacheStatus =
@@ -167,6 +177,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp::Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let _: rttp::TimeoutParseError =
     rttp::Timeout::parse("Second-60, second-60").expect_err("duplicate Timeout should be rejected");
+  let if_schedule_tag_match: rttp::IfScheduleTagMatch =
+    rttp::IfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
+  let _: rttp::IfScheduleTagMatchParseError =
+    rttp::IfScheduleTagMatch::parse("*").expect_err("wildcard If-Schedule-Tag-Match should fail");
   let overwrite: rttp::Overwrite = rttp::Overwrite::parse("F").expect("Overwrite should parse");
   let _: rttp::OverwriteParseError =
     rttp::Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
@@ -353,6 +367,12 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let sec_purpose: rttp::SecPurpose =
     rttp_client::SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
+  let a_im: rttp::AIm =
+    rttp::AIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
+  let _: rttp::AImParseError =
+    rttp::AIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
+  let _: &rttp::AImMember = &a_im.members()[0];
+  let _: Option<&rttp::AImParameter> = a_im.members()[1].parameters().first();
   let baggage: rttp::Baggage =
     rttp_client::Baggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
   let _: rttp::BaggageParseError = rttp_client::Baggage::parse("tenant=1,tenant=2")
@@ -372,6 +392,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(
     client_sec_websocket_accept.as_str(),
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+  );
+  assert_eq!(
+    client_sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
   );
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(
@@ -393,6 +417,7 @@ fn compatibility_facade_exports_client_metadata_types() {
     accept_encoding.header_value(),
     "gzip, br;q=0.8, identity;q=0"
   );
+  assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
@@ -430,6 +455,13 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!("second-60, infinite", timeout.header_value());
   assert_eq!(rttp::Overwrite::F, overwrite);
   assert_eq!("F", overwrite.header_value());
+  assert_eq!(
+    if_schedule_tag_match.entity_tag().header_value(),
+    "\"sched-17\""
+  );
+  assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
+  assert!(!if_schedule_tag_match.is_weak());
+  assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -1128,6 +1160,78 @@ fn compatibility_facade_roundtrips_destination_request_metadata_without_policy()
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_if_schedule_tag_match_request_metadata_without_policy() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  let response = rttp::Http::client()
+    .method("PUT")
+    .url(format!("http://{addr}/calendars/alice/inbox/invite.ics"))
+    .if_schedule_tag_match(" \"sched-17\" ")
+    .expect("If-Schedule-Tag-Match should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle
+    .join()
+    .expect("If-Schedule-Tag-Match capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("\"sched-17\""),
+    header_value(&captured_request_text, "If-Schedule-Tag-Match")
+  );
+  assert_eq!(204, response.code());
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let validator: HttpIfScheduleTagMatch = server_request
+    .if_schedule_tag_match()
+    .expect("server If-Schedule-Tag-Match should parse")
+    .expect("server If-Schedule-Tag-Match should be present");
+
+  assert_eq!("\"sched-17\"", validator.header_value());
+  assert_eq!("sched-17", validator.opaque_tag());
+  assert!(!validator.is_weak());
+
+  let weak = rttp::server::HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: W/\"sched-17\"\r\n\r\n",
+  )
+  .expect("weak If-Schedule-Tag-Match request should still parse");
+  let weak_validator: HttpIfScheduleTagMatch = weak
+    .if_schedule_tag_match()
+    .expect("server weak If-Schedule-Tag-Match should parse")
+    .expect("server weak If-Schedule-Tag-Match should be present");
+  assert!(weak_validator.is_weak());
+  assert_eq!("W/\"sched-17\"", weak_validator.header_value());
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: *\r\n\r\n",
+  )
+  .expect("malformed If-Schedule-Tag-Match request should still parse");
+  let malformed_result: Result<Option<HttpIfScheduleTagMatch>, HttpIfScheduleTagMatchParseError> =
+    malformed.if_schedule_tag_match();
+  assert!(malformed_result.is_err());
+  assert_eq!(Some("*"), malformed.header("If-Schedule-Tag-Match"));
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: \"sched-16\"\r\nif-schedule-tag-match: \"sched-17\"\r\n\r\n",
+  )
+  .expect("duplicate If-Schedule-Tag-Match request should still parse");
+  assert!(duplicate.if_schedule_tag_match().is_err());
+  assert_eq!(
+    Some("\"sched-16\""),
+    duplicate.header("If-Schedule-Tag-Match")
+  );
+
+  assert!(
+    rttp::IfScheduleTagMatch::parse(format!("\"{}\"", "a".repeat(64 * 1024 - 1))).is_err(),
+    "oversized If-Schedule-Tag-Match values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn compatibility_facade_roundtrips_lock_token_metadata_without_policy() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     concat!(
@@ -1256,6 +1360,75 @@ fn compatibility_facade_roundtrips_overwrite_request_metadata_without_policy() {
 
 #[test]
 #[cfg(feature = "client")]
+fn client_a_im_helpers_parse_through_shared_server_type() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .a_im("diffe")
+    .expect("diffe should be accepted")
+    .a_im_with_q("gzip", "0.3")
+    .expect("gzip quality should be accepted")
+    .a_im_value("identity;q=0;profile=compact")
+    .expect("parameterized A-IM should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle.join().expect("A-IM capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("diffe, gzip;q=0.3, identity;q=0;profile=compact"),
+    header_value(&captured_request_text, "A-IM")
+  );
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let a_im: rttp::AIm = server_request
+    .a_im()
+    .expect("server A-IM should parse")
+    .expect("server A-IM should be present");
+
+  assert_eq!(a_im.len(), 3);
+  assert_eq!(a_im.members()[0].token(), "diffe");
+  assert_eq!(a_im.members()[0].quality(), 1000);
+  assert_eq!(a_im.members()[1].token(), "gzip");
+  assert_eq!(a_im.members()[1].quality(), 300);
+  assert_eq!(a_im.members()[2].token(), "identity");
+  assert_eq!(a_im.members()[2].quality(), 0);
+  assert_eq!(
+    a_im.header_value(),
+    "diffe, gzip;q=0.3, identity;q=0;profile=compact"
+  );
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nA-IM: diffe, DIFFE\r\n\r\n",
+  )
+  .expect("malformed A-IM request should still parse");
+  assert!(
+    malformed.a_im().is_err(),
+    "duplicate A-IM members must fail closed"
+  );
+  assert_eq!(malformed.header("A-IM"), Some("diffe, DIFFE"));
+
+  assert!(
+    rttp::AIm::parse("x".repeat(64 * 1024 + 1)).is_err(),
+    "oversized A-IM values must fail closed"
+  );
+  let too_many = (0..33)
+    .map(|index| format!("coding{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(
+    rttp::server::HttpAIm::parse(too_many).is_err(),
+    "more than 32 A-IM members must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn client_accept_encoding_helpers_parse_through_shared_server_type() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
@@ -1324,6 +1497,10 @@ fn client_accept_encoding_helpers_parse_through_shared_server_type() {
 #[test]
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let a_im: HttpAIm =
+    HttpAIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
+  let _: HttpAImParseError =
+    HttpAIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5")
       .expect("Accept-Charset should parse");
@@ -1383,6 +1560,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let sec_websocket_protocol: HttpSecWebSocketProtocol =
     HttpSecWebSocketProtocol::parse("chat, superchat")
       .expect("Sec-WebSocket-Protocol offers should parse");
+  let sec_websocket_extensions: HttpSecWebSocketExtensions =
+    HttpSecWebSocketExtensions::parse(r#"permessage-deflate; client_max_window_bits; mode="safe""#)
+      .expect("Sec-WebSocket-Extensions offers should parse");
   let sec_websocket_accept = HttpSecWebSocketAccept::derive_from_key(&sec_websocket_key);
   let baggage: HttpBaggage =
     HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
@@ -1419,6 +1599,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpSecWebSocketVersion::parse("8, 13");
   let _: Result<HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError> =
     HttpSecWebSocketProtocol::parse_selection("chat, superchat");
+  let _: Result<HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError> =
+    HttpSecWebSocketExtensions::parse_selection("permessage-deflate, x-test");
   let _: Result<HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError> =
     HttpSecWebSocketAccept::parse("the accept value");
   let if_modified_since: HttpIfModifiedSince =
@@ -1507,6 +1689,7 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
   assert_eq!(accept_charsets.charsets()[0].charset(), "utf-8");
   assert_eq!(accept_charsets.charsets()[1].quality(), 500);
   assert_eq!(accept_charsets.header_value(), "utf-8, iso-8859-1;q=0.5");
@@ -1563,6 +1746,14 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert!(sec_websocket_protocol.contains("chat"));
   assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
   assert_eq!(sec_websocket_protocol.selected(), None);
+  assert_eq!(
+    sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
+  );
+  assert_eq!(
+    sec_websocket_extensions.extensions()[0].token(),
+    "permessage-deflate"
+  );
   assert_eq!(
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
     sec_websocket_accept.as_str()

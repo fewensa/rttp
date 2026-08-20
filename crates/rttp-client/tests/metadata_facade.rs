@@ -18,14 +18,14 @@ use rttp_client::response::{
   PragmaParseError, PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
   ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError,
   ReferrerPolicy, ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError,
-  SecWebSocketProtocol, SecWebSocketProtocolParseError, SecWebSocketVersion,
-  SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
-  Via, ViaParseError, WantContentDigest, WantReprDigest, Warning, WwwAuthenticate,
-  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
-  XFrameOptionsParseError,
+  SecWebSocketExtensions, SecWebSocketExtensionsParseError, SecWebSocketProtocol,
+  SecWebSocketProtocolParseError, SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming,
+  Signature, SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
+  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
+  SupportsLoadingMode, SupportsLoadingModeParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, Via, ViaParseError,
+  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -33,10 +33,11 @@ use rttp_client::response::{
   ServiceWorkerAllowedParseError,
 };
 use rttp_client::{
-  Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
-  DestinationParseError, HttpClient, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Timeout, TimeoutParseError,
-  TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  AIm, AImMember, AImParameter, AImParseError, Baggage, BaggageMember, BaggageParseError,
+  BaggageProperty, Depth, DepthParseError, Destination, DestinationParseError, HttpClient,
+  IfScheduleTagMatch, IfScheduleTagMatchParseError, Overwrite, OverwriteParseError, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Timeout,
+  TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
   TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
   Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError,
   XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
@@ -112,6 +113,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let timeout = Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let _: TimeoutParseError =
     Timeout::parse("Second-60, second-60").expect_err("duplicate Timeout should be rejected");
+  let if_schedule_tag_match =
+    IfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
+  let _: IfScheduleTagMatchParseError =
+    IfScheduleTagMatch::parse("*").expect_err("wildcard If-Schedule-Tag-Match should be rejected");
   let overwrite = Overwrite::parse("F").expect("Overwrite should parse");
   let _: OverwriteParseError =
     Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
@@ -161,6 +166,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     AcceptCharset::parse("utf-8, iso-8859-1;q=0.5, *;q=0").expect("Accept-Charset should parse");
   let accept_encoding =
     AcceptEncoding::parse("gzip, br;q=0.8").expect("Accept-Encoding should parse");
+  let a_im: AIm = AIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
+  let _: AImParseError = AIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
+  let _: &[AImMember] = a_im.members();
+  let _: Option<&AImParameter> = a_im.members()[1].parameters().first();
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10").expect("Want-Repr-Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
@@ -212,6 +221,15 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect_err("multi-token selection should be rejected");
   let sec_websocket_protocol_selection = SecWebSocketProtocol::from_selection("graphql-ws")
     .expect("Sec-WebSocket-Protocol should select");
+  let sec_websocket_extensions =
+    SecWebSocketExtensions::parse(r#"permessage-deflate; client_max_window_bits; mode="safe""#)
+      .expect("Sec-WebSocket-Extensions offers should parse");
+  let _: SecWebSocketExtensionsParseError =
+    SecWebSocketExtensions::parse_selection("permessage-deflate, x-test")
+      .expect_err("multi-extension selection should be rejected");
+  let sec_websocket_extensions_selection =
+    SecWebSocketExtensions::parse_selection("permessage-deflate; server_max_window_bits=15")
+      .expect("Sec-WebSocket-Extensions should select");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -377,6 +395,13 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(Overwrite::F, overwrite);
   assert_eq!("F", overwrite.header_value());
   assert_eq!(
+    if_schedule_tag_match.entity_tag().header_value(),
+    "\"sched-17\""
+  );
+  assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
+  assert!(!if_schedule_tag_match.is_weak());
+  assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
+  assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
   );
@@ -400,6 +425,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(accept_charset.charsets()[1].quality(), 500);
   assert_eq!(accept_encoding.codings()[0].coding(), "gzip");
   assert_eq!(accept_encoding.codings()[1].quality(), 800);
+  assert_eq!(a_im.members()[0].token(), "diffe");
+  assert_eq!(a_im.members()[1].quality(), 300);
+  assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
   assert_eq!(priority.urgency(), Some(1));
   assert_eq!(signature_input.members()[0].label(), "sig1");
@@ -460,6 +488,21 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     sec_websocket_protocol_selection.selected(),
     Some("graphql-ws")
+  );
+  assert_eq!(
+    sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
+  );
+  assert_eq!(
+    sec_websocket_extensions.extensions()[0].token(),
+    "permessage-deflate"
+  );
+  assert_eq!(
+    sec_websocket_extensions_selection
+      .selected()
+      .expect("selected extension")
+      .token(),
+    "permessage-deflate"
   );
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
@@ -942,6 +985,54 @@ fn response_facade_parses_sec_websocket_protocol_selection_metadata() {
   assert_eq!(
     multi_token.header_value("Sec-WebSocket-Protocol"),
     Some(&"chat, superchat".to_string())
+  );
+}
+
+#[test]
+fn response_facade_parses_sec_websocket_extensions_selection_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let extensions: SecWebSocketExtensions = response
+    .sec_websocket_extensions()
+    .expect("Sec-WebSocket-Extensions should parse")
+    .expect("Sec-WebSocket-Extensions should be present");
+
+  assert_eq!(
+    extensions.selected().expect("selected extension").token(),
+    "permessage-deflate"
+  );
+  assert_eq!(
+    extensions.header_value(),
+    "permessage-deflate; client_no_context_takeover"
+  );
+  assert_eq!(response.header_value("Connection"), None);
+  assert_eq!(response.header_value("Upgrade"), None);
+
+  let multi_extension = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Extensions: permessage-deflate, x-test\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  assert!(multi_extension.sec_websocket_extensions().is_err());
+  assert_eq!(
+    multi_extension.header_value("Sec-WebSocket-Extensions"),
+    Some(&"permessage-deflate, x-test".to_string())
   );
 }
 

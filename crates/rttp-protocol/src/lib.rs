@@ -7,6 +7,7 @@
 //! specific header type, including bounded value parsing, wire formatting, and
 //! the limits and error types that apply to that header.
 
+pub mod a_im;
 pub mod accept_charset;
 pub mod accept_encoding;
 pub mod accept_language;
@@ -69,6 +70,7 @@ pub mod host;
 pub mod http1;
 pub mod idempotency_key;
 pub mod if_modified_since;
+pub mod if_schedule_tag_match;
 pub mod if_unmodified_since;
 pub mod keep_alive;
 pub mod link;
@@ -97,6 +99,7 @@ pub mod reporting_endpoints;
 pub mod save_data;
 pub mod sec_gpc;
 pub mod sec_websocket_accept;
+pub mod sec_websocket_extensions;
 pub mod sec_websocket_key;
 pub mod sec_websocket_protocol;
 pub mod sec_websocket_version;

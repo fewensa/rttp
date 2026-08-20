@@ -380,7 +380,28 @@ fn parse_media_type_or_token(
   }
   *position += 1;
   let second = parse_token(value, position, "invalid Alternates type")?;
-  Ok(format!("{first}/{second}"))
+  let mut parsed = format!("{first}/{second}");
+  loop {
+    skip_ows(value.as_bytes(), position);
+    if value.as_bytes().get(*position) != Some(&b';') {
+      return Ok(parsed);
+    }
+    *position += 1;
+    skip_ows(value.as_bytes(), position);
+    let parameter_name = parse_token(value, position, "invalid Alternates type")?;
+    skip_ows(value.as_bytes(), position);
+    expect_byte(value, position, b'=', "invalid Alternates type")?;
+    skip_ows(value.as_bytes(), position);
+    let parameter_value = if value.as_bytes().get(*position) == Some(&b'"') {
+      parse_quoted_string(value, position)?
+    } else {
+      parse_token(value, position, "invalid Alternates type")?.to_string()
+    };
+    parsed.push(';');
+    parsed.push_str(parameter_name);
+    parsed.push('=');
+    parsed.push_str(&parameter_value);
+  }
 }
 
 fn parse_quoted_string(value: &str, position: &mut usize) -> Result<String, AlternatesParseError> {
@@ -523,7 +544,22 @@ fn is_media_type(value: &str) -> bool {
   let Some((type_name, subtype)) = value.split_once('/') else {
     return false;
   };
-  is_token(type_name) && is_token(subtype) && !subtype.contains('/')
+  if !is_token(type_name) {
+    return false;
+  }
+  let mut parts = subtype.split(';');
+  let Some(subtype_name) = parts.next() else {
+    return false;
+  };
+  if !is_token(subtype_name) || subtype_name.contains('/') {
+    return false;
+  }
+  parts.all(|parameter| {
+    let Some((name, value)) = parameter.split_once('=') else {
+      return false;
+    };
+    is_token(name) && is_token(value)
+  })
 }
 
 fn is_uri_reference_byte(byte: u8) -> bool {

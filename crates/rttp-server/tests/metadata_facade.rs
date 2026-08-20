@@ -1,8 +1,8 @@
 use rttp_server::server::{
-  HttpAcceptCh, HttpAcceptCharset, HttpAcceptCharsetParseError, HttpAcceptLanguageParseError,
-  HttpAcceptLanguages, HttpAccessControlAllowCredentials,
-  HttpAccessControlAllowCredentialsParseError, HttpAccessControlAllowHeaders,
-  HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
+  HttpAIm, HttpAImMember, HttpAImParameter, HttpAImParseError, HttpAcceptCh, HttpAcceptCharset,
+  HttpAcceptCharsetParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
+  HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
+  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpAltUsed, HttpAltUsedParseError,
@@ -20,17 +20,18 @@ use rttp_server::server::{
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
   HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
-  HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
-  HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
-  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite,
-  HttpOverwriteParseError, HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist,
-  HttpPermissionsPolicyAllowlistMember, HttpPermissionsPolicyDirective,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
-  HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
-  HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
-  HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpIfModifiedSinceParseError, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError,
+  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpLockToken,
+  HttpLockTokenParseError, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
+  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
+  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
+  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
   HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
   HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
@@ -85,6 +86,12 @@ fn server_dav_response_metadata_uses_protocol_representation() {
 #[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let a_im: HttpAIm =
+    HttpAIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
+  let _: HttpAImParseError =
+    HttpAIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
+  let _: &[HttpAImMember] = a_im.members();
+  let _: Option<&HttpAImParameter> = a_im.members()[1].parameters().first();
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5, *;q=0")
       .expect("Accept-Charset should parse");
@@ -182,6 +189,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("If-Modified-Since should parse");
   let if_modified_since_error: Result<HttpIfModifiedSince, HttpIfModifiedSinceParseError> =
     HttpIfModifiedSince::parse("not-a-date");
+  let if_schedule_tag_match: HttpIfScheduleTagMatch =
+    HttpIfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
+  let if_schedule_tag_match_weak: HttpIfScheduleTagMatch =
+    HttpIfScheduleTagMatch::parse("W/\"sched-17\"")
+      .expect("weak If-Schedule-Tag-Match should parse");
+  let if_schedule_tag_match_error: Result<
+    HttpIfScheduleTagMatch,
+    HttpIfScheduleTagMatchParseError,
+  > = HttpIfScheduleTagMatch::parse("*");
   let if_unmodified_since: HttpIfUnmodifiedSince =
     HttpIfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("If-Unmodified-Since should parse");
@@ -339,6 +355,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let sec_websocket_protocol_response = HttpResponse::new(400, "Bad Request")
     .with_sec_websocket_protocol("graphql-transport-ws")
     .expect("Sec-WebSocket-Protocol should be accepted");
+  let sec_websocket_extensions: HttpSecWebSocketExtensions =
+    HttpSecWebSocketExtensions::parse(r#"permessage-deflate; client_max_window_bits; mode="safe""#)
+      .expect("Sec-WebSocket-Extensions should parse");
+  let _: HttpSecWebSocketExtensionsParseError =
+    HttpSecWebSocketExtensions::parse_selection("permessage-deflate, x-test")
+      .expect_err("multi-extension Sec-WebSocket-Extensions selection should be rejected");
+  let sec_websocket_extensions_response = HttpResponse::new(101, "Switching Protocols")
+    .with_sec_websocket_extensions("permessage-deflate; server_max_window_bits=15")
+    .expect("Sec-WebSocket-Extensions should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -348,6 +373,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(a_im.members()[0].token(), "diffe");
+  assert_eq!(a_im.members()[1].quality(), 300);
+  assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
   let first_charset: &HttpAcceptCharset = &accept_charsets.charsets()[0];
   assert_eq!(first_charset.charset(), "utf-8");
   assert_eq!(first_charset.quality(), 1000);
@@ -422,6 +450,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert!(if_modified_since_error.is_err());
+  assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
+  assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
+  assert!(!if_schedule_tag_match.is_weak());
+  assert!(if_schedule_tag_match_weak.is_weak());
+  assert_eq!(if_schedule_tag_match_weak.header_value(), "W/\"sched-17\"");
+  assert!(if_schedule_tag_match_error.is_err());
   assert_eq!(
     if_unmodified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -642,6 +676,22 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .sec_websocket_protocol()
       .expect("Sec-WebSocket-Protocol should parse")
       .expect("Sec-WebSocket-Protocol should be present")
+      .header_value()
+  );
+  assert_eq!(
+    sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
+  );
+  assert_eq!(
+    sec_websocket_extensions.extensions()[0].token(),
+    "permessage-deflate"
+  );
+  assert_eq!(
+    "permessage-deflate; server_max_window_bits=15",
+    sec_websocket_extensions_response
+      .sec_websocket_extensions()
+      .expect("Sec-WebSocket-Extensions should parse")
+      .expect("Sec-WebSocket-Extensions should be present")
       .header_value()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");
@@ -930,6 +980,73 @@ fn request_facade_rejects_malformed_accept_charset_metadata() {
 }
 
 #[test]
+fn request_facade_parses_a_im_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nA-IM: diffe, gzip;q=0.3;profile=compact\r\nA-IM: identity;q=0\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let a_im: HttpAIm = request
+    .a_im()
+    .expect("A-IM should parse")
+    .expect("A-IM should be present");
+
+  assert_eq!(a_im.members()[0].token(), "diffe");
+  assert_eq!(a_im.members()[1].token(), "gzip");
+  assert_eq!(a_im.members()[1].quality(), 300);
+  assert_eq!(Some("compact"), a_im.members()[1].parameters()[1].value());
+  assert_eq!(a_im.members()[2].token(), "identity");
+  assert_eq!(a_im.members()[2].quality(), 0);
+  assert_eq!(
+    a_im.header_value(),
+    "diffe, gzip;q=0.3;profile=compact, identity;q=0"
+  );
+}
+
+#[test]
+fn request_facade_omits_a_im_metadata_when_header_is_absent() {
+  let request = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert_eq!(
+    None,
+    request.a_im().expect("missing A-IM should be accepted")
+  );
+}
+
+#[test]
+fn request_facade_rejects_malformed_a_im_metadata_without_hiding_headers() {
+  let request =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nA-IM: diffe, DIFFE\r\n\r\n")
+      .expect("malformed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("A-IM"), Some("diffe, DIFFE"));
+  assert!(request.a_im().is_err());
+}
+
+#[test]
+fn request_facade_rejects_oversized_a_im_metadata_without_hiding_headers() {
+  let too_many = (0..=32)
+    .map(|index| format!("c{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let raw = format!("GET /asset HTTP/1.1\r\nHost: example.test\r\nA-IM: {too_many}\r\n\r\n");
+  let request = HttpRequest::parse(raw.as_bytes())
+    .expect("over-limit typed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("A-IM"), Some(too_many.as_str()));
+  assert!(request.a_im().is_err());
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_error: Result<HttpAIm, HttpAImParseError> = HttpAIm::parse(oversized.as_str());
+  assert!(oversized_error.is_err());
+
+  let first = "a".repeat(32 * 1024 + 1);
+  let second = "b".repeat(32 * 1024 + 1);
+  assert!(HttpAIm::parse_values([first.as_str(), second.as_str()]).is_err());
+}
+
+#[test]
 fn request_facade_parses_accept_encoding_metadata() {
   let request = HttpRequest::parse(
     b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Encoding: gzip, br;q=0.8, identity;q=0\r\n\r\n",
@@ -1210,6 +1327,70 @@ fn request_facade_parses_timeout_metadata_without_policy() {
   assert!(
     HttpTimeout::parse(format!("{}Second-1", " ".repeat(64 * 1024 + 1))).is_err(),
     "oversized Timeout values must fail closed"
+  );
+}
+
+#[test]
+fn request_facade_parses_if_schedule_tag_match_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: \"sched-17\"\r\n\r\n",
+  )
+  .expect("request should parse");
+  let validator: HttpIfScheduleTagMatch = request
+    .if_schedule_tag_match()
+    .expect("If-Schedule-Tag-Match should parse")
+    .expect("If-Schedule-Tag-Match should be present");
+
+  assert_eq!("\"sched-17\"", validator.header_value());
+  assert_eq!("sched-17", validator.opaque_tag());
+  assert!(!validator.is_weak());
+  assert_eq!(
+    Some("\"sched-17\""),
+    request.header("If-Schedule-Tag-Match")
+  );
+
+  let weak = HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: W/\"sched-17\"\r\n\r\n",
+  )
+  .expect("request should parse");
+  let weak_validator: HttpIfScheduleTagMatch = weak
+    .if_schedule_tag_match()
+    .expect("weak If-Schedule-Tag-Match should parse")
+    .expect("weak If-Schedule-Tag-Match should be present");
+  assert!(weak_validator.is_weak());
+  assert_eq!("sched-17", weak_validator.opaque_tag());
+
+  let absent = HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .if_schedule_tag_match()
+      .expect("missing If-Schedule-Tag-Match should be accepted")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: *\r\n\r\n",
+  )
+  .expect("malformed If-Schedule-Tag-Match request should still parse");
+  assert!(malformed.if_schedule_tag_match().is_err());
+  assert_eq!(Some("*"), malformed.header("If-Schedule-Tag-Match"));
+
+  let duplicate = HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: \"sched-16\"\r\nif-schedule-tag-match: \"sched-17\"\r\n\r\n",
+  )
+  .expect("duplicate If-Schedule-Tag-Match request should still parse");
+  assert!(duplicate.if_schedule_tag_match().is_err());
+  assert_eq!(
+    Some("\"sched-16\""),
+    duplicate.header("If-Schedule-Tag-Match")
+  );
+
+  assert!(
+    HttpIfScheduleTagMatch::parse(format!("\"{}\"", "a".repeat(64 * 1024 - 1))).is_err(),
+    "oversized If-Schedule-Tag-Match values must fail closed"
   );
 }
 

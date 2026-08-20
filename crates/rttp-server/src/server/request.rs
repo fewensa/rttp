@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::a_im::{
+  AIm as HttpAIm, AImMember as HttpAImMember, AImParameter as HttpAImParameter,
+  AImParseError as HttpAImParseError,
+};
 pub use rttp_protocol::accept_charset::{
   AcceptCharset as HttpRequestAcceptCharsets,
   AcceptCharsetParseError as HttpAcceptCharsetParseError, AcceptCharsetRange as HttpAcceptCharset,
@@ -66,6 +70,10 @@ pub use rttp_protocol::if_modified_since::{
   IfModifiedSince as HttpIfModifiedSince,
   IfModifiedSinceParseError as HttpIfModifiedSinceParseError,
 };
+pub use rttp_protocol::if_schedule_tag_match::{
+  IfScheduleTagMatch as HttpIfScheduleTagMatch,
+  IfScheduleTagMatchParseError as HttpIfScheduleTagMatchParseError,
+};
 pub use rttp_protocol::if_unmodified_since::{
   IfUnmodifiedSince as HttpIfUnmodifiedSince,
   IfUnmodifiedSinceParseError as HttpIfUnmodifiedSinceParseError,
@@ -92,6 +100,13 @@ pub use rttp_protocol::save_data::{
   SaveData as HttpSaveData, SaveDataParseError as HttpSaveDataParseError,
 };
 pub use rttp_protocol::sec_gpc::{SecGpc as HttpSecGpc, SecGpcParseError as HttpSecGpcParseError};
+pub use rttp_protocol::sec_websocket_extensions::{
+  SecWebSocketExtension as HttpSecWebSocketExtension,
+  SecWebSocketExtensionParameter as HttpSecWebSocketExtensionParameter,
+  SecWebSocketExtensionParameterValue as HttpSecWebSocketExtensionParameterValue,
+  SecWebSocketExtensions as HttpSecWebSocketExtensions,
+  SecWebSocketExtensionsParseError as HttpSecWebSocketExtensionsParseError,
+};
 pub use rttp_protocol::sec_websocket_key::{
   SecWebSocketKey as HttpSecWebSocketKey,
   SecWebSocketKeyParseError as HttpSecWebSocketKeyParseError,
@@ -365,6 +380,18 @@ impl Request {
       return Ok(None);
     }
     HttpIfModifiedSince::parse_values(values).map(Some)
+  }
+
+  /// Parses one entity-tag-shaped `If-Schedule-Tag-Match` validator without
+  /// comparing it to stored calendar state or applying scheduling policy.
+  pub fn if_schedule_tag_match(
+    &self,
+  ) -> Result<Option<HttpIfScheduleTagMatch>, HttpIfScheduleTagMatchParseError> {
+    let values: Vec<&str> = self.headers_named("If-Schedule-Tag-Match").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfScheduleTagMatch::parse_values(values).map(Some)
   }
 
   /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
@@ -661,6 +688,20 @@ impl Request {
     HttpSecWebSocketProtocol::parse_values(values).map(Some)
   }
 
+  /// Parses bounded `Sec-WebSocket-Extensions` request metadata as ordered
+  /// offers without activating compression, negotiating extensions, or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_extensions(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketExtensions>, HttpSecWebSocketExtensionsParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Extensions").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketExtensions::parse_values(values).map(Some)
+  }
+
   /// Parses received W3C `traceparent` request metadata without creating
   /// identifiers, deciding sampling, or configuring propagation.
   pub fn traceparent(&self) -> Result<Option<HttpTraceParent>, HttpTraceParentParseError> {
@@ -705,6 +746,16 @@ impl Request {
       return Ok(None);
     }
     HttpRequestAcceptCharsets::parse_values(values).map(Some)
+  }
+
+  /// Parses received `A-IM` request metadata without selecting or applying a
+  /// delta encoding.
+  pub fn a_im(&self) -> Result<Option<HttpAIm>, HttpAImParseError> {
+    let values: Vec<&str> = self.headers_named("A-IM").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAIm::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling
@@ -2287,6 +2338,23 @@ impl HttpRequest {
     HttpIfModifiedSince::parse_values(values).map(Some)
   }
 
+  /// Parses one entity-tag-shaped `If-Schedule-Tag-Match` validator without
+  /// comparing it to stored calendar state or applying scheduling policy.
+  pub fn if_schedule_tag_match(
+    &self,
+  ) -> Result<Option<HttpIfScheduleTagMatch>, HttpIfScheduleTagMatchParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("If-Schedule-Tag-Match"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfScheduleTagMatch::parse_values(values).map(Some)
+  }
+
   /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
   pub fn if_unmodified_since(
     &self,
@@ -2556,6 +2624,25 @@ impl HttpRequest {
     HttpSecWebSocketProtocol::parse_values(values).map(Some)
   }
 
+  /// Parses bounded `Sec-WebSocket-Extensions` request metadata as ordered
+  /// offers without activating compression, negotiating extensions, or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_extensions(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketExtensions>, HttpSecWebSocketExtensionsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketExtensions::parse_values(values).map(Some)
+  }
+
   /// Parses received W3C `traceparent` request metadata without creating
   /// identifiers, deciding sampling, or configuring propagation.
   pub fn traceparent(&self) -> Result<Option<HttpTraceParent>, HttpTraceParentParseError> {
@@ -2745,6 +2832,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpUpgradeInsecureRequests::parse_values(values).map(Some)
+  }
+
+  /// Parses received `A-IM` request metadata without selecting or applying a
+  /// delta encoding.
+  pub fn a_im(&self) -> Result<Option<HttpAIm>, HttpAImParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("A-IM"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAIm::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling

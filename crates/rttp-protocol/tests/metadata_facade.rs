@@ -1,3 +1,4 @@
+use rttp_protocol::a_im::AIm;
 use rttp_protocol::accept_charset::AcceptCharset;
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::AcceptLanguage;
@@ -45,6 +46,7 @@ use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
 use rttp_protocol::idempotency_key::IdempotencyKey;
 use rttp_protocol::if_modified_since::IfModifiedSince;
+use rttp_protocol::if_schedule_tag_match::IfScheduleTagMatch;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::link::LinkValues;
@@ -68,6 +70,9 @@ use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
+use rttp_protocol::sec_websocket_extensions::{
+  SecWebSocketExtensions, SecWebSocketExtensionsParseError,
+};
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::sec_websocket_protocol::{SecWebSocketProtocol, SecWebSocketProtocolParseError};
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
@@ -164,8 +169,21 @@ fn protocol_exports_representative_bounded_metadata_types() {
     SecWebSocketProtocol::from_selection("chat").expect("Sec-WebSocket-Protocol should select");
   let _: SecWebSocketProtocolParseError = SecWebSocketProtocol::parse_selection("chat, superchat")
     .expect_err("multi-token Sec-WebSocket-Protocol selection should be rejected");
+  let sec_websocket_extensions =
+    SecWebSocketExtensions::parse(r#"permessage-deflate; client_max_window_bits; mode="safe""#)
+      .expect("Sec-WebSocket-Extensions offers should parse");
+  let sec_websocket_extensions_selection =
+    SecWebSocketExtensions::parse_selection("permessage-deflate; server_max_window_bits=15")
+      .expect("Sec-WebSocket-Extensions selection should parse");
+  let _: SecWebSocketExtensionsParseError =
+    SecWebSocketExtensions::parse_selection("permessage-deflate, x-test")
+      .expect_err("multi-extension Sec-WebSocket-Extensions selection should be rejected");
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
+  let if_schedule_tag_match =
+    IfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
+  let if_schedule_tag_match_weak =
+    IfScheduleTagMatch::parse("W/\"sched-17\"").expect("weak If-Schedule-Tag-Match should parse");
   let if_unmodified_since = IfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Unmodified-Since should parse");
   let memento_datetime =
@@ -282,6 +300,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
+  let a_im = AIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
   let baggage =
     Baggage::parse("tenant=acme;source=gateway,release=2026-08-19").expect("baggage should parse");
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
@@ -414,6 +433,21 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
   assert!(sec_websocket_protocol.contains("chat"));
   assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(
+    sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
+  );
+  assert_eq!(
+    sec_websocket_extensions.extensions()[0].token(),
+    "permessage-deflate"
+  );
+  assert_eq!(
+    sec_websocket_extensions_selection
+      .selected()
+      .expect("selected extension")
+      .token(),
+    "permessage-deflate"
+  );
   assert_eq!(sec_websocket_protocol_selection.selected(), Some("chat"));
   assert_eq!(sec_websocket_protocol_selection.header_value(), "chat");
   assert_eq!(
@@ -426,6 +460,16 @@ fn protocol_exports_representative_bounded_metadata_types() {
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
+  assert_eq!(
+    if_schedule_tag_match.entity_tag().header_value(),
+    "\"sched-17\""
+  );
+  assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
+  assert!(!if_schedule_tag_match.is_weak());
+  assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
+  assert_eq!(if_schedule_tag_match_weak.opaque_tag(), "sched-17");
+  assert!(if_schedule_tag_match_weak.is_weak());
+  assert_eq!(if_schedule_tag_match_weak.header_value(), "W/\"sched-17\"");
   assert_eq!(
     if_unmodified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -582,6 +626,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(te.codings()[0].quality(), Some(500));
   assert_eq!(te.codings()[1].coding(), "trailers");
   assert!(te.codings()[1].is_trailers());
+  assert_eq!(a_im.members()[0].token(), "diffe");
+  assert_eq!(a_im.members()[1].quality(), 300);
+  assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
   assert_eq!(2, baggage.members().len());
   assert_eq!("tenant", baggage.members()[0].key());
   assert_eq!("acme", baggage.members()[0].value());

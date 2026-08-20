@@ -97,6 +97,19 @@ canonical metadata value: RTTP does not create locks, refresh locks, or select
 an application timeout. Callers needing an unusual value can retain full
 raw-header control with `header(("Timeout", "..."))`.
 
+## Bounded If-Schedule-Tag-Match metadata
+
+`HttpClient::if_schedule_tag_match(value)` sets an `If-Schedule-Tag-Match`
+request header through the shared protocol `IfScheduleTagMatch` type, which
+reuses the shared `EntityTag` representation. The helper accepts one
+entity-tag-shaped schedule validator such as `"sched-17"` or `W/"sched-17"`,
+trims HTTP OWS, and rejects empty, malformed, wildcard, comma-list, duplicate,
+injection, control-byte, and oversized (over 64 KiB) values before a socket is
+opened. It only validates and emits the canonical entity tag: RTTP does not
+compare the validator to stored calendar state, inspect calendars, or apply
+scheduling policy. Callers needing an unusual value can retain full raw-header
+control with `header(("If-Schedule-Tag-Match", "..."))`.
+
 ## Bounded WebDAV Overwrite metadata
 
 `HttpClient::overwrite(value)` sets a WebDAV `Overwrite` request header
@@ -193,6 +206,25 @@ declare or parse metadata: RTTP does not perform a WebSocket handshake, emit
 protocols. Applications own the selection decision. Callers needing an
 unusual value can retain full raw-header control with
 `header(("Sec-WebSocket-Protocol", "..."))`.
+
+## Bounded Sec-WebSocket-Extensions metadata
+
+`HttpClient::sec_websocket_extensions(value)` sets a
+`Sec-WebSocket-Extensions` request header through the shared protocol
+`SecWebSocketExtensions` type. The helper accepts ordered RFC 6455 extension
+offers such as `permessage-deflate; client_max_window_bits, x-test`, preserves
+ordered parameters, supports token and quoted-string parameter values, rejects
+duplicate extension tokens and duplicate parameter names, and enforces the
+64 KiB and 32-member bounds before a socket is opened. It replaces any
+existing same-name field with the canonical value.
+`Response::sec_websocket_extensions()` parses received responses as a
+selection singleton: a successful response carries exactly one extension
+member, and a multi-extension value returns a parse error while raw headers
+remain available. These helpers only declare or parse metadata: RTTP does not
+activate compression, negotiate extensions, emit `Connection: Upgrade`, or
+switch protocols. Applications own all extension behavior. Callers needing an
+unusual value can retain full raw-header control with
+`header(("Sec-WebSocket-Extensions", "..."))`.
 
 ## Bounded W3C Trace Context metadata
 
@@ -779,6 +811,22 @@ opened.
 
 These helpers declare request metadata only. They do not negotiate, transcode,
 decode bodies, sniff MIME types, or select a response charset.
+
+## Bounded A-IM request metadata
+
+`rttp-protocol` owns the shared `A-IM` primitive. Client helpers format
+through that type.
+
+`HttpClient::a_im()` appends a validated instance-manipulation token, while
+`a_im_with_q()` accepts an HTTP q-value from `0` through `1` with at most
+three fractional digits. `a_im_value()` appends a validated field value that
+may include q-values and extension parameters. The helpers emit one
+comma-separated `A-IM` field and reject invalid tokens, q-values, parameters,
+duplicates, oversized values, more than 16 parameters per member, and more
+than 32 members before a connection is opened.
+
+These helpers declare request metadata only. They do not select a preferred
+instance manipulation or apply delta encodings.
 
 ## Bounded Accept-Encoding request metadata
 
@@ -1406,11 +1454,13 @@ header-block model.
 | Lock-Token | `lock_token` emits bounded singleton WebDAV `Lock-Token` request metadata through the shared protocol type, replacing an existing same-name field and redacting the token from typed debug output; `Response::lock_token` parses bounded singleton response metadata | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
 | Destination | `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, preserving one absolute URI and replacing an existing same-name field | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Timeout | `timeout` emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, normalizing `Second-n`/`Infinite` alternatives to lowercase and replacing an existing same-name field | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
+| If-Schedule-Tag-Match | `if_schedule_tag_match` emits bounded singleton `If-Schedule-Tag-Match` request metadata through the shared protocol type, reusing the shared `EntityTag` representation for strong and weak validators and replacing an existing same-name field | No schedule-tag comparison, calendar inspection, scheduling policy, retry, or status-policy behavior |
 | Overwrite | `overwrite` emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F` and replacing an existing same-name field | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_version` parses received fields including rejection-response version lists | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Sec-WebSocket-Protocol | `sec_websocket_protocol` emits bounded `Sec-WebSocket-Protocol` offer metadata in preference order through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_protocol` parses received fields as a selection singleton | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |
+| Sec-WebSocket-Extensions | `sec_websocket_extensions` emits bounded ordered `Sec-WebSocket-Extensions` offer metadata through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_extensions` parses received fields as a one-extension selection singleton while preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, compression activation, extension negotiation, protocol switch, or frames |
 | Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `traceparent` and `tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types, replacing existing same-name fields and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `baggage` validates and emits bounded W3C Baggage request metadata through the shared protocol type, replacing an existing same-name field and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
@@ -1419,6 +1469,7 @@ header-block model.
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
+| A-IM | `a_im`, `a_im_with_q`, and `a_im_value` format bounded `A-IM` request metadata through the shared `rttp-protocol` type | No automatic delta-encoding selection, application, compression, or response transformation |
 | Accept-Encoding | `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | HTTP message signatures | `signature` and `signature_input` emit bounded RFC 9421 request metadata; `Response::signature()` and `signature_input()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |

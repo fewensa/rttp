@@ -129,6 +129,7 @@ pub use self::connection::{
   async_streaming_response_after_header, AsyncResponseBodyReader, AsyncStreamingResponse,
 };
 pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingResponse};
+pub use rttp_protocol::a_im::{AIm, AImMember, AImParameter, AImParseError};
 pub use rttp_protocol::baggage::{Baggage, BaggageMember, BaggageParseError, BaggageProperty};
 pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
 pub use rttp_protocol::depth::{Depth, DepthParseError};
@@ -136,9 +137,14 @@ pub use rttp_protocol::destination::{Destination, DestinationParseError};
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
+pub use rttp_protocol::if_schedule_tag_match::{IfScheduleTagMatch, IfScheduleTagMatchParseError};
 pub use rttp_protocol::lock_token::{LockToken, LockTokenParseError};
 pub use rttp_protocol::overwrite::{Overwrite, OverwriteParseError};
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
+pub use rttp_protocol::sec_websocket_extensions::{
+  SecWebSocketExtension, SecWebSocketExtensionParameter, SecWebSocketExtensionParameterValue,
+  SecWebSocketExtensions, SecWebSocketExtensionsParseError,
+};
 pub use rttp_protocol::sec_websocket_protocol::{
   SecWebSocketProtocol, SecWebSocketProtocolParseError,
 };
