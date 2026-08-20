@@ -45,6 +45,7 @@ use rttp_protocol::fetch_metadata::{
 };
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
+use rttp_protocol::http_date::{ResponseDate, ResponseExpires, ResponseLastModified};
 use rttp_protocol::idempotency_key::IdempotencyKey;
 use rttp_protocol::if_header::{If, IfParseError, IfPredicate};
 use rttp_protocol::if_modified_since::IfModifiedSince;
@@ -204,6 +205,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
   .expect("WebDAV If request metadata should parse");
   let memento_datetime =
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
+  let response_date =
+    ResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Date should parse");
+  let response_expires =
+    ResponseExpires::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Expires should parse");
+  let response_last_modified = ResponseLastModified::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Last-Modified should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
   let alternates = Alternates::parse(
     r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }"#,
@@ -528,6 +535,18 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert!(!format!("{if_header:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
   assert_eq!(
     memento_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_date.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_expires.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_last_modified.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(host.host(), "example.test");

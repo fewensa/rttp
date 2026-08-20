@@ -69,6 +69,7 @@ pub mod forwarded;
 pub mod from;
 pub mod host;
 pub mod http1;
+pub mod http_date;
 pub mod idempotency_key;
 pub mod if_header;
 pub mod if_modified_since;

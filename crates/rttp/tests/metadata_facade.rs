@@ -214,6 +214,22 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Memento-Datetime should parse");
   let _: rttp::MementoDatetimeParseError = rttp_client::response::MementoDatetime::parse("")
     .expect_err("empty Memento-Datetime should be rejected");
+  let response_date: rttp::ResponseDate =
+    rttp_client::response::ResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("Date should parse");
+  let _: rttp::ResponseDateParseError =
+    rttp_client::response::ResponseDate::parse("").expect_err("empty Date should be rejected");
+  let response_expires: rttp::ResponseExpires =
+    rttp_client::response::ResponseExpires::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("Expires should parse");
+  let _: rttp::ResponseExpiresParseError = rttp_client::response::ResponseExpires::parse("")
+    .expect_err("empty Expires should be rejected");
+  let response_last_modified: rttp::ResponseLastModified =
+    rttp_client::response::ResponseLastModified::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("Last-Modified should parse");
+  let _: rttp::ResponseLastModifiedParseError =
+    rttp_client::response::ResponseLastModified::parse("")
+      .expect_err("empty Last-Modified should be rejected");
   let content_security_policy: rttp::ContentSecurityPolicy =
     rttp_client::response::ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
@@ -504,6 +520,18 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
   assert_eq!(
     memento_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_date.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_expires.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_last_modified.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(

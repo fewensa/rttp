@@ -119,6 +119,10 @@ pub use rttp_protocol::document_policy_report_only::{
   DocumentPolicyReportOnlyValue,
 };
 pub use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
+pub use rttp_protocol::http_date::{
+  ResponseDate, ResponseDateParseError, ResponseExpires, ResponseExpiresParseError,
+  ResponseLastModified, ResponseLastModifiedParseError,
+};
 pub use rttp_protocol::im::{Im, ImMember, ImParameter, ImParseError};
 pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::link::{LinkParameter, LinkParseError, LinkValue, LinkValues};

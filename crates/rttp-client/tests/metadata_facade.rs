@@ -18,17 +18,18 @@ use rttp_client::response::{
   OriginTrials, PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError,
   PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
   ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError,
-  ReferrerPolicy, ReferrerPolicyToken, ScheduleTag, SecWebSocketAccept,
-  SecWebSocketAcceptParseError, SecWebSocketExtensions, SecWebSocketExtensionsParseError,
-  SecWebSocketProtocol, SecWebSocketProtocolParseError, SecWebSocketVersion,
-  SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError,
-  SurrogateControl, SurrogateControlParseError, Trailer, TransferEncoding,
-  TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary, VariantVaryParseError, Vary,
-  VaryParseError, Via, ViaParseError, WantContentDigest, WantReprDigest, Warning, WwwAuthenticate,
-  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
-  XFrameOptionsParseError,
+  ReferrerPolicy, ReferrerPolicyToken, ResponseDate, ResponseDateParseError, ResponseExpires,
+  ResponseExpiresParseError, ResponseLastModified, ResponseLastModifiedParseError, ScheduleTag,
+  SecWebSocketAccept, SecWebSocketAcceptParseError, SecWebSocketExtensions,
+  SecWebSocketExtensionsParseError, SecWebSocketProtocol, SecWebSocketProtocolParseError,
+  SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput,
+  SignatureInputParseError, SignatureParseError, SpeculationRules, SpeculationRulesParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
+  SupportsLoadingModeParseError, SurrogateControl, SurrogateControlParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary,
+  VariantVaryParseError, Vary, VaryParseError, Via, ViaParseError, WantContentDigest,
+  WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -189,6 +190,18 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let _: MementoDatetimeParseError =
     MementoDatetime::parse("").expect_err("empty Memento-Datetime should be rejected");
+  let response_date = ResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Date response metadata should parse");
+  let _: ResponseDateParseError =
+    ResponseDate::parse("").expect_err("empty Date should be rejected");
+  let response_expires = ResponseExpires::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Expires response metadata should parse");
+  let _: ResponseExpiresParseError =
+    ResponseExpires::parse("").expect_err("empty Expires should be rejected");
+  let response_last_modified = ResponseLastModified::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Last-Modified response metadata should parse");
+  let _: ResponseLastModifiedParseError =
+    ResponseLastModified::parse("").expect_err("empty Last-Modified should be rejected");
   let no_vary_search =
     NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let _: NoVarySearchParseError =
@@ -486,6 +499,18 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
     memento_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_date.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_expires.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_last_modified.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(

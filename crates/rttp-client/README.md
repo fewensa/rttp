@@ -445,12 +445,11 @@ or `Schedule-Tag` fields make the typed helper return an error while raw
 values remain available through `Response::etag_value()`,
 `Response::schedule_tag_value()`, `Response::header_value()`, and
 `Response::header_values()`. `Response::last_modified_date()` parses
-`Last-Modified` as an HTTP-date
-using the same parser used by the client date helpers: it returns `Ok(None)`
-when the header is absent, returns `SystemTime` for a valid HTTP-date
-singleton, and returns an error for malformed or duplicate values. The raw
-field stays available through `last_modified()` and the ordinary header
-accessors. A `304` response is treated as bodyless even if misleading framing
+`Last-Modified` through the shared response HTTP-date primitive: it returns
+`Ok(None)` when the header is absent, returns `SystemTime` for a valid
+singleton, and returns an error for malformed, duplicate, control-byte, or
+oversize values. The raw field stays available through `last_modified()` and
+the ordinary header accessors. A `304` response is treated as bodyless even if misleading framing
 headers are present, so the connection remains framed for the next response.
 `412` is surfaced as a normal response status and body/framing rules remain the
 server's responsibility.
@@ -612,12 +611,13 @@ surrogate keys, translate directives into `Cache-Control`, enforce
 shared-cache policy, retry, replay, redirect, or alter response acceptance from
 `Surrogate-Control`.
 
-## Bounded HTTP/1.1 Date, Age, and Expires behavior
+## Bounded HTTP/1.1 Date, Age, Expires, and Last-Modified behavior
 
-`Response::date()` parses the response `Date` header as singleton HTTP-date
-metadata. The helper returns `Ok(None)` when the header is absent, returns
-`SystemTime` when the value is present and valid, and returns an error for
-malformed or duplicate values.
+`Response::date()` parses the response `Date` header through the shared
+protocol `ResponseDate` singleton HTTP-date primitive. The helper returns
+`Ok(None)` when the header is absent, returns `SystemTime` when the value is
+present and valid, and returns an error for malformed, duplicate, control-byte,
+or oversize values.
 
 `Response::age()` parses the response `Age` header through the protocol `Age`
 type as HTTP/1.1 delta-seconds metadata. The helper returns `Ok(None)` when the
@@ -628,15 +628,18 @@ Surrounding SP and HTAB are trimmed as optional whitespace. Each field value
 is bounded to 64 KiB, and the accepted numeric bound is the `u64`
 delta-seconds range: `0` through `u64::MAX`.
 
-`Response::expires()` parses the response `Expires` header as an HTTP-date using
-the same HTTP-date parser used by the client date helpers. It returns
-`Ok(None)` when the header is absent, returns `SystemTime` for valid HTTP-date
-values including the standard IMF-fixdate and obsolete HTTP-date forms accepted
-by the parser, and returns an error for malformed or non-date values.
+`Response::expires()` parses the response `Expires` header through the shared
+protocol `ResponseExpires` primitive. `Response::last_modified_date()` parses
+`Last-Modified` through `ResponseLastModified` while
+`Response::last_modified()` keeps exposing the raw field. These HTTP-date
+helpers return `Ok(None)` when the header is absent, return `SystemTime` for
+valid values, and reject malformed, duplicate, control-byte, and oversize
+values. Supported HTTP-date forms are IMF-fixdate, obsolete RFC 850 dates, and
+asctime dates; typed formatting emits canonical IMF-fixdate.
 
 Malformed helper values do not reject the raw response. The original `Date`,
-`Age`, and `Expires` fields remain available through `header_value`,
-`header_values`, and the other raw header accessors. These helpers expose
+`Age`, `Expires`, and `Last-Modified` fields remain available through
+`header_value`, `header_values`, and the other raw header accessors. These helpers expose
 metadata only; `rttp_client` does not calculate freshness, correct clock skew,
 validate cache state against wall-clock time, store responses, match stored
 responses, revalidate responses, apply shared-cache policy, issue automatic
@@ -1622,7 +1625,7 @@ header-block model.
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; checked `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; the date helpers validate and emit through the shared protocol `IfModifiedSince` and `IfUnmodifiedSince` types; `Response::is_not_modified`, `is_precondition_failed`, typed bounded `etag`, `delta_base`, `last_modified`, and `last_modified_date` expose `304`/`412` and delta-base metadata while preserving raw headers | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no cached-entity lookup, no automatic revalidation, no delta application, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
-| Cache-Control, CDN-Cache-Control, Surrogate-Control, Cache-Status, Date, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::surrogate_control` parses bounded `Surrogate-Control` directives with duplicate rejection and aggregate-size validation while preserving raw responses on parse errors; `Response::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw responses on parse errors; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, `Surrogate-Control` to `Cache-Control` translation, automatic conditional requests, retry, redirect, scheduling, or status policy |
+| Cache-Control, CDN-Cache-Control, Surrogate-Control, Cache-Status, Date, Age, Expires, and Last-Modified | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::surrogate_control` parses bounded `Surrogate-Control` directives with duplicate rejection and aggregate-size validation while preserving raw responses on parse errors; `Response::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw responses on parse errors; `Response::date`, `Response::expires`, and `Response::last_modified_date` parse bounded singleton HTTP-date metadata through shared protocol primitives; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, `Surrogate-Control` to `Cache-Control` translation, automatic conditional requests, retry, redirect, scheduling, or status policy |
 | Alt-Used | `Response::alt_used` parses bounded singleton response authority metadata through the shared protocol `AltUsed` type while preserving raw headers on parse failures | No alternative service selection, origin rewriting, socket migration, retry, or connection-policy behavior |
 | Alternates | `Response::alternates` parses bounded RFC 2295-style variant metadata through the shared protocol `Alternates` type, validating URIs, qvalues, attributes, duplicates, member counts, and size bounds while preserving raw headers on parse failures | No transparent content negotiation, variant selection, automatic fetch, request replay, URI resolution, cache storage, `Vary` matching, or quality ranking |
 | Origin-Trial | `Response::origin_trials` parses bounded opaque `Origin-Trial` tokens in wire order through the shared protocol `OriginTrials` type, preserves duplicates, redacts token material from debug output, and preserves raw headers on parse failures | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |

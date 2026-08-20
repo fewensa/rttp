@@ -67,6 +67,7 @@ use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::document_policy::DocumentPolicy;
 use rttp_protocol::document_policy_report_only::DocumentPolicyReportOnly;
 use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
+use rttp_protocol::http_date::{ResponseDate, ResponseExpires, ResponseLastModified};
 use rttp_protocol::im::Im;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
@@ -98,7 +99,6 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
-const MAX_DATE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
@@ -410,29 +410,22 @@ impl Response {
   /// `last_modified()` and `header_value()`.
   pub fn last_modified_date(&self) -> error::Result<Option<SystemTime>> {
     let values = self.header_values("last-modified");
-    match values.as_slice() {
-      [] => Ok(None),
-      [value] => parse_http_date(value)
-        .map(Some)
-        .map_err(|_| error::bad_response("Invalid Last-Modified HTTP-date")),
-      _ => Err(error::bad_response("Duplicate Last-Modified header values")),
+    if values.is_empty() {
+      return Ok(None);
     }
+    ResponseLastModified::parse_values(values.into_iter().map(String::as_str))
+      .map(|last_modified| Some(last_modified.datetime()))
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn date(&self) -> error::Result<Option<SystemTime>> {
     let values = self.header_values("date");
-    match values.as_slice() {
-      [] => Ok(None),
-      [value] => {
-        if value.len() > MAX_DATE_VALUE_BYTES {
-          return Err(error::bad_response("Date header value is too large"));
-        }
-        parse_http_date(value)
-          .map(Some)
-          .map_err(|_| error::bad_response("Invalid Date HTTP-date"))
-      }
-      _ => Err(error::bad_response("Duplicate Date header values")),
+    if values.is_empty() {
+      return Ok(None);
     }
+    ResponseDate::parse_values(values.into_iter().map(String::as_str))
+      .map(|date| Some(date.datetime()))
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses bounded `Age` response metadata without applying freshness or cache policy.
@@ -447,14 +440,13 @@ impl Response {
   }
 
   pub fn expires(&self) -> error::Result<Option<SystemTime>> {
-    self
-      .header_value("expires")
-      .map(|value| {
-        parse_http_date(value)
-          .map(Some)
-          .map_err(|_| error::bad_response("Invalid Expires HTTP-date"))
-      })
-      .unwrap_or(Ok(None))
+    let values = self.header_values("expires");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ResponseExpires::parse_values(values.into_iter().map(String::as_str))
+      .map(|expires| Some(expires.datetime()))
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn sunset_value(&self) -> Option<&String> {
