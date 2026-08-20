@@ -347,6 +347,61 @@ fn response_facade_parses_cache_status_and_absent_metadata() {
 }
 
 #[test]
+fn response_http_date_setters_replace_existing_singleton_fields() {
+  let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777);
+  let response = HttpResponse::ok("")
+    .header("Date", "not a date")
+    .header("date", "Sun, 06 Nov 1994 08:49:38 GMT")
+    .header("Expires", "not a date")
+    .header("expires", "Sun, 06 Nov 1994 08:49:38 GMT")
+    .header("Last-Modified", "not a date")
+    .header("last-modified", "Sun, 06 Nov 1994 08:49:38 GMT")
+    .with_date(timestamp)
+    .with_expires(timestamp)
+    .with_last_modified(timestamp);
+
+  assert_eq!(
+    Some(timestamp),
+    response
+      .date()
+      .expect("Date should parse after replacement")
+  );
+  assert_eq!(
+    Some(timestamp),
+    response
+      .expires()
+      .expect("Expires should parse after replacement")
+  );
+  assert_eq!(
+    Some(timestamp),
+    response
+      .last_modified_date()
+      .expect("Last-Modified should parse after replacement")
+  );
+  let mut serialized = Vec::new();
+  response.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert_eq!(
+    1,
+    serialized.matches("\r\nDate: ").count(),
+    "Date should be serialized once"
+  );
+  assert_eq!(
+    1,
+    serialized.matches("\r\nExpires: ").count(),
+    "Expires should be serialized once"
+  );
+  assert_eq!(
+    1,
+    serialized.matches("\r\nLast-Modified: ").count(),
+    "Last-Modified should be serialized once"
+  );
+  assert!(serialized.contains("\r\nDate: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+  assert!(serialized.contains("\r\nExpires: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+  assert!(serialized.contains("\r\nLast-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+}
+
+#[test]
 fn parsed_http_request_exposes_sec_purpose_metadata_without_policy() {
   let request = HttpRequest::parse(
     b"GET /prefetch HTTP/1.1\r\nHost: example.test\r\nSec-Purpose: prefetch, vendor-ext\r\n\r\n",

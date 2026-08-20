@@ -1726,6 +1726,9 @@ impl HttpResponse {
   }
 
   pub fn with_date(mut self, http_date: SystemTime) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Date"));
     self.headers.push(HttpHeader::new(
       "Date",
       HttpResponseDate::new(http_date).header_value(),
@@ -1734,6 +1737,9 @@ impl HttpResponse {
   }
 
   pub fn with_expires(mut self, http_date: SystemTime) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Expires"));
     self.headers.push(HttpHeader::new(
       "Expires",
       HttpResponseExpires::new(http_date).header_value(),
@@ -1742,6 +1748,9 @@ impl HttpResponse {
   }
 
   pub fn with_last_modified(mut self, http_date: SystemTime) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Last-Modified"));
     self.headers.push(HttpHeader::new(
       "Last-Modified",
       HttpResponseLastModified::new(http_date).header_value(),
