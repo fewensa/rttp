@@ -7,11 +7,12 @@ use rttp_client::response::{
   HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime,
   OriginTrials, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
   ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter,
-  SecWebSocketAccept, SecWebSocketVersion, ServerTiming, ServiceWorkerAllowed, SignatureInput,
-  SpeculationRules, StrictTransportSecurity, SupportsLoadingMode, Warning, XContentTypeOptions,
-  XFrameOptions,
+  SecWebSocketAccept, SecWebSocketProtocol, SecWebSocketVersion, ServerTiming,
+  ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
+  SupportsLoadingMode, Via, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
+use rttp_client::DavClass;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use std::io::Write;
 use std::time::{Duration, UNIX_EPOCH};
@@ -1408,6 +1409,138 @@ fn sec_websocket_version_metadata_is_absent_without_a_header() {
     None
   );
   let _: Option<SecWebSocketVersion> = response.sec_websocket_version().expect("header is absent");
+}
+
+#[test]
+fn sec_websocket_protocol_metadata_parses_selected_token_without_switching_protocols() {
+  let value = "graphql-transport-ws";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 101 Switching Protocols\r\nSec-WebSocket-Protocol: {value}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .sec_websocket_protocol()
+    .expect("Sec-WebSocket-Protocol should parse")
+    .expect("Sec-WebSocket-Protocol should be present");
+
+  assert_eq!(metadata.protocols(), ["graphql-transport-ws"]);
+  assert_eq!(metadata.selected(), Some("graphql-transport-ws"));
+  assert!(metadata.contains("graphql-transport-ws"));
+  assert_eq!(metadata.header_value(), value);
+  assert_eq!(
+    response.header_value("Sec-WebSocket-Protocol"),
+    Some(&value.to_string())
+  );
+  assert_eq!(response.header_value("Connection"), None);
+  assert_eq!(response.header_value("Upgrade"), None);
+}
+
+#[test]
+fn sec_websocket_protocol_metadata_rejects_multi_token_selections() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Protocol: chat, superchat\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(
+    response.sec_websocket_protocol().is_err(),
+    "a selection must be a singleton"
+  );
+  assert_eq!(
+    response.header_value("Sec-WebSocket-Protocol"),
+    Some(&"chat, superchat".to_string())
+  );
+
+  let combined = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Protocol: chat\r\n",
+      "Sec-WebSocket-Protocol: superchat\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  assert!(
+    combined.sec_websocket_protocol().is_err(),
+    "combined selection fields must still be a singleton"
+  );
+  assert_eq!(
+    combined.header_values("Sec-WebSocket-Protocol"),
+    [&"chat".to_string(), &"superchat".to_string()]
+  );
+}
+
+#[test]
+fn sec_websocket_protocol_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in ["", ",", "not a token", "chat;foo", "chat/1", "chat, chat"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!(
+        "HTTP/1.1 400 Bad Request\r\nSec-WebSocket-Protocol: {value}\r\nContent-Length: 0\r\n\r\n"
+      )
+      .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.sec_websocket_protocol().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Sec-WebSocket-Protocol"),
+      Some(&value.to_string())
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_protocol_metadata_rejects_oversized_values_without_hiding_raw_headers() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 400 Bad Request\r\nSec-WebSocket-Protocol: {oversized}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert!(response.sec_websocket_protocol().is_err());
+  assert_eq!(
+    response.header_value("Sec-WebSocket-Protocol"),
+    Some(&oversized)
+  );
+}
+
+#[test]
+fn sec_websocket_protocol_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response.sec_websocket_protocol().expect("header is absent"),
+    None
+  );
+  let _: Option<SecWebSocketProtocol> =
+    response.sec_websocket_protocol().expect("header is absent");
 }
 
 #[test]
@@ -2976,6 +3109,75 @@ fn test_proxy_authentication_info_response_helper_parses_bounded_auth_params() {
     combined.header_values("Proxy-Authentication-Info"),
     [&"nextnonce=abc".to_string(), &"qop=auth".to_string()]
   );
+}
+
+#[test]
+fn test_via_response_helper_parses_repeated_hops() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Via: 1.1 edge-a (TLS terminator)\r\n",
+    "Via: HTTP/2 upstream\r\n",
+    "Content-Length: 2\r\n\r\nok"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let via = response
+    .via()
+    .expect("valid Via should parse")
+    .expect("Via should be present");
+
+  assert_eq!(2, via.len());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("TLS terminator"), via.members()[0].comment());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+  assert_eq!("2", via.members()[1].protocol_version());
+  assert_eq!("upstream", via.members()[1].received_by());
+  assert_eq!(
+    response.header_values("Via"),
+    [
+      &"1.1 edge-a (TLS terminator)".to_string(),
+      &"HTTP/2 upstream".to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_via_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Via should parse");
+  assert_eq!(None, absent.via().expect("absent Via should parse"));
+}
+
+#[test]
+fn test_via_rejects_malformed_and_oversized_values_without_hiding_headers() {
+  for value in ["", "1.1", "1.1 hop extra", "1.1 hop("] {
+    let raw = format!("HTTP/1.1 200 OK\r\nVia: {value}\r\nContent-Length: 2\r\n\r\nok");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.via().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("Via"));
+    assert_eq!("ok", response.body().string().unwrap());
+  }
+
+  let oversized = format!("1.1 {}", "a".repeat(64 * 1024));
+  let oversized_raw = format!("HTTP/1.1 200 OK\r\nVia: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.via().is_err());
+  assert_eq!(Some(&oversized), oversized_response.header_value("Via"));
+  assert!(Via::parse(
+    (0..257)
+      .map(|index| format!("1.1 hop{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
 }
 
 #[test]
@@ -5704,6 +5906,70 @@ fn test_parse_allow_rejects_duplicate_oversized_and_too_many_methods() {
     "allow helper should reject too many methods"
   );
   assert_eq!(Some(&too_many), response.header_value("Allow"));
+}
+
+#[test]
+fn test_parse_dav_response_helper_preserves_metadata_only() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "DAV: 1, 2\r\n",
+    "dav: extended-mkcol, <https://dav.example.test/ns>\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with DAV metadata remains usable");
+  let dav = response
+    .dav()
+    .expect("valid DAV metadata should parse")
+    .expect("DAV metadata should be present");
+
+  assert_eq!(
+    &[
+      DavClass::One,
+      DavClass::Two,
+      DavClass::ExtensionToken("extended-mkcol".to_string()),
+      DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  assert_eq!(
+    vec![
+      &"1, 2".to_string(),
+      &"extended-mkcol, <https://dav.example.test/ns>".to_string()
+    ],
+    response.header_values("DAV")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response without DAV metadata remains usable");
+  assert_eq!(None, absent.dav().expect("absent DAV should parse"));
+}
+
+#[test]
+fn test_parse_dav_rejects_invalid_duplicate_and_oversized_metadata() {
+  for value in ["", "1,", "1, 1", "<relative/path>"] {
+    let raw = format!("HTTP/1.1 200 OK\r\nDAV: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response with invalid DAV metadata remains usable");
+
+    assert!(
+      response.dav().is_err(),
+      "DAV helper should reject {value:?}"
+    );
+    assert_eq!(Some(&value.to_string()), response.header_value("DAV"));
+  }
+
+  let oversized = format!("x{}", "a".repeat(64 * 1024));
+  let raw = format!("HTTP/1.1 200 OK\r\nDAV: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized DAV metadata remains usable");
+
+  assert!(response.dav().is_err());
+  assert_eq!(Some(&oversized), response.header_value("DAV"));
 }
 
 #[test]

@@ -93,6 +93,10 @@ pub use rttp_protocol::sec_websocket_key::{
   SecWebSocketKey as HttpSecWebSocketKey,
   SecWebSocketKeyParseError as HttpSecWebSocketKeyParseError,
 };
+pub use rttp_protocol::sec_websocket_protocol::{
+  SecWebSocketProtocol as HttpSecWebSocketProtocol,
+  SecWebSocketProtocolParseError as HttpSecWebSocketProtocolParseError,
+};
 pub use rttp_protocol::sec_websocket_version::{
   SecWebSocketVersion as HttpSecWebSocketVersion,
   SecWebSocketVersionParseError as HttpSecWebSocketVersionParseError,
@@ -140,6 +144,9 @@ pub use rttp_protocol::upgrade::{
 pub use rttp_protocol::upgrade_insecure_requests::{
   UpgradeInsecureRequests as HttpUpgradeInsecureRequests,
   UpgradeInsecureRequestsParseError as HttpUpgradeInsecureRequestsParseError,
+};
+pub use rttp_protocol::via::{
+  Via as HttpVia, ViaMember as HttpViaMember, ViaParseError as HttpViaParseError,
 };
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
@@ -625,6 +632,20 @@ impl Request {
     HttpSecWebSocketVersion::parse_values(values).map(Some)
   }
 
+  /// Parses bounded `Sec-WebSocket-Protocol` request metadata as offers in
+  /// preference order without choosing an application subprotocol or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_protocol(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketProtocol>, HttpSecWebSocketProtocolParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Protocol").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketProtocol::parse_values(values).map(Some)
+  }
+
   /// Parses received W3C `traceparent` request metadata without creating
   /// identifiers, deciding sampling, or configuring propagation.
   pub fn traceparent(&self) -> Result<Option<HttpTraceParent>, HttpTraceParentParseError> {
@@ -869,6 +890,16 @@ impl Request {
       return Ok(None);
     }
     HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded HTTP `Via` request metadata without appending or removing
+  /// hops or applying proxy policy.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self.headers_named("Via").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
   }
 
   /// Parses bounded `X-Forwarded-For` request metadata without applying a
@@ -2475,6 +2506,25 @@ impl HttpRequest {
     HttpSecWebSocketVersion::parse_values(values).map(Some)
   }
 
+  /// Parses bounded `Sec-WebSocket-Protocol` request metadata as offers in
+  /// preference order without choosing an application subprotocol or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_protocol(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketProtocol>, HttpSecWebSocketProtocolParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketProtocol::parse_values(values).map(Some)
+  }
+
   /// Parses received W3C `traceparent` request metadata without creating
   /// identifiers, deciding sampling, or configuring propagation.
   pub fn traceparent(&self) -> Result<Option<HttpTraceParent>, HttpTraceParentParseError> {
@@ -2954,6 +3004,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded HTTP `Via` request metadata without appending or removing
+  /// hops or applying proxy policy.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Via"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
   }
 
   /// Parses bounded `X-Forwarded-For` request metadata without applying a

@@ -133,6 +133,18 @@ errors. `header_value()` emits the canonical singleton value. This parser
 reports declared request metadata only; it does not traverse resources,
 select WebDAV methods, or enforce method policy.
 
+## DAV
+
+`dav` parses one or more WebDAV `DAV` response fields into an ordered list of
+compliance classes. Recognized standard classes are `1`, `2`, and `3`;
+well-formed HTTP tokens are retained as extension classes, and `<absolute-URI>`
+Coded-URLs are retained without URI normalization. Each field value and the
+aggregate input are bounded to 64 KiB, and the combined list is bounded to 32
+members. Empty members, malformed tokens, malformed or relative Coded-URLs,
+duplicates, oversized input, too many members, and forbidden ASCII control
+bytes are errors. This parser reports declared response metadata only; it does
+not infer, negotiate, or enforce WebDAV feature support.
+
 ## Destination
 
 `destination` parses a singleton WebDAV `Destination` request field as one
@@ -617,6 +629,27 @@ loops, reject requests because an identifier is already present, insert a
 local CDN identifier, forward the field automatically, or treat
 `CDN-Loop` as hop-by-hop.
 
+## Via
+
+`via` parses one or more HTTP `Via` field values into an ordered hop chain.
+Each member preserves an optional protocol name, a protocol version,
+received-by, and an optional comment. Repeated fields are combined in wire
+order. Duplicate received-by values are valid chain metadata and are not
+rejected.
+
+Each field value is bounded to 64 KiB, combined field values are bounded to
+64 KiB including `", "` separator overhead, the combined serialized value is
+bounded to 64 KiB, the combined member count is bounded to 256, and comment
+nesting depth is bounded to 128. Empty members, invalid received-protocol,
+invalid received-by, malformed comments, control bytes other than HTAB, and
+bound violations are rejected. Formatting normalizes optional whitespace to
+`protocol received-by` plus ` (comment)` when a comment is present, while
+preserving accepted token spelling and comment content.
+
+The parser only reports bounded hop metadata. It does not append or remove
+hops, infer trusted proxies, rewrite identity, or change HTTP/1.1 or HTTP/2
+proxy policy.
+
 ## X-Forwarded compatibility metadata
 
 `x_forwarded_for`, `x_forwarded_host`, and `x_forwarded_proto` parse
@@ -931,6 +964,25 @@ reports declared request or response metadata only; it does not perform a
 WebSocket handshake, emit `Connection: Upgrade`, compute
 `Sec-WebSocket-Accept`, negotiate versions, switch protocols, or implement
 WebSocket frames.
+
+## Sec-WebSocket-Protocol
+
+`sec_websocket_protocol` parses one or more HTTP `Sec-WebSocket-Protocol`
+fields as RFC 6455 protocol tokens. Request offers are an ordered `1#token`
+list in client preference order through `parse`, `parse_values`, and
+`from_protocols`; a successful handshake selection is a singleton token
+through `from_selection` and `parse_selection`, which reject any list. Each
+field value and the combined raw or canonical serialized field set is bounded
+to 64 KiB, and the combined member count is bounded to 32. Surrounding SP and
+HTAB are trimmed as optional whitespace. Repeated fields are combined in wire
+order. Members follow the RFC 6455 section 11.3.4 `token` production and
+compare case-sensitively, so `chat` and `Chat` are distinct tokens. Empty
+members, malformed tokens, parameters, slashes, quoted strings, duplicates,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text),
+over-limit member counts, and oversized fields are errors. This parser
+reports declared request or response metadata only; it does not perform a
+WebSocket handshake, emit `Connection: Upgrade`, choose an application
+subprotocol, or implement WebSocket frames.
 
 ## Upgrade-Insecure-Requests
 

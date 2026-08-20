@@ -92,6 +92,17 @@ default `T` when the header is absent, or enforce WebDAV policy. Callers
 needing an unusual value can retain full raw-header control with
 `header(("Overwrite", "..."))`.
 
+## Bounded WebDAV DAV response metadata
+
+`Response::dav()` parses WebDAV `DAV` response fields through the shared
+protocol `Dav` type. The helper preserves wire order across repeated fields,
+accepts standard classes `1`, `2`, and `3`, extension tokens, and
+`<absolute-URI>` Coded-URLs, and rejects malformed, duplicate, oversized,
+aggregate-oversized, or over-32-member values while raw response headers remain
+available through the ordinary header accessors. It exposes response metadata
+only: RTTP does not infer, negotiate, or enforce WebDAV feature support from
+the header.
+
 ## Bounded Idempotency-Key metadata
 
 `HttpClient::idempotency_key(value)` sets an `Idempotency-Key` request header
@@ -146,6 +157,26 @@ compute `Sec-WebSocket-Accept`, negotiate versions, or switch protocols.
 Callers needing an unusual value can retain full raw-header control with
 `header(("Sec-WebSocket-Version", "..."))`.
 
+## Bounded Sec-WebSocket-Protocol metadata
+
+`HttpClient::sec_websocket_protocol(value)` sets a `Sec-WebSocket-Protocol`
+request header through the shared protocol `SecWebSocketProtocol` type. The
+helper accepts one or more RFC 6455 section 11.3.4 `token` offers such as
+`chat, superchat, graphql-ws` in client preference order, trims HTTP OWS,
+preserves token spelling, and rejects empty members, malformed tokens,
+parameters, slashes, case-sensitive duplicates, over-limit member counts,
+control-byte (including CR/LF/NUL and obs-text), and oversized values before
+a socket is opened. It replaces any existing same-name field with the
+canonical comma-separated value. `Response::sec_websocket_protocol()` parses
+the same representation on received responses as a selection singleton: a
+successful handshake carries exactly one token, and a multi-token value
+returns a parse error while raw headers remain available. These helpers only
+declare or parse metadata: RTTP does not perform a WebSocket handshake, emit
+`Connection: Upgrade`, choose an application subprotocol, or switch
+protocols. Applications own the selection decision. Callers needing an
+unusual value can retain full raw-header control with
+`header(("Sec-WebSocket-Protocol", "..."))`.
+
 ## Bounded W3C Trace Context metadata
 
 `HttpClient::traceparent(value)` and `HttpClient::tracestate(value)` validate
@@ -191,6 +222,20 @@ members, and bound violations are rejected before connecting.
 The helper only declares forwarding metadata: RTTP does not insert a local CDN
 identifier, append the field on every outbound request, reject requests
 because an identifier is already present, or treat `CDN-Loop` as hop-by-hop.
+
+## Bounded Via forwarding metadata
+
+`HttpClient::via(value)` validates and emits HTTP `Via` request metadata
+through the shared protocol `Via` type, combining any existing `Via` field
+with the new hops in wire order before a socket is opened. Each field value,
+the combined raw field set including `", "` separator overhead, and the
+combined serialized value are bounded to 64 KiB, and the combined member
+count is bounded to 256. Malformed received-protocol, received-by, or
+comment syntax, empty members, and bound violations are rejected before
+connecting.
+
+The helper only declares caller-supplied hop metadata: RTTP does not append
+a local hop, remove existing hops, or change proxy or tunnel policy.
 
 ## Bounded X-Forwarded compatibility metadata
 
@@ -1225,6 +1270,23 @@ return an error while the original headers remain available through
 The helper is metadata-only. `rttp_client` does not interpret proxy health,
 retry requests, promote trailers, or generate origin `Proxy-Status` values.
 
+## Bounded Via response metadata
+
+`Response::via()` parses retained HTTP `Via` fields into `Via` metadata. It
+returns `Ok(None)` when the header is absent. Present values combine all
+`Via` fields in wire order into a bounded hop chain that preserves protocol
+name, protocol version, received-by, comments, duplicates, and ordering.
+`Via::parse(value)` is available when callers want to validate one raw field
+value directly.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 256 members.
+Empty members, malformed syntax, control bytes, oversized values, and too
+many members return an error while the original headers remain available
+through `Response::header_value()` and `Response::header_values()`.
+
+The helper is metadata-only. `rttp_client` does not append or remove hops or
+apply proxy policy.
+
 ## Bounded No-Vary-Search metadata
 
 `Response::no_vary_search()` parses one or more `No-Vary-Search` response
@@ -1312,10 +1374,12 @@ header-block model.
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_version` parses received fields including rejection-response version lists | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
+| Sec-WebSocket-Protocol | `sec_websocket_protocol` emits bounded `Sec-WebSocket-Protocol` offer metadata in preference order through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_protocol` parses received fields as a selection singleton | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |
 | Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `traceparent` and `tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types, replacing existing same-name fields and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `baggage` validates and emits bounded W3C Baggage request metadata through the shared protocol type, replacing an existing same-name field and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
 | CDN-Loop | `cdn_loop` validates and emits bounded RFC 8586 `CDN-Loop` request metadata through the shared protocol type, combining an existing same-name field with the new member in wire order and rejecting malformed or oversized values before connecting | No CDN identifier insertion, loop detection or rejection, automatic forwarding, or hop-by-hop handling |
+| Via | `via` validates and emits bounded HTTP `Via` request metadata through the shared protocol type, combining an existing same-name field with the new hops in wire order and rejecting malformed or oversized values before connecting; `Response::via` parses received hop chains while preserving raw headers on parse failures | No automatic hop insertion or removal, trusted-proxy inference, identity rewrite, or HTTP/1.1 or HTTP/2 proxy-policy changes |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |

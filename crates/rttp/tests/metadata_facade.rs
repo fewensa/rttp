@@ -15,14 +15,15 @@ use rttp::server::{
   HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
   HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc,
   HttpSecGpcParseError, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketKey, HttpSecWebSocketKeyParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpXForwardedFor,
+  HttpSecWebSocketKey, HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol,
+  HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError,
+  HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
+  HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
+  HttpUpgradeParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
   HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
@@ -68,6 +69,20 @@ fn spawn_representation_metadata_response_server(
 #[test]
 #[cfg(feature = "client")]
 fn compatibility_facade_exports_client_metadata_types() {
+  let dav: rttp::Dav =
+    rttp_client::response::Dav::parse("1, 2, extended-mkcol, <https://dav.example.test/ns>")
+      .expect("DAV should parse");
+  assert_eq!(
+    &[
+      rttp::DavClass::One,
+      rttp::DavClass::Two,
+      rttp::DavClass::ExtensionToken("extended-mkcol".to_string()),
+      rttp::DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  let _: rttp::DavParseError =
+    rttp_client::response::Dav::parse("1, 1").expect_err("duplicate DAV should fail");
   let accept_ch: rttp::AcceptCh =
     rttp_client::response::AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let allow_credentials: rttp::AccessControlAllowCredentials =
@@ -161,6 +176,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp::XForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
   let _: rttp::XForwardedProtoParseError =
     rttp::XForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
+  let via: rttp::Via =
+    rttp::Via::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: rttp::ViaParseError =
+    rttp::Via::parse("1.1").expect_err("incomplete Via hop should be rejected");
   let memento_datetime: rttp::MementoDatetime =
     rttp_client::response::MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("Memento-Datetime should parse");
@@ -306,6 +325,15 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::SecWebSocketVersionParseError =
     rttp_client::response::SecWebSocketVersion::parse("8, 13")
       .expect_err("unordered Sec-WebSocket-Version should be rejected");
+  let sec_websocket_protocol: rttp::SecWebSocketProtocol =
+    rttp_client::response::SecWebSocketProtocol::parse("chat, superchat")
+      .expect("Sec-WebSocket-Protocol offers should parse");
+  let _: rttp::SecWebSocketProtocolParseError =
+    rttp_client::response::SecWebSocketProtocol::parse_selection("chat, superchat")
+      .expect_err("multi-token Sec-WebSocket-Protocol selection should be rejected");
+  let sec_websocket_protocol_selection: rttp::SecWebSocketProtocol =
+    rttp_client::response::SecWebSocketProtocol::from_selection("graphql-ws")
+      .expect("Sec-WebSocket-Protocol should select");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let sec_purpose: rttp::SecPurpose =
@@ -373,6 +401,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
   assert_eq!(
     &[rttp::TimeoutType::Second(60), rttp::TimeoutType::Infinite],
     timeout.members()
@@ -491,6 +521,13 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(sec_websocket_version.versions(), ["13"]);
   assert!(sec_websocket_version.contains("13"));
   assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
+  assert!(sec_websocket_protocol.contains("chat"));
+  assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(
+    sec_websocket_protocol_selection.selected(),
+    Some("graphql-ws")
+  );
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
   assert_eq!(fetch_site.header_value(), "same-origin");
@@ -1234,6 +1271,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
   let sec_websocket_version: HttpSecWebSocketVersion =
     HttpSecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version should parse");
+  let sec_websocket_protocol: HttpSecWebSocketProtocol =
+    HttpSecWebSocketProtocol::parse("chat, superchat")
+      .expect("Sec-WebSocket-Protocol offers should parse");
   let sec_websocket_accept = HttpSecWebSocketAccept::derive_from_key(&sec_websocket_key);
   let baggage: HttpBaggage =
     HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
@@ -1258,12 +1298,18 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpXForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
   let _: HttpXForwardedProtoParseError =
     HttpXForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
+  let via: HttpVia =
+    HttpVia::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: HttpViaParseError =
+    HttpVia::parse("1.1").expect_err("incomplete Via hop should be rejected");
   let _: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
     HttpIdempotencyKey::parse("key with space");
   let _: Result<HttpSecWebSocketKey, HttpSecWebSocketKeyParseError> =
     HttpSecWebSocketKey::parse("the sample nonce");
   let _: Result<HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError> =
     HttpSecWebSocketVersion::parse("8, 13");
+  let _: Result<HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError> =
+    HttpSecWebSocketProtocol::parse_selection("chat, superchat");
   let _: Result<HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError> =
     HttpSecWebSocketAccept::parse("the accept value");
   let if_modified_since: HttpIfModifiedSince =
@@ -1392,6 +1438,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(sec_websocket_version.versions(), ["13"]);
   assert!(sec_websocket_version.contains("13"));
   assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
+  assert!(sec_websocket_protocol.contains("chat"));
+  assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(sec_websocket_protocol.selected(), None);
   assert_eq!(
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
     sec_websocket_accept.as_str()
@@ -1406,6 +1456,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -1589,4 +1641,26 @@ fn compatibility_facade_exposes_content_dpr_response_metadata() {
     .header("Content-DPR", "2")
     .content_dpr()
     .is_err());
+}
+
+#[test]
+fn via_facade_exports_shared_request_and_response_type() {
+  let via: HttpVia =
+    HttpVia::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: HttpViaParseError =
+    HttpVia::parse("1.1").expect_err("incomplete Via hop should be rejected");
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+}
+
+#[cfg(feature = "client")]
+#[test]
+fn via_compatibility_facade_exports_client_type() {
+  let via: rttp::Via =
+    rttp::Via::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: rttp::ViaParseError =
+    rttp::Via::parse("1.1").expect_err("incomplete Via hop should be rejected");
+  assert_eq!("edge-a", via.members()[0].received_by());
+  let member: rttp::ViaMember = via.members()[1].clone();
+  assert_eq!(Some("HTTP"), member.protocol_name());
 }

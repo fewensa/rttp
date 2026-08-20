@@ -13,6 +13,7 @@ use crate::response::AltUsed;
 use crate::response::AuthenticationInfo;
 use crate::response::Connection;
 use crate::response::ContentDigest;
+use crate::response::Dav;
 use crate::response::Digest;
 use crate::response::KeepAlive;
 use crate::response::Nel;
@@ -30,6 +31,7 @@ use crate::response::SignatureInput;
 use crate::response::Trailer;
 use crate::response::TransferEncoding;
 use crate::response::Upgrade;
+use crate::response::Via;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
@@ -71,6 +73,7 @@ use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::sec_websocket_protocol::SecWebSocketProtocol;
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
 use rttp_protocol::speculation_rules::SpeculationRules;
@@ -474,6 +477,18 @@ impl Response {
     Allow::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
+  /// Parses bounded `DAV` response metadata without inferring or enforcing
+  /// WebDAV feature support.
+  pub fn dav(&self) -> error::Result<Option<Dav>> {
+    let values = self.header_values("dav");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Dav::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   pub fn accept_ranges(&self) -> error::Result<Option<AcceptRanges>> {
     let values = self.header_values("accept-ranges");
     if values.is_empty() {
@@ -753,6 +768,20 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses bounded `Sec-WebSocket-Protocol` response metadata as a
+  /// selection singleton without choosing an application subprotocol or
+  /// switching protocols. A multi-token value returns a parse error while
+  /// raw headers remain available.
+  pub fn sec_websocket_protocol(&self) -> error::Result<Option<SecWebSocketProtocol>> {
+    let values = self.header_values("sec-websocket-protocol");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SecWebSocketProtocol::parse_selection_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   pub fn content_range(&self) -> error::Result<Option<ContentRange>> {
     let values = self.header_values("content-range");
     if values.is_empty() {
@@ -956,6 +985,18 @@ impl Response {
       return Ok(None);
     }
     ProxyAuthenticationInfo::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Via` fields as bounded hop-chain metadata without appending
+  /// or removing hops or applying proxy policy.
+  pub fn via(&self) -> error::Result<Option<Via>> {
+    let values = self.header_values("via");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Via::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

@@ -90,6 +90,9 @@ pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
   CrossOriginResourcePolicyParseError as HttpCrossOriginResourcePolicyParseError,
 };
+pub use rttp_protocol::dav::{
+  Dav as HttpDav, DavClass as HttpDavClass, DavParseError as HttpDavParseError,
+};
 pub use rttp_protocol::deprecation::{
   Deprecation as HttpDeprecation, DeprecationParseError as HttpDeprecationParseError,
 };
@@ -160,6 +163,10 @@ pub use rttp_protocol::sec_websocket_accept::{
   SecWebSocketAccept as HttpSecWebSocketAccept,
   SecWebSocketAcceptParseError as HttpSecWebSocketAcceptParseError,
 };
+pub use rttp_protocol::sec_websocket_protocol::{
+  SecWebSocketProtocol as HttpSecWebSocketProtocol,
+  SecWebSocketProtocolParseError as HttpSecWebSocketProtocolParseError,
+};
 pub use rttp_protocol::sec_websocket_version::{
   SecWebSocketVersion as HttpSecWebSocketVersion,
   SecWebSocketVersionParseError as HttpSecWebSocketVersionParseError,
@@ -192,6 +199,7 @@ pub use rttp_protocol::supports_loading_mode::{
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
 };
+pub use rttp_protocol::via::{Via as HttpVia, ViaParseError as HttpViaParseError};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
@@ -1113,6 +1121,21 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Replaces `DAV` response metadata with bounded WebDAV compliance classes.
+  ///
+  /// This declares metadata only; it does not infer or enforce WebDAV feature
+  /// support.
+  pub fn with_dav(mut self, value: impl AsRef<str>) -> Result<Self, HttpDavParseError> {
+    let dav = HttpDav::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("DAV"));
+    self
+      .headers
+      .push(HttpHeader::new("DAV", dav.header_value()));
+    Ok(self)
+  }
+
   pub fn with_content_language<I, L>(
     mut self,
     languages: I,
@@ -1488,6 +1511,25 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Sec-WebSocket-Protocol` response metadata
+  /// without choosing an application subprotocol, emitting `Connection` or
+  /// `Upgrade`, or switching protocols. The value is one selected token, not
+  /// an offer list; applications own the selection decision.
+  pub fn with_sec_websocket_protocol(
+    mut self,
+    token: impl AsRef<str>,
+  ) -> Result<Self, HttpSecWebSocketProtocolParseError> {
+    let protocol = HttpSecWebSocketProtocol::from_selection(token)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"));
+    self.headers.push(HttpHeader::new(
+      "Sec-WebSocket-Protocol",
+      protocol.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Supports-Loading-Mode` response metadata without
   /// applying prerender or fenced-frame loading policy.
   pub fn with_supports_loading_mode<I, H>(
@@ -1628,6 +1670,19 @@ impl HttpResponse {
       "Signature-Input",
       signature_input.header_value(),
     ));
+    Ok(self)
+  }
+
+  /// Validates and replaces HTTP `Via` response metadata with the
+  /// caller-supplied hop chain without appending a local hop.
+  pub fn with_via(mut self, value: impl AsRef<str>) -> Result<Self, HttpViaParseError> {
+    let via = HttpVia::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Via"));
+    self
+      .headers
+      .push(HttpHeader::new("Via", via.header_value()));
     Ok(self)
   }
 
@@ -2189,6 +2244,21 @@ impl HttpResponse {
     HttpAllowedMethods::parse_values(values).map(Some)
   }
 
+  /// Parses attached `DAV` response metadata without inferring or enforcing
+  /// WebDAV feature support.
+  pub fn dav(&self) -> Result<Option<HttpDav>, HttpDavParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("DAV"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDav::parse_values(values).map(Some)
+  }
+
   /// Parses attached HTTP/1 `Connection` header metadata without changing
   /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
   pub fn connection(&self) -> Result<Option<HttpConnection>, HttpConnectionParseError> {
@@ -2589,6 +2659,25 @@ impl HttpResponse {
     HttpSecWebSocketVersion::parse_values(values).map(Some)
   }
 
+  /// Returns attached `Sec-WebSocket-Protocol` response metadata as a
+  /// selection singleton without choosing an application subprotocol or
+  /// switching protocols. A multi-token value returns a parser error while
+  /// raw headers remain available.
+  pub fn sec_websocket_protocol(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketProtocol>, HttpSecWebSocketProtocolParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketProtocol::parse_selection_values(values).map(Some)
+  }
+
   /// Returns attached `Supports-Loading-Mode` response metadata without
   /// applying prerender or fenced-frame loading policy.
   pub fn supports_loading_mode(
@@ -2760,6 +2849,21 @@ impl HttpResponse {
         "multiple {name} headers"
       ))),
     }
+  }
+
+  /// Parses attached `Via` metadata without changing raw headers or
+  /// appending or removing hops.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Via"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
   }
 
   /// Parses attached `Proxy-Status` metadata without changing raw headers
