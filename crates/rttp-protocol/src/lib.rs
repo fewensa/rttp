@@ -94,6 +94,7 @@ pub mod save_data;
 pub mod sec_gpc;
 pub mod sec_websocket_accept;
 pub mod sec_websocket_key;
+pub mod sec_websocket_protocol;
 pub mod sec_websocket_version;
 pub mod server_timing;
 pub mod service_worker_allowed;

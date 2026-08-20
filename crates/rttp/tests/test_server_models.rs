@@ -1591,6 +1591,68 @@ fn request_sec_websocket_version_is_optional_and_rejects_invalid_metadata() {
 }
 
 #[test]
+fn request_sec_websocket_protocol_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_protocol()
+      .expect("missing Sec-WebSocket-Protocol should be valid")
+  );
+
+  for value in ["chat", "chat, superchat"] {
+    let valid = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .sec_websocket_protocol()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Protocol should be present");
+    assert_eq!(value, parsed.header_value());
+    assert!(parsed.contains("chat"));
+  }
+
+  let multi_token = parse_request(concat!(
+    "GET /chat HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-WebSocket-Protocol: chat, superchat\r\n",
+    "\r\n"
+  ));
+  assert_eq!(
+    None,
+    multi_token
+      .sec_websocket_protocol()
+      .expect("offers should parse")
+      .expect("offers should be present")
+      .selected(),
+    "a multi-token offer is not a selection"
+  );
+
+  for value in ["", ",", "not a token", "chat;foo", "chat, chat"] {
+    let request = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.sec_websocket_protocol().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Protocol"));
+  }
+
+  assert!(rttp::server::HttpSecWebSocketProtocol::parse("a".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /chat HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-WebSocket-Protocol: chat\r\n",
+    "sec-websocket-protocol: chat\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.sec_websocket_protocol().is_err());
+  assert_eq!(Some("chat"), duplicate.header("Sec-WebSocket-Protocol"));
+}
+
+#[test]
 fn request_sec_websocket_key_is_optional_and_rejects_invalid_metadata() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(

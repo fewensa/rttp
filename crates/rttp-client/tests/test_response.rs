@@ -7,9 +7,9 @@ use rttp_client::response::{
   HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime,
   OriginTrials, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
   ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter,
-  SecWebSocketAccept, SecWebSocketVersion, ServerTiming, ServiceWorkerAllowed, SignatureInput,
-  SpeculationRules, StrictTransportSecurity, SupportsLoadingMode, Warning, XContentTypeOptions,
-  XFrameOptions,
+  SecWebSocketAccept, SecWebSocketProtocol, SecWebSocketVersion, ServerTiming,
+  ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
+  SupportsLoadingMode, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
@@ -1408,6 +1408,138 @@ fn sec_websocket_version_metadata_is_absent_without_a_header() {
     None
   );
   let _: Option<SecWebSocketVersion> = response.sec_websocket_version().expect("header is absent");
+}
+
+#[test]
+fn sec_websocket_protocol_metadata_parses_selected_token_without_switching_protocols() {
+  let value = "graphql-transport-ws";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 101 Switching Protocols\r\nSec-WebSocket-Protocol: {value}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .sec_websocket_protocol()
+    .expect("Sec-WebSocket-Protocol should parse")
+    .expect("Sec-WebSocket-Protocol should be present");
+
+  assert_eq!(metadata.protocols(), ["graphql-transport-ws"]);
+  assert_eq!(metadata.selected(), Some("graphql-transport-ws"));
+  assert!(metadata.contains("graphql-transport-ws"));
+  assert_eq!(metadata.header_value(), value);
+  assert_eq!(
+    response.header_value("Sec-WebSocket-Protocol"),
+    Some(&value.to_string())
+  );
+  assert_eq!(response.header_value("Connection"), None);
+  assert_eq!(response.header_value("Upgrade"), None);
+}
+
+#[test]
+fn sec_websocket_protocol_metadata_rejects_multi_token_selections() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Protocol: chat, superchat\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(
+    response.sec_websocket_protocol().is_err(),
+    "a selection must be a singleton"
+  );
+  assert_eq!(
+    response.header_value("Sec-WebSocket-Protocol"),
+    Some(&"chat, superchat".to_string())
+  );
+
+  let combined = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Protocol: chat\r\n",
+      "Sec-WebSocket-Protocol: superchat\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  assert!(
+    combined.sec_websocket_protocol().is_err(),
+    "combined selection fields must still be a singleton"
+  );
+  assert_eq!(
+    combined.header_values("Sec-WebSocket-Protocol"),
+    [&"chat".to_string(), &"superchat".to_string()]
+  );
+}
+
+#[test]
+fn sec_websocket_protocol_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in ["", ",", "not a token", "chat;foo", "chat/1", "chat, chat"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!(
+        "HTTP/1.1 400 Bad Request\r\nSec-WebSocket-Protocol: {value}\r\nContent-Length: 0\r\n\r\n"
+      )
+      .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.sec_websocket_protocol().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Sec-WebSocket-Protocol"),
+      Some(&value.to_string())
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_protocol_metadata_rejects_oversized_values_without_hiding_raw_headers() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 400 Bad Request\r\nSec-WebSocket-Protocol: {oversized}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert!(response.sec_websocket_protocol().is_err());
+  assert_eq!(
+    response.header_value("Sec-WebSocket-Protocol"),
+    Some(&oversized)
+  );
+}
+
+#[test]
+fn sec_websocket_protocol_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response.sec_websocket_protocol().expect("header is absent"),
+    None
+  );
+  let _: Option<SecWebSocketProtocol> =
+    response.sec_websocket_protocol().expect("header is absent");
 }
 
 #[test]

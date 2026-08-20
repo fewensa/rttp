@@ -30,8 +30,9 @@ use rttp_server::server::{
   HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
   HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError,
-  HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
   HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSupportsLoadingMode,
@@ -279,6 +280,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let sec_websocket_version_response = HttpResponse::new(400, "Bad Request")
     .with_sec_websocket_version(["13"])
     .expect("Sec-WebSocket-Version should be accepted");
+  let sec_websocket_protocol: HttpSecWebSocketProtocol =
+    HttpSecWebSocketProtocol::parse("chat, superchat")
+      .expect("Sec-WebSocket-Protocol offers should parse");
+  let _: HttpSecWebSocketProtocolParseError =
+    HttpSecWebSocketProtocol::parse_selection("chat, superchat")
+      .expect_err("multi-token Sec-WebSocket-Protocol selection should be rejected");
+  let sec_websocket_protocol_response = HttpResponse::new(400, "Bad Request")
+    .with_sec_websocket_protocol("graphql-transport-ws")
+    .expect("Sec-WebSocket-Protocol should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -552,6 +562,17 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .sec_websocket_version()
       .expect("Sec-WebSocket-Version should parse")
       .expect("Sec-WebSocket-Version should be present")
+      .header_value()
+  );
+  assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
+  assert!(sec_websocket_protocol.contains("chat"));
+  assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(
+    "graphql-transport-ws",
+    sec_websocket_protocol_response
+      .sec_websocket_protocol()
+      .expect("Sec-WebSocket-Protocol should parse")
+      .expect("Sec-WebSocket-Protocol should be present")
       .header_value()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");

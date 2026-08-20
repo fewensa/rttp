@@ -3353,6 +3353,82 @@ fn sync_client_and_server_exchange_bounded_sec_websocket_version_metadata_withou
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_protocol_metadata_without_upgrade() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind sec websocket protocol server");
+  let addr = server
+    .local_addr()
+    .expect("sec websocket protocol server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = {
+          let offers = request
+            .sec_websocket_protocol()
+            .expect("Sec-WebSocket-Protocol should parse");
+          (
+            offers.as_ref().map(|offers| offers.header_value()),
+            offers.as_ref().map(|offers| offers.protocols().to_vec()),
+            request.header("Sec-WebSocket-Protocol").map(str::to_string),
+            request.header("Upgrade").map(str::to_string),
+            request.header("Connection").map(str::to_string),
+          )
+        };
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket protocol metadata");
+        HttpResponse::new(101, "Switching Protocols")
+          .with_sec_websocket_protocol("chat")
+          .expect("selected Sec-WebSocket-Protocol should be accepted")
+      })
+      .expect("serve sec websocket protocol request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_protocol("chat, superchat")
+    .expect("Sec-WebSocket-Protocol should be accepted")
+    .emit()
+    .expect("sec websocket protocol response should parse");
+
+  let (typed, protocols, raw, upgrade, connection) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket protocol metadata");
+  assert_eq!(Some("chat, superchat".to_string()), typed);
+  assert_eq!(
+    Some(vec!["chat".to_string(), "superchat".to_string()]),
+    protocols
+  );
+  assert_eq!(Some("chat, superchat".to_string()), raw);
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Protocol metadata must not set an Upgrade field"
+  );
+  assert_ne!(
+    Some("Upgrade".to_string()),
+    connection,
+    "typed Sec-WebSocket-Protocol metadata must not set Connection: Upgrade"
+  );
+  assert_eq!(101, response.code());
+  let selected = response
+    .sec_websocket_protocol()
+    .expect("selected Sec-WebSocket-Protocol should parse")
+    .expect("selected Sec-WebSocket-Protocol should be present");
+  assert_eq!(selected.protocols(), ["chat"]);
+  assert_eq!(selected.selected(), Some("chat"));
+  assert_eq!(selected.header_value(), "chat");
+  assert_eq!(response.header_value("Upgrade"), None);
+  assert_ne!(
+    response.header_value("Connection").map(String::as_str),
+    Some("Upgrade"),
+    "selected Sec-WebSocket-Protocol must not emit Connection: Upgrade"
+  );
+  handle.join().expect("sec websocket protocol server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_sec_websocket_key_metadata_without_handshake() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind sec websocket key server");
