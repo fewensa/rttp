@@ -2188,6 +2188,8 @@ fn test_async_auto_redirect_strips_sensitive_headers_for_cross_authority_locatio
       .header(("Authorization", "Bearer secret"))
       .header(("Cookie", "session=secret"))
       .header(("Proxy-Authorization", "Basic proxy-secret"))
+      .lock_token("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+      .expect("Lock-Token should be accepted")
       .header(("X-Trace", "trace-123"))
       .rasync()
       .await;
@@ -2195,7 +2197,7 @@ fn test_async_auto_redirect_strips_sensitive_headers_for_cross_authority_locatio
     assert!(response.is_ok());
     let response = response.unwrap();
     assert_eq!(
-      "authorization=\ncookie=\nproxy-authorization=\nx-trace=trace-123",
+      "authorization=\ncookie=\nproxy-authorization=\nlock-token=\nx-trace=trace-123",
       response.body().string().unwrap()
     );
   });
@@ -2214,6 +2216,8 @@ fn test_async_auto_redirect_strips_sensitive_headers_and_userinfo_for_cross_auth
       .header(("Authorization", "Bearer secret"))
       .header(("Cookie", "session=secret"))
       .header(("Proxy-Authorization", "Basic proxy-secret"))
+      .lock_token("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+      .expect("Lock-Token should be accepted")
       .header(("X-Trace", "trace-123"))
       .rasync()
       .await;
@@ -2221,7 +2225,7 @@ fn test_async_auto_redirect_strips_sensitive_headers_and_userinfo_for_cross_auth
     assert!(response.is_ok());
     let response = response.unwrap();
     assert_eq!(
-      "request-target=/final\nauthorization=\ncookie=\nproxy-authorization=\nx-trace=trace-123",
+      "request-target=/final\nauthorization=\ncookie=\nproxy-authorization=\nlock-token=\nx-trace=trace-123",
       response.body().string().unwrap()
     );
   });
@@ -2239,6 +2243,8 @@ fn test_async_auto_redirect_preserves_sensitive_headers_for_same_authority_locat
       .header(("Authorization", "Bearer secret"))
       .header(("Cookie", "session=secret"))
       .header(("Proxy-Authorization", "Basic proxy-secret"))
+      .lock_token("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+      .expect("Lock-Token should be accepted")
       .header(("X-Trace", "trace-123"))
       .rasync()
       .await;
@@ -2246,7 +2252,7 @@ fn test_async_auto_redirect_preserves_sensitive_headers_for_same_authority_locat
     assert!(response.is_ok());
     let response = response.unwrap();
     assert_eq!(
-      "authorization=Bearer secret\ncookie=session=secret\nproxy-authorization=Basic proxy-secret\nx-trace=trace-123",
+      "authorization=Bearer secret\ncookie=session=secret\nproxy-authorization=Basic proxy-secret\nlock-token=<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\nx-trace=trace-123",
       response.body().string().unwrap()
     );
   });

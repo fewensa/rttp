@@ -604,10 +604,11 @@ pub fn spawn_same_authority_redirect_header_echo_server() -> (SocketAddr, JoinHa
 
 fn echoed_redirect_headers(request: &[u8]) -> String {
   format!(
-    "authorization={}\ncookie={}\nproxy-authorization={}\nx-trace={}",
+    "authorization={}\ncookie={}\nproxy-authorization={}\nlock-token={}\nx-trace={}",
     header_value(request, "Authorization").unwrap_or_default(),
     header_value(request, "Cookie").unwrap_or_default(),
     header_value(request, "Proxy-Authorization").unwrap_or_default(),
+    header_value(request, "Lock-Token").unwrap_or_default(),
     header_value(request, "X-Trace").unwrap_or_default()
   )
 }

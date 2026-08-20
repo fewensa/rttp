@@ -73,6 +73,7 @@ pub mod if_unmodified_since;
 pub mod keep_alive;
 pub mod link;
 pub mod location;
+pub mod lock_token;
 pub mod max_forwards;
 mod media_type;
 pub mod memento_datetime;
