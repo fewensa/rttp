@@ -33,12 +33,13 @@ use rttp_client::response::{
 };
 use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
-  DestinationParseError, HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
-  SecGpc, SecGpcParseError, SecPurpose, Timeout, TimeoutParseError, TimeoutType, TraceParent,
-  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
-  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, Via as ClientVia,
-  ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError, XForwardedHost,
-  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  DestinationParseError, HttpClient, IfScheduleTagMatch, IfScheduleTagMatchParseError,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose,
+  Timeout, TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError, TraceState,
+  TraceStateMember, TraceStateParseError, UpgradeInsecureRequests,
+  UpgradeInsecureRequestsParseError, Via as ClientVia, ViaParseError as ClientViaParseError,
+  XForwardedFor, XForwardedForParseError, XForwardedHost, XForwardedHostParseError,
+  XForwardedProto, XForwardedProtoParseError,
 };
 use rttp_protocol::expect::Expect;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
@@ -104,6 +105,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let timeout = Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let _: TimeoutParseError =
     Timeout::parse("Second-60, second-60").expect_err("duplicate Timeout should be rejected");
+  let if_schedule_tag_match =
+    IfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
+  let _: IfScheduleTagMatchParseError =
+    IfScheduleTagMatch::parse("*").expect_err("wildcard If-Schedule-Tag-Match should be rejected");
   let x_forwarded_for =
     XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
   let _: XForwardedForParseError =
@@ -358,6 +363,13 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     timeout.members()
   );
   assert_eq!("second-60, infinite", timeout.header_value());
+  assert_eq!(
+    if_schedule_tag_match.entity_tag().header_value(),
+    "\"sched-17\""
+  );
+  assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
+  assert!(!if_schedule_tag_match.is_weak());
+  assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"

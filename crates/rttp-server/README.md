@@ -761,6 +761,23 @@ original raw field.
 These helpers parse request metadata only. They do not create locks, refresh
 locks, or select an application timeout.
 
+## If-Schedule-Tag-Match request metadata
+
+Handlers can call `Request::if_schedule_tag_match()` and
+`HttpRequest::if_schedule_tag_match()` to observe bounded typed
+`If-Schedule-Tag-Match` request metadata through the shared protocol
+`HttpIfScheduleTagMatch` type, which reuses the shared `HttpEntityTag`
+representation. Absent fields return `Ok(None)`. A recognized value is one
+entity-tag-shaped schedule validator such as `"sched-17"` or `W/"sched-17"`,
+with optional surrounding SP or HTAB trimmed and weak syntax preserved.
+Malformed, wildcard, comma-list, duplicate, oversized, or control-byte values
+return a parser error while `Request::header()` and `HttpRequest::header()`
+continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not compare the validator
+to stored calendar state, inspect calendars, select scheduling behavior, or
+apply 412 or scheduling policy.
+
 ## Idempotency-Key request metadata
 
 Handlers can call `Request::idempotency_key()` and
