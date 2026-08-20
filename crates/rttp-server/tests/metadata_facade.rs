@@ -35,20 +35,21 @@ use rttp_server::server::{
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
   HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
   HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
-  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpSameSite, HttpSaveData,
-  HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
-  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
-  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
-  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
-  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
-  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
+  HttpRetryAfterParseError, HttpSameSite, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag,
+  HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
+  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
+  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
+  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
   HttpVariantVaryParseError, HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest,
   HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
@@ -344,6 +345,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Memento-Datetime should parse");
   let _: HttpMementoDatetimeParseError =
     HttpMementoDatetime::parse("").expect_err("empty Memento-Datetime should be rejected");
+  let retry_after_delta = HttpRetryAfter::parse("120").expect("Retry-After delta should parse");
+  let retry_after_date =
+    HttpRetryAfter::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Retry-After date should parse");
+  let _: HttpRetryAfterParseError =
+    HttpRetryAfter::parse("").expect_err("empty Retry-After should be rejected");
+  let retry_after_response = HttpResponse::ok("").with_retry_after_delta(120);
   let response_date =
     HttpResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Date should parse");
   let _: HttpResponseDateParseError =
@@ -812,6 +819,18 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("Memento-Datetime should be present")
       .header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(retry_after_delta.header_value(), "120");
+  assert_eq!(
+    retry_after_date.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    retry_after_response
+      .retry_after()
+      .expect("Retry-After should parse")
+      .expect("Retry-After should be present"),
+    HttpRetryAfter::DeltaSeconds(120)
   );
   assert_eq!(
     Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777)),

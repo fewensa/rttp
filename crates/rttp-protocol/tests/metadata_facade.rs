@@ -75,6 +75,7 @@ use rttp_protocol::proxy_status::{ProxyStatus, ProxyStatusParseError};
 use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
+use rttp_protocol::retry_after::RetryAfter;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::schedule_tag::ScheduleTag;
 use rttp_protocol::sec_gpc::SecGpc;
@@ -213,6 +214,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   .expect("WebDAV If request metadata should parse");
   let memento_datetime =
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
+  let retry_after = RetryAfter::parse("120").expect("Retry-After should parse");
   let response_date =
     ResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Date should parse");
   let response_expires =
@@ -558,6 +560,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
+  assert_eq!(retry_after.header_value(), "120");
   assert_eq!(
     response_date.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"

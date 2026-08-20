@@ -161,6 +161,7 @@ pub use rttp_protocol::referrer_policy::{
   ReferrerPolicy, ReferrerPolicyParseError, ReferrerPolicyToken,
 };
 pub use rttp_protocol::reporting_endpoints::{ReportingEndpoints, ReportingEndpointsParseError};
+pub use rttp_protocol::retry_after::{RetryAfter, RetryAfterParseError};
 pub use rttp_protocol::schedule_tag::{ScheduleTag, ScheduleTagParseError};
 pub use rttp_protocol::sec_websocket_accept::{SecWebSocketAccept, SecWebSocketAcceptParseError};
 pub use rttp_protocol::sec_websocket_extensions::{

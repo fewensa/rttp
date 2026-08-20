@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::fmt;
 use std::time::SystemTime;
 
-use httpdate::parse_http_date;
 use rttp_protocol::content_length::HttpContentLength;
 use rttp_protocol::delta_base::DeltaBaseParseError;
 use url::Url;
@@ -78,6 +77,7 @@ use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
+use rttp_protocol::retry_after::RetryAfter;
 use rttp_protocol::schedule_tag::{ScheduleTag, ScheduleTagParseError};
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
 use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
@@ -99,7 +99,6 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
-const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
 const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
@@ -488,11 +487,12 @@ impl Response {
 
   pub fn retry_after(&self) -> error::Result<Option<RetryAfter>> {
     let values = self.header_values("retry-after");
-    match values.as_slice() {
-      [] => Ok(None),
-      [value] => RetryAfter::parse(value).map(Some),
-      _ => Err(error::bad_response("Duplicate Retry-After header values")),
+    if values.is_empty() {
+      return Ok(None);
     }
+    RetryAfter::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn allow(&self) -> error::Result<Option<Allow>> {
@@ -1656,48 +1656,6 @@ where
     return Err(error::bad_response(format!("Invalid {header} media type")));
   }
   Ok(media_types)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RetryAfter {
-  DeltaSeconds(u64),
-  HttpDate(SystemTime),
-}
-
-impl RetryAfter {
-  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
-    let value = value.as_ref();
-    if value.len() > MAX_RETRY_AFTER_VALUE_BYTES {
-      return Err(error::bad_response("Retry-After header value is too large"));
-    }
-    let value = value.trim();
-    if value.is_empty() {
-      return Err(error::bad_response("Invalid Retry-After value"));
-    }
-    if value.chars().all(|ch| ch.is_ascii_digit()) {
-      return value
-        .parse::<u64>()
-        .map(Self::DeltaSeconds)
-        .map_err(|_| error::bad_response("Invalid Retry-After delta-seconds"));
-    }
-    parse_http_date(value)
-      .map(Self::HttpDate)
-      .map_err(|_| error::bad_response("Invalid Retry-After value"))
-  }
-
-  pub fn delta_seconds(&self) -> Option<u64> {
-    match self {
-      Self::DeltaSeconds(delta_seconds) => Some(*delta_seconds),
-      Self::HttpDate(_) => None,
-    }
-  }
-
-  pub fn http_date(&self) -> Option<SystemTime> {
-    match self {
-      Self::DeltaSeconds(_) => None,
-      Self::HttpDate(http_date) => Some(*http_date),
-    }
-  }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

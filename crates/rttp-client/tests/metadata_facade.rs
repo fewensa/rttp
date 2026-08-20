@@ -20,14 +20,14 @@ use rttp_client::response::{
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
   ReferrerPolicyToken, ResponseDate, ResponseDateParseError, ResponseExpires,
-  ResponseExpiresParseError, ResponseLastModified, ResponseLastModifiedParseError, ScheduleTag,
-  SecWebSocketAccept, SecWebSocketAcceptParseError, SecWebSocketExtensions,
-  SecWebSocketExtensionsParseError, SecWebSocketProtocol, SecWebSocketProtocolParseError,
-  SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput,
-  SignatureInputParseError, SignatureParseError, SpeculationRules, SpeculationRulesParseError,
-  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
-  SupportsLoadingModeParseError, SurrogateControl, SurrogateControlParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary,
+  ResponseExpiresParseError, ResponseLastModified, ResponseLastModifiedParseError, RetryAfter,
+  RetryAfterParseError, ScheduleTag, SecWebSocketAccept, SecWebSocketAcceptParseError,
+  SecWebSocketExtensions, SecWebSocketExtensionsParseError, SecWebSocketProtocol,
+  SecWebSocketProtocolParseError, SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming,
+  Signature, SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
+  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
+  SupportsLoadingMode, SupportsLoadingModeParseError, SurrogateControl, SurrogateControlParseError,
+  Trailer, TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary,
   VariantVaryParseError, Vary, VaryParseError, Via, ViaParseError, WantContentDigest,
   WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
   XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
@@ -192,6 +192,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let _: MementoDatetimeParseError =
     MementoDatetime::parse("").expect_err("empty Memento-Datetime should be rejected");
+  let retry_after_delta = RetryAfter::parse("120").expect("Retry-After delta should parse");
+  let retry_after_date =
+    RetryAfter::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Retry-After date should parse");
+  let _: RetryAfterParseError =
+    RetryAfter::parse("").expect_err("empty Retry-After should be rejected");
   let accept_datetime =
     AcceptDatetime::parse("Sunday, 06-Nov-94 08:49:37 GMT").expect("Accept-Datetime should parse");
   let _: AcceptDatetimeParseError =
@@ -515,6 +520,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
     memento_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(retry_after_delta.header_value(), "120");
+  assert_eq!(
+    retry_after_date.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(
