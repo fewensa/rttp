@@ -7,6 +7,7 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::a_im::AIm;
 use rttp_protocol::accept_charset::AcceptCharset;
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_BYTES};
@@ -1048,6 +1049,38 @@ impl HttpClient {
     Ok(self.header(Header::new("baggage", baggage.header_value())))
   }
 
+  /// Append a validated `A-IM` instance-manipulation token with the default
+  /// quality of `1`. This declares request metadata only; it does not select
+  /// or apply a delta encoding.
+  pub fn a_im<S: AsRef<str>>(&mut self, token: S) -> error::Result<&mut Self> {
+    self.a_im_member(token.as_ref(), None)
+  }
+
+  /// Append a validated `A-IM` instance-manipulation token with an HTTP
+  /// q-value.
+  ///
+  /// The q-value must be between `0` and `1` with at most three fractional
+  /// digits. This declares request metadata only; it does not select or apply
+  /// a delta encoding.
+  pub fn a_im_with_q<T: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    token: T,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.a_im_member(token.as_ref(), Some(qvalue.as_ref()))
+  }
+
+  /// Append a validated `A-IM` field value, including optional q-values and
+  /// extension parameters.
+  ///
+  /// This declares request metadata only; it does not select or apply a delta
+  /// encoding.
+  pub fn a_im_value<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let parsed =
+      AIm::parse(value.as_ref()).map_err(|error| error::builder_with_message(error.to_string()))?;
+    self.append_a_im(&parsed.header_value())
+  }
+
   /// Append a validated `Accept-Encoding` coding with the default quality of
   /// `1`. This declares request metadata only; it does not enable compression
   /// or decompression.
@@ -1300,6 +1333,51 @@ impl HttpClient {
       header.replace(Header::new("Accept-Charset", value));
     } else {
       headers.push(Header::new("Accept-Charset", value));
+    }
+    Ok(self)
+  }
+
+  fn a_im_member(&mut self, token: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
+    let token = token.trim();
+    if !is_http_token(token) {
+      return Err(error::builder_with_message("invalid A-IM token"));
+    }
+    let qvalue = qvalue.map(str::trim);
+    if let Some(qvalue) = qvalue {
+      validate_a_im_qvalue(qvalue)?;
+    }
+    let member = qvalue.map_or_else(|| token.to_string(), |qvalue| format!("{token};q={qvalue}"));
+    let parsed_member =
+      AIm::parse(&member).map_err(|error| error::builder_with_message(error.to_string()))?;
+    if parsed_member.len() != 1 {
+      return Err(error::builder_with_message(if qvalue.is_some() {
+        "invalid A-IM q-value"
+      } else {
+        "invalid A-IM token"
+      }));
+    }
+    self.append_a_im(&member)
+  }
+
+  fn append_a_im(&mut self, member: &str) -> error::Result<&mut Self> {
+    let headers = self.request.headers_mut();
+    let candidate = match headers
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case("A-IM"))
+    {
+      Some(header) => format!("{}, {member}", header.value()),
+      None => member.to_string(),
+    };
+    let a_im =
+      AIm::parse(&candidate).map_err(|error| error::builder_with_message(error.to_string()))?;
+    let value = a_im.header_value();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("A-IM"))
+    {
+      header.replace(Header::new("A-IM", value));
+    } else {
+      headers.push(Header::new("A-IM", value));
     }
     Ok(self)
   }
@@ -2127,6 +2205,14 @@ fn validate_accept_qvalue(qvalue: &str) -> error::Result<&str> {
     Ok(qvalue)
   } else {
     Err(error::builder_with_message("invalid Accept quality value"))
+  }
+}
+
+fn validate_a_im_qvalue(qvalue: &str) -> error::Result<&str> {
+  if is_qvalue(qvalue) {
+    Ok(qvalue)
+  } else {
+    Err(error::builder_with_message("invalid A-IM q-value"))
   }
 }
 

@@ -129,6 +129,7 @@ pub use self::connection::{
   async_streaming_response_after_header, AsyncResponseBodyReader, AsyncStreamingResponse,
 };
 pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingResponse};
+pub use rttp_protocol::a_im::{AIm, AImMember, AImParameter, AImParseError};
 pub use rttp_protocol::baggage::{Baggage, BaggageMember, BaggageParseError, BaggageProperty};
 pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
 pub use rttp_protocol::depth::{Depth, DepthParseError};

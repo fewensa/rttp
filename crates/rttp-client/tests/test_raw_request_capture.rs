@@ -617,6 +617,115 @@ fn facade_debug_redacts_sensitive_header_values() {
 }
 
 #[test]
+fn a_im_helpers_emit_validated_tokens_q_values_and_parameters() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im("diffe")
+      .expect("diffe should be accepted")
+      .a_im_with_q("gzip", "0.3")
+      .expect("gzip quality should be accepted")
+      .a_im_value("identity;q=0;profile=compact")
+      .expect("parameterized A-IM should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("diffe, gzip;q=0.3, identity;q=0;profile=compact"),
+    header_value(&request, "A-IM")
+  );
+}
+
+#[test]
+fn a_im_helpers_reject_invalid_members_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im_with_q("bad token", "1.1")
+      .expect_err("invalid token should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid A-IM helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im_with_q("gzip", "1.1")
+      .expect_err("invalid q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid A-IM q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im_with_q("gzip", "0.3;profile=compact")
+      .expect_err("parameter-bearing q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "parameter-bearing A-IM q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im("diffe")
+      .expect("first token should be accepted")
+      .a_im("DIFFE")
+      .expect_err("duplicate token should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "duplicate A-IM helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let oversized_token = "a".repeat(64 * 1024 + 1);
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im(&oversized_token)
+      .expect_err("oversized first token should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized first A-IM token should not open a socket"
+  );
+}
+
+#[test]
 fn accept_encoding_helpers_emit_validated_codings_and_quality_values() {
   let request = capture_request(|base_url| {
     client()

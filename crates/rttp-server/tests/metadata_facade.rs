@@ -1,8 +1,8 @@
 use rttp_server::server::{
-  HttpAcceptCh, HttpAcceptCharset, HttpAcceptCharsetParseError, HttpAcceptLanguageParseError,
-  HttpAcceptLanguages, HttpAccessControlAllowCredentials,
-  HttpAccessControlAllowCredentialsParseError, HttpAccessControlAllowHeaders,
-  HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
+  HttpAIm, HttpAImMember, HttpAImParameter, HttpAImParseError, HttpAcceptCh, HttpAcceptCharset,
+  HttpAcceptCharsetParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
+  HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
+  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpAltUsed, HttpAltUsedParseError,
@@ -86,6 +86,12 @@ fn server_dav_response_metadata_uses_protocol_representation() {
 #[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let a_im: HttpAIm =
+    HttpAIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
+  let _: HttpAImParseError =
+    HttpAIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
+  let _: &[HttpAImMember] = a_im.members();
+  let _: Option<&HttpAImParameter> = a_im.members()[1].parameters().first();
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5, *;q=0")
       .expect("Accept-Charset should parse");
@@ -367,6 +373,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(a_im.members()[0].token(), "diffe");
+  assert_eq!(a_im.members()[1].quality(), 300);
+  assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
   let first_charset: &HttpAcceptCharset = &accept_charsets.charsets()[0];
   assert_eq!(first_charset.charset(), "utf-8");
   assert_eq!(first_charset.quality(), 1000);
@@ -968,6 +977,73 @@ fn request_facade_rejects_malformed_accept_charset_metadata() {
 
   assert_eq!(request.header("Accept-Charset"), Some("utf-8, UTF-8"));
   assert!(request.accept_charset().is_err());
+}
+
+#[test]
+fn request_facade_parses_a_im_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nA-IM: diffe, gzip;q=0.3;profile=compact\r\nA-IM: identity;q=0\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let a_im: HttpAIm = request
+    .a_im()
+    .expect("A-IM should parse")
+    .expect("A-IM should be present");
+
+  assert_eq!(a_im.members()[0].token(), "diffe");
+  assert_eq!(a_im.members()[1].token(), "gzip");
+  assert_eq!(a_im.members()[1].quality(), 300);
+  assert_eq!(Some("compact"), a_im.members()[1].parameters()[1].value());
+  assert_eq!(a_im.members()[2].token(), "identity");
+  assert_eq!(a_im.members()[2].quality(), 0);
+  assert_eq!(
+    a_im.header_value(),
+    "diffe, gzip;q=0.3;profile=compact, identity;q=0"
+  );
+}
+
+#[test]
+fn request_facade_omits_a_im_metadata_when_header_is_absent() {
+  let request = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert_eq!(
+    None,
+    request.a_im().expect("missing A-IM should be accepted")
+  );
+}
+
+#[test]
+fn request_facade_rejects_malformed_a_im_metadata_without_hiding_headers() {
+  let request =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nA-IM: diffe, DIFFE\r\n\r\n")
+      .expect("malformed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("A-IM"), Some("diffe, DIFFE"));
+  assert!(request.a_im().is_err());
+}
+
+#[test]
+fn request_facade_rejects_oversized_a_im_metadata_without_hiding_headers() {
+  let too_many = (0..=32)
+    .map(|index| format!("c{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let raw = format!("GET /asset HTTP/1.1\r\nHost: example.test\r\nA-IM: {too_many}\r\n\r\n");
+  let request = HttpRequest::parse(raw.as_bytes())
+    .expect("over-limit typed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("A-IM"), Some(too_many.as_str()));
+  assert!(request.a_im().is_err());
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_error: Result<HttpAIm, HttpAImParseError> = HttpAIm::parse(oversized.as_str());
+  assert!(oversized_error.is_err());
+
+  let first = "a".repeat(32 * 1024 + 1);
+  let second = "b".repeat(32 * 1024 + 1);
+  assert!(HttpAIm::parse_values([first.as_str(), second.as_str()]).is_err());
 }
 
 #[test]
