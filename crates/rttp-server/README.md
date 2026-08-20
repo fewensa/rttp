@@ -1286,6 +1286,25 @@ representation, or apply cache policy. `Request::evaluate_conditional()` and
 `evaluate_conditional_request()` keep their existing RFC 9110 precedence and
 second-level date comparison behavior.
 
+## Accept-Datetime request metadata
+
+Handlers can call `Request::accept_datetime()` and
+`HttpRequest::accept_datetime()` to observe bounded typed Memento datetime
+preferences through the shared protocol `HttpAcceptDatetime` type. Absent
+fields return `Ok(None)`. A recognized value is one HTTP-date instant in
+IMF-fixdate, obsolete RFC 850, or asctime form with optional surrounding SP or
+HTAB; `datetime()` exposes the instant and `header_value()` formats it as
+IMF-fixdate. Malformed, oversized, duplicate, or control-byte values return
+`HttpAcceptDatetimeParseError` while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not select an archived
+representation, implement TimeGate behavior, add `Vary`, alter cache policy,
+or feed `evaluate_conditional_request()`. A parsed `Accept-Datetime` instant
+matches `HttpMementoDatetime` for the same HTTP-date, so handlers can attach
+`HttpResponse::with_memento_datetime(datetime)` to a representation they
+already chose; the two helpers still do not negotiate with each other.
+
 ## HTTP message signature metadata
 
 `Request::signature()` / `signature_input()` and the same methods on

@@ -9,6 +9,7 @@
 
 pub mod a_im;
 pub mod accept_charset;
+pub mod accept_datetime;
 pub mod accept_encoding;
 pub mod accept_language;
 pub mod accept_patch;

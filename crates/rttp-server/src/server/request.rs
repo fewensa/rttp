@@ -8,6 +8,9 @@ pub use rttp_protocol::accept_charset::{
   AcceptCharset as HttpRequestAcceptCharsets,
   AcceptCharsetParseError as HttpAcceptCharsetParseError, AcceptCharsetRange as HttpAcceptCharset,
 };
+pub use rttp_protocol::accept_datetime::{
+  AcceptDatetime as HttpAcceptDatetime, AcceptDatetimeParseError as HttpAcceptDatetimeParseError,
+};
 pub use rttp_protocol::accept_encoding::{
   AcceptEncoding as HttpRequestAcceptEncodings, AcceptEncodingCoding as HttpAcceptEncoding,
   AcceptEncodingParseError as HttpAcceptEncodingParseError,
@@ -391,6 +394,21 @@ impl Request {
       return Ok(None);
     }
     HttpIfModifiedSince::parse_values(values).map(Some)
+  }
+
+  /// Parses one HTTP-date `Accept-Datetime` preference without evaluating it.
+  ///
+  /// Returns `Ok(None)` when the field is absent. The helper declares request
+  /// metadata only; it does not select an archived representation, negotiate a
+  /// Memento time gate, or alter cache policy.
+  pub fn accept_datetime(
+    &self,
+  ) -> Result<Option<HttpAcceptDatetime>, HttpAcceptDatetimeParseError> {
+    let values: Vec<&str> = self.headers_named("Accept-Datetime").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptDatetime::parse_values(values).map(Some)
   }
 
   /// Parses one entity-tag-shaped `If-Schedule-Tag-Match` validator without
@@ -2385,6 +2403,26 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpIfModifiedSince::parse_values(values).map(Some)
+  }
+
+  /// Parses one HTTP-date `Accept-Datetime` preference without evaluating it.
+  ///
+  /// Returns `Ok(None)` when the field is absent. The helper declares request
+  /// metadata only; it does not select an archived representation, negotiate a
+  /// Memento time gate, or alter cache policy.
+  pub fn accept_datetime(
+    &self,
+  ) -> Result<Option<HttpAcceptDatetime>, HttpAcceptDatetimeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-Datetime"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptDatetime::parse_values(values).map(Some)
   }
 
   /// Parses one entity-tag-shaped `If-Schedule-Tag-Match` validator without

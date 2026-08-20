@@ -346,6 +346,19 @@ These helpers do not select an archival representation, negotiate
 `Accept-Datetime`, implement TimeGate behavior, retry, or change transport
 handling.
 
+Server `Accept-Datetime` helpers expose the matching request metadata without
+adding time negotiation. `Request::accept_datetime()` and
+`HttpRequest::accept_datetime()` parse a singleton `Accept-Datetime` field
+into `HttpAcceptDatetime`; absent fields return `Ok(None)`, and malformed,
+control-byte, duplicate, and oversize values return
+`HttpAcceptDatetimeParseError` while raw request headers remain preserved.
+The client facade re-exports the matching `AcceptDatetime` type and
+`HttpClient::accept_datetime()` builder. These helpers do not select an
+archived representation, implement TimeGate behavior, add `Vary`, alter cache
+policy, or feed conditional evaluation. A parsed `Accept-Datetime` instant
+matches `HttpMementoDatetime` for the same HTTP-date, but the two helpers do
+not negotiate with each other.
+
 ## Bounded HTTP/1.1 Vary behavior
 
 Server-side `Vary` helpers expose response declaration and request-selection
@@ -1531,6 +1544,7 @@ scheduling, or async accept loops.
 | Alternates | `Alternates`, `HttpAlternates`, `Response::alternates`, `HttpResponse::with_alternates`, and `HttpResponse::alternates` parse or declare bounded RFC 2295-style variant metadata, validating URIs, qvalues, attributes, duplicates, member counts, and size bounds while preserving raw headers on parse failures and replacing raw response fields on typed declaration | No transparent content negotiation, variant selection, automatic fetch, request replay, URI resolution, cache storage, `Vary` matching, or quality ranking |
 | Origin-Trial | `OriginTrials`, `HttpOriginTrials`, `Response::origin_trials`, `HttpResponse::with_origin_trials`, and `HttpResponse::origin_trials` parse or declare bounded opaque `Origin-Trial` tokens in wire order, preserve duplicates, redact token material from debug output, and replace raw response fields on typed declaration | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
+| Accept-Datetime | `HttpClient::accept_datetime` validates and emits bounded singleton `Accept-Datetime` request metadata through the protocol `AcceptDatetime` type, and `Request::accept_datetime`/`HttpRequest::accept_datetime` parse received fields into `HttpAcceptDatetime`, accepting obsolete HTTP-date forms and preserving raw headers on parse errors | No archival selection, TimeGate behavior, `Vary` injection, cache-policy changes, or conditional evaluation |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Authentication metadata | `Request::authorization`/`proxy_authorization` and `HttpRequest::authorization`/`proxy_authorization` expose one bounded opaque credential field, `Response::www_authenticate` parses bounded client response challenges, and `HttpResponse::with_www_authenticate`/`www_authenticate` declare and parse bounded `WWW-Authenticate` challenges | No credential validation, realm selection, automatic client challenge, retry, or authentication/authorization enforcement |
 | Idempotency-Key | `HttpClient::idempotency_key` validates and emits one bounded opaque `Idempotency-Key` request field through the shared protocol type, and `Request::idempotency_key`/`HttpRequest::idempotency_key` parse received fields into the same representation while preserving raw headers on errors and redacting the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |

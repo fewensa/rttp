@@ -659,7 +659,25 @@ Malformed helper values do not reject the raw response. The original
 `Memento-Datetime` field remains available through `header_value` and
 `header_values`. This helper exposes metadata only; `rttp_client` does not
 select an archival representation, negotiate `Accept-Datetime`, implement
-TimeGate behavior, retry, or change transport handling.
+TimeGate behavior, retry, or change transport handling. The matching request
+metadata helper is `accept_datetime`, which parses the same HTTP-date
+instants; the two helpers still do not negotiate with each other.
+
+## Bounded Accept-Datetime request metadata
+
+`HttpClient::accept_datetime(http_date)` sets an `Accept-Datetime` request
+header through the shared protocol `AcceptDatetime` type. The helper accepts
+one HTTP-date in IMF-fixdate, obsolete RFC 850, or asctime form, trims HTTP
+OWS, and emits the canonical IMF-fixdate form. It rejects empty, malformed,
+oversized (over 64 KiB), control-byte, and comma-joined values before a socket
+is opened, and a second `accept_datetime` call replaces the existing field.
+The parsed instant matches `Response::memento_datetime()` for the same
+HTTP-date.
+
+This helper declares metadata only; `rttp_client` does not select an archived
+representation, implement TimeGate behavior, add `Vary`, alter cache policy,
+or change conditional-request handling. Callers needing an unusual value can
+retain full raw-header control with `header(("Accept-Datetime", "..."))`.
 
 ## Bounded HTTP/1.1 Retry-After behavior
 
@@ -1645,6 +1663,7 @@ header-block model.
 | Origin-Trial | `Response::origin_trials` parses bounded opaque `Origin-Trial` tokens in wire order through the shared protocol `OriginTrials` type, preserves duplicates, redacts token material from debug output, and preserves raw headers on parse failures | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Speculation-Rules | `Response::speculation_rules` preserves one bounded opaque `Speculation-Rules` response field through the shared protocol `SpeculationRules` type, rejects duplicates and response-field injection bytes, redacts debug output, and preserves raw headers on parse failures | No speculation rule fetching, parsing, validation, prefetching, prerendering, execution, navigation changes, cache behavior, retry, or redirect behavior |
 | Memento-Datetime | `Response::memento_datetime` parses bounded singleton `Memento-Datetime` IMF-fixdate metadata through the protocol `MementoDatetime` type while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
+| Accept-Datetime | `accept_datetime` validates and emits bounded singleton `Accept-Datetime` request metadata through the protocol `AcceptDatetime` type, accepting obsolete HTTP-date forms and replacing an existing same-name field | No archival selection, TimeGate behavior, `Vary` injection, cache-policy changes, or conditional-request handling |
 | Allow | `Response::allow` parses bounded response `Allow` fields into an ordered HTTP method-token list | No fallback method selection, automatic retry/replay, or status-code policy behavior for `405` or `OPTIONS` |
 | Client Hints | `Response::accept_ch` and `Response::critical_ch` parse bounded, ordered Client Hints opt-in metadata while preserving raw headers on parse failures | No browser opt-in state, request-header generation, retry, persistence, or Client Hints policy |
 | Content-Security-Policy-Report-Only | `Response::content_security_policy_report_only` parses bounded `Content-Security-Policy-Report-Only` response metadata through the protocol type, preserving repeated fields in wire order and leaving raw headers observable on parse failures | No CSP enforcement, directive evaluation, report delivery, browser policy state, retry, redirect, cache behavior, or status-policy behavior |

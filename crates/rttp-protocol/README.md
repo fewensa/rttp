@@ -429,6 +429,20 @@ errors describe validation categories without echoing supplied values. These
 parsers report declared request metadata only; they do not create identifiers,
 decide sampling, select a tracing backend, or propagate context automatically.
 
+## Accept-Datetime
+
+`accept_datetime` parses a singleton HTTP `Accept-Datetime` request field as
+one HTTP-date instant through `httpdate`. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, malformed dates, forbidden ASCII control bytes, and oversized
+values are errors. `header_value()` formats the accepted instant as
+IMF-fixdate. The accepted instant matches what `memento_datetime` parses for
+the same HTTP-date, so the request helper and the response helper interoperate
+without negotiating with each other. This parser reports declared request
+metadata only; it does not select an archived representation, implement
+TimeGate behavior, or alter cache policy.
+
 ## If-Modified-Since
 
 `if_modified_since` parses a singleton HTTP `If-Modified-Since` request field
@@ -472,9 +486,12 @@ IMF-fixdate through `httpdate`. Each field value is bounded to 64 KiB. A
 second field is rejected after every supplied field is bound-checked.
 Surrounding SP and HTAB are trimmed as optional whitespace. Empty values,
 malformed dates, forbidden ASCII control bytes, and oversized values are
-errors. `header_value()` formats the accepted instant as IMF-fixdate. This
-parser reports declared metadata only; it does not select an archival
-representation, negotiate `Accept-Datetime`, or implement TimeGate behavior.
+errors. `header_value()` formats the accepted instant as IMF-fixdate. The
+matching request metadata helper is `Accept-Datetime`, which parses the same
+HTTP-date instants and formats the same IMF-fixdate; the two helpers still do
+not negotiate with each other. This parser reports declared metadata only; it
+does not select an archival representation, negotiate `Accept-Datetime`, or
+implement TimeGate behavior.
 
 ## Deprecation
 
