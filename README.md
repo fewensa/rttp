@@ -1445,6 +1445,25 @@ These helpers only declare or parse request metadata. RTTP does not select a
 representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy.
 
+### Bounded DNT request metadata
+
+`HttpClient::dnt(value)` emits one `DNT` field from the user's declared
+tracking preference. The value must be the W3C Tracking Preference Expression
+token `0` (allow tracking) or `1` (do not track), validated through the shared
+protocol `Dnt` type; malformed, oversized, or control-byte input is rejected
+before a socket is opened. On the server, `Request::dnt()` and
+`HttpRequest::dnt()` parse the same bounded singleton preference as `HttpDnt`,
+returning `Ok(None)` when the field is absent and a parser error for
+malformed, oversized, duplicate, or control-byte values while leaving the raw
+`DNT` field available.
+
+DNT is the first shared privacy-preference primitive. These helpers only
+declare or parse request metadata: RTTP does not disable cookies, strip
+`Referer`, change analytics or advertising behavior, synthesize a `Tk`
+response field, or enforce tracking policy. Related privacy-preference headers
+should reuse this same bounded singleton contract rather than inventing policy
+behavior.
+
 ### Bounded Sec-GPC request metadata
 
 `HttpClient::sec_gpc()` emits `Sec-GPC: 1`. On the server,
@@ -1660,6 +1679,7 @@ gain additional HTTP/2 header-block handling.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata through the shared protocol type | Expect metadata does not gate body transmission; raw `header(("Expect", value))` remains an escape hatch; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | Client `save_data` emits bounded `Save-Data: on` request metadata; server `Request::save_data()` and `HttpRequest::save_data()` parse typed received values while preserving raw headers on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| DNT | Client `dnt` emits bounded `DNT: 0`/`DNT: 1` request metadata through the shared protocol `Dnt` type and rejects invalid input before connecting | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` emission, retries, or privacy-preference policy |
 | Accept-Charset | Client `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type; server `Request::accept_charset()` and `HttpRequest::accept_charset()` parse received fields into `HttpRequestAcceptCharsets` | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Negotiate | Client `negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared `rttp-protocol` type, replacing an existing same-name field; server `Request::negotiate()` and `HttpRequest::negotiate()` parse received fields into `HttpNegotiate` while preserving raw headers on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN`/`Vary` synthesis, or automatic cache selection |
 | TCN | Client `Response::tcn()` and server `HttpResponse::with_tcn()`/`tcn()` share bounded RFC 2295 `TCN` response metadata through the protocol `Tcn` type while preserving raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
@@ -2861,6 +2881,7 @@ TLS or async accept loops.
 | Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` parse bounded typed `Sec-Fetch-*`/`Sec-Purpose` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | `Request::save_data` and `HttpRequest::save_data` parse bounded singleton `Save-Data` `on`-token metadata and preserve raw values on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| DNT | `Request::dnt` and `HttpRequest::dnt` parse bounded singleton `DNT` `0`/`1` preference metadata through `HttpDnt` and preserve raw values on errors | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` synthesis, retries, or privacy-preference policy |
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Negotiate | `Request::negotiate` and `HttpRequest::negotiate` parse bounded RFC 2295 `Negotiate` request metadata into `HttpNegotiate` through the shared `rttp-protocol` type and preserve raw values on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN`/`Vary` synthesis, or automatic cache selection |
 | TCN | `HttpResponse::with_tcn` and `HttpResponse::tcn` declare or parse bounded RFC 2295 `TCN` response metadata through `HttpTcn` and preserve raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |

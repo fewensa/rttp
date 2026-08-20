@@ -19,6 +19,7 @@ use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
+use rttp_protocol::dnt::Dnt;
 use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
@@ -449,6 +450,18 @@ impl HttpClient {
     let save_data =
       SaveData::parse("on").map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Save-Data", save_data.header_value())))
+  }
+
+  /// Set `DNT` request metadata from the declared tracking preference.
+  ///
+  /// The value must be the W3C Tracking Preference Expression token `0`
+  /// (allow tracking) or `1` (do not track). This declares request metadata
+  /// only; it does not disable cookies, strip `Referer`, change analytics, or
+  /// apply tracking policy.
+  pub fn dnt<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let dnt = Dnt::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("DNT", dnt.header_value())))
   }
 
   /// Set `Sec-GPC: 1` request metadata.

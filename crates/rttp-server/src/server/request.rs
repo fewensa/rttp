@@ -48,6 +48,7 @@ pub use rttp_protocol::depth::{Depth as HttpDepth, DepthParseError as HttpDepthP
 pub use rttp_protocol::destination::{
   Destination as HttpDestination, DestinationParseError as HttpDestinationParseError,
 };
+pub use rttp_protocol::dnt::{Dnt as HttpDnt, DntParseError as HttpDntParseError};
 pub use rttp_protocol::entity_tag::{
   EntityTag as HttpEntityTag, EntityTagParseError as HttpEntityTagParseError,
 };
@@ -537,6 +538,16 @@ impl Request {
       return Ok(None);
     }
     HttpSaveData::parse_values(values).map(Some)
+  }
+
+  /// Parses received `DNT` tracking-preference metadata without applying
+  /// tracking, cookie, analytics, or advertising policy.
+  pub fn dnt(&self) -> Result<Option<HttpDnt>, HttpDntParseError> {
+    let values: Vec<&str> = self.headers_named("DNT").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDnt::parse_values(values).map(Some)
   }
 
   /// Parses received `Sec-GPC` request metadata without applying consent,
@@ -2855,6 +2866,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSaveData::parse_values(values).map(Some)
+  }
+
+  /// Parses received `DNT` tracking-preference metadata without applying
+  /// tracking, cookie, analytics, or advertising policy.
+  pub fn dnt(&self) -> Result<Option<HttpDnt>, HttpDntParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("DNT"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDnt::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Charset` request metadata without negotiating,

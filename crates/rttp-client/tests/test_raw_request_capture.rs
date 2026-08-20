@@ -526,8 +526,7 @@ fn auth_facade_rejects_oversized_bearer_before_connecting_without_exposing_token
     let error = client()
       .get()
       .url(format!("{}/asset", base_url))
-      .auth(Auth::bearer(&token))
-      .emit()
+      .authorization("Bearer", &token)
       .expect_err("oversized Authorization metadata should be rejected");
     assert!(error.is_builder());
     assert!(!error.to_string().contains(&token));
@@ -5203,6 +5202,54 @@ fn save_data_helper_emits_on_request_token() {
   let request = request_text(&request);
 
   assert_eq!(Some("on"), header_value(&request, "Save-Data"));
+}
+
+#[test]
+fn dnt_helper_emits_defined_preference_tokens() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/catalog", base_url))
+      .dnt("1")
+      .expect("DNT should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("1"), header_value(&request, "DNT"));
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/catalog", base_url))
+      .dnt("0")
+      .expect("DNT should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("0"), header_value(&request, "DNT"));
+}
+
+#[test]
+fn dnt_helper_rejects_malformed_and_oversized_values_before_connecting() {
+  let oversized = "0".repeat(64 * 1024 + 1);
+  for value in ["on", "true", "1abc", "1, 0", oversized.as_str()] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/catalog", base_url))
+        .dnt(value)
+        .expect_err("invalid DNT input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid DNT input must not open a socket"
+    );
+  }
 }
 
 #[test]

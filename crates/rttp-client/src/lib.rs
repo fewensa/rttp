@@ -135,6 +135,7 @@ pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
 pub use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};
 pub use rttp_protocol::depth::{Depth, DepthParseError};
 pub use rttp_protocol::destination::{Destination, DestinationParseError};
+pub use rttp_protocol::dnt::{Dnt, DntParseError};
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };

@@ -274,6 +274,43 @@ fn request_save_data_preserves_absent_valid_and_malformed_metadata() {
 }
 
 #[test]
+fn request_dnt_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("GET /catalog HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(None, absent.dnt().expect("missing DNT should be accepted"));
+  assert_eq!(None, absent.header("DNT"));
+
+  for (value, expected) in [("0", "0"), ("1", "1")] {
+    let request = parse_request(&format!(
+      "GET /catalog HTTP/1.1\r\nHost: example.test\r\nDNT: {value}\r\n\r\n"
+    ));
+    let dnt = request
+      .dnt()
+      .expect("DNT should parse")
+      .expect("DNT should be present");
+    assert_eq!(expected, dnt.header_value());
+  }
+
+  let malformed = parse_request(concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "DNT: ?1\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.dnt().is_err());
+  assert_eq!(Some("?1"), malformed.header("DNT"));
+
+  let duplicate = parse_request(concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "DNT: 1\r\n",
+    "dnt: 0\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.dnt().is_err());
+  assert_eq!(Some("1"), duplicate.header("DNT"));
+}
+
+#[test]
 fn request_upgrade_insecure_requests_preserves_absent_valid_and_malformed_metadata() {
   let absent = parse_request("GET /page HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(
