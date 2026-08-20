@@ -66,6 +66,7 @@ use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::save_data::SaveData;
+use rttp_protocol::schedule_tag::ScheduleTag;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
 use rttp_protocol::sec_websocket_extensions::{
@@ -154,6 +155,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let overwrite = Overwrite::parse("F").expect("Overwrite should parse");
   let _: OverwriteParseError =
     Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
+  let schedule_tag = ScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
   let idempotency_key = IdempotencyKey::parse("charge-2026-08-19-9f3c")
     .expect("Idempotency-Key request metadata should parse");
   let sec_websocket_key = SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
@@ -414,6 +416,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!("second-60, infinite", timeout.header_value());
   assert_eq!(Overwrite::F, overwrite);
   assert_eq!("F", overwrite.header_value());
+  assert_eq!("sched-17", schedule_tag.opaque_tag());
+  assert_eq!("\"sched-17\"", schedule_tag.header_value());
   assert_eq!(idempotency_key.as_str(), "charge-2026-08-19-9f3c");
   assert_eq!(idempotency_key.header_value(), "charge-2026-08-19-9f3c");
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));

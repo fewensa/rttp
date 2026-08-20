@@ -162,6 +162,9 @@ pub use rttp_protocol::reporting_endpoints::{
   ReportingEndpoints as HttpReportingEndpoints,
   ReportingEndpointsParseError as HttpReportingEndpointsParseError,
 };
+pub use rttp_protocol::schedule_tag::{
+  ScheduleTag as HttpScheduleTag, ScheduleTagParseError as HttpScheduleTagParseError,
+};
 pub use rttp_protocol::sec_websocket_accept::{
   SecWebSocketAccept as HttpSecWebSocketAccept,
   SecWebSocketAcceptParseError as HttpSecWebSocketAcceptParseError,
@@ -1914,6 +1917,16 @@ impl HttpResponse {
     self
   }
 
+  pub fn with_schedule_tag(mut self, schedule_tag: HttpScheduleTag) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Schedule-Tag"));
+    self
+      .headers
+      .push(HttpHeader::new("Schedule-Tag", schedule_tag.header_value()));
+    self
+  }
+
   pub fn with_content_disposition<D>(
     mut self,
     disposition: D,
@@ -3141,6 +3154,19 @@ impl HttpResponse {
       return Ok(None);
     };
     HttpEntityTag::parse(value).map(Some)
+  }
+
+  pub fn schedule_tag(&self) -> Result<Option<HttpScheduleTag>, HttpScheduleTagParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Schedule-Tag"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpScheduleTag::parse_values(values).map(Some)
   }
 
   pub fn content_disposition(

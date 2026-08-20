@@ -6,7 +6,7 @@ use rttp_client::response::{
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag,
   HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, LockToken, MementoDatetime,
   OriginTrials, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
-  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter,
+  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ScheduleTag,
   SecWebSocketAccept, SecWebSocketExtensions, SecWebSocketProtocol, SecWebSocketVersion,
   ServerTiming, ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
   SupportsLoadingMode, Via, Warning, XContentTypeOptions, XFrameOptions,
@@ -2702,6 +2702,109 @@ fn test_parse_etag_rejects_malformed_duplicate_and_oversized_values_without_losi
     "ETag helper should reject oversized values"
   );
   assert_eq!(Some(&oversized), response.header_value("ETag"));
+}
+
+#[test]
+fn test_parse_schedule_tag_response_helper_handles_singleton_metadata() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test/calendar"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  )
+  .expect("response without Schedule-Tag should parse");
+  assert_eq!(
+    None,
+    absent
+      .schedule_tag()
+      .expect("absent Schedule-Tag should parse")
+  );
+
+  for (value, expected) in [
+    (
+      "\"sched-17\"",
+      ScheduleTag::parse("\"sched-17\"").expect("strong Schedule-Tag should parse"),
+    ),
+    (
+      "W/\"sched-17\"",
+      ScheduleTag::parse("W/\"sched-17\"").expect("weak Schedule-Tag should parse"),
+    ),
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nSchedule-Tag: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/calendar"),
+      raw.into_bytes(),
+    )
+    .expect("response with Schedule-Tag should parse");
+
+    assert_eq!(
+      Some(expected),
+      response.schedule_tag().expect("Schedule-Tag should parse")
+    );
+    assert_eq!(Some(&value.to_string()), response.schedule_tag_value());
+    assert_eq!(
+      vec![&value.to_string()],
+      response.header_values("Schedule-Tag")
+    );
+  }
+}
+
+#[test]
+fn test_parse_schedule_tag_rejects_malformed_duplicate_and_oversized_values_without_losing_raw_headers(
+) {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"bad\"value\""] {
+    let raw = format!("HTTP/1.1 200 OK\r\nSchedule-Tag: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/calendar"),
+      raw.into_bytes(),
+    )
+    .expect("raw response remains usable");
+
+    assert!(
+      response.schedule_tag().is_err(),
+      "Schedule-Tag helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Schedule-Tag")
+    );
+  }
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test/calendar"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Schedule-Tag: \"one\"\r\n",
+      "schedule-tag: W/\"two\"\r\n",
+      "Content-Length: 2\r\n",
+      "\r\n",
+      "OK"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response with duplicate Schedule-Tag remains usable");
+
+  assert!(
+    duplicate.schedule_tag().is_err(),
+    "Schedule-Tag helper should reject duplicate singleton headers"
+  );
+  assert_eq!(
+    vec![&"\"one\"".to_string(), &"W/\"two\"".to_string()],
+    duplicate.header_values("Schedule-Tag")
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let raw = format!("HTTP/1.1 200 OK\r\nSchedule-Tag: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/calendar"),
+    raw.into_bytes(),
+  )
+  .expect("raw response with oversized Schedule-Tag remains usable");
+
+  assert!(
+    response.schedule_tag().is_err(),
+    "Schedule-Tag helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Schedule-Tag"));
 }
 
 #[test]

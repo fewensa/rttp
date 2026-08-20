@@ -13,8 +13,32 @@ use rttp::server::{
   HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
   HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
   HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
-  HttpServerTiming, HttpTimeoutType, HttpVary, HttpVia,
+  HttpScheduleTag, HttpServerTiming, HttpTimeoutType, HttpVary, HttpVia,
 };
+
+#[test]
+fn response_schedule_tag_helper_validates_and_preserves_raw_headers() {
+  let schedule_tag = HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
+  let response = HttpResponse::ok("body")
+    .header("Schedule-Tag", "\"old\"")
+    .with_schedule_tag(schedule_tag.clone());
+
+  assert_eq!(
+    Some(schedule_tag),
+    response
+      .schedule_tag()
+      .expect("attached Schedule-Tag should parse")
+  );
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nSchedule-Tag: ").count());
+  assert!(serialized.contains("\r\nSchedule-Tag: \"sched-17\"\r\n"));
+
+  let raw = HttpResponse::ok("body").header("Schedule-Tag", "sched-17");
+  assert!(raw.schedule_tag().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nSchedule-Tag: sched-17\r\n"));
+}
 
 #[test]
 fn response_access_control_allow_origin_helper_validates_and_preserves_raw_headers() {

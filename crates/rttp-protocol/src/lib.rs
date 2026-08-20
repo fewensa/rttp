@@ -95,6 +95,7 @@ pub mod referer;
 pub mod referrer_policy;
 pub mod reporting_endpoints;
 pub mod save_data;
+pub mod schedule_tag;
 pub mod sec_gpc;
 pub mod sec_websocket_accept;
 pub mod sec_websocket_extensions;

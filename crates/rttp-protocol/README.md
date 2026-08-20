@@ -230,6 +230,20 @@ values, and forbidden ASCII control bytes are errors. This parser reports
 declared request metadata only; it does not compare the validator to stored
 calendar state, inspect calendars, or apply scheduling policy.
 
+## Schedule-Tag
+
+`schedule_tag` parses a singleton `Schedule-Tag` response field as one
+RFC 9110 entity-tag-shaped schedule validator such as `"sched-17"` or
+`W/"sched-17"`. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. Surrounding SP and HTAB
+are trimmed as optional whitespace. The stored value is the shared `EntityTag`
+representation; `entity_tag()`, `is_weak()`, and `opaque_tag()` expose it, and
+`header_value()` emits it canonically. Empty values, wildcards, comma-lists,
+malformed quotes, leftover text, oversized values, and forbidden ASCII control
+bytes are errors. This parser reports declared response metadata only; it does
+not generate calendar versions, compare validators, inspect calendars, or apply
+scheduling policy.
+
 ## W3C Baggage
 
 `baggage` parses bounded W3C `baggage` request metadata. `Baggage` preserves
