@@ -17,15 +17,16 @@ use rttp_client::response::{
   OriginTrialParseError, OriginTrials, PermissionsPolicy, PermissionsPolicyParseError, Pragma,
   PragmaParseError, PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
   ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError,
-  ReferrerPolicy, ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError,
-  SecWebSocketExtensions, SecWebSocketExtensionsParseError, SecWebSocketProtocol,
-  SecWebSocketProtocolParseError, SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming,
-  Signature, SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
-  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  SupportsLoadingMode, SupportsLoadingModeParseError, Trailer, TransferEncoding,
-  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, Via, ViaParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  ReferrerPolicy, ReferrerPolicyToken, ScheduleTag, SecWebSocketAccept,
+  SecWebSocketAcceptParseError, SecWebSocketExtensions, SecWebSocketExtensionsParseError,
+  SecWebSocketProtocol, SecWebSocketProtocolParseError, SecWebSocketVersion,
+  SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
+  SignatureParseError, SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
+  Via, ViaParseError, WantContentDigest, WantReprDigest, Warning, WwwAuthenticate,
+  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
+  XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -150,6 +151,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect_err("empty Content-Security-Policy-Report-Only should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
   let etag = EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
+  let schedule_tag = ScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
   let location = Location::parse("/next").expect("Location should parse");
   let _: LocationParseError = Location::parse("").expect_err("empty Location should be rejected");
   let memento_datetime =
@@ -411,6 +413,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(digest.entries().len(), 1);
   assert_eq!(etag, EntityTag::strong("asset-v7"));
+  assert_eq!(schedule_tag.header_value(), "\"sched-17\"");
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
     memento_datetime.header_value(),

@@ -816,6 +816,22 @@ These helpers parse request metadata only. They do not compare the validator
 to stored calendar state, inspect calendars, select scheduling behavior, or
 apply 412 or scheduling policy.
 
+## Schedule-Tag response metadata
+
+Handlers can call `HttpResponse::with_schedule_tag(value)` to declare one
+bounded `Schedule-Tag` response field and `HttpResponse::schedule_tag()` to
+parse attached raw `Schedule-Tag` fields through the shared protocol
+`HttpScheduleTag` type, which reuses the shared `HttpEntityTag`
+representation. Absent fields return `Ok(None)`. A recognized value is one
+entity-tag-shaped schedule validator such as `"sched-17"` or `W/"sched-17"`,
+with optional surrounding SP or HTAB trimmed and weak syntax preserved.
+Malformed, wildcard, comma-list, duplicate, oversized, or control-byte values
+return a parser error while raw response headers remain available.
+
+These helpers declare and parse response metadata only. They do not generate
+calendar versions, compare validators, inspect calendars, select scheduling
+behavior, or apply scheduling policy.
+
 ## WebDAV Overwrite request metadata
 
 Handlers can call `Request::overwrite()` and `HttpRequest::overwrite()` to

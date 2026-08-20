@@ -110,6 +110,18 @@ compare the validator to stored calendar state, inspect calendars, or apply
 scheduling policy. Callers needing an unusual value can retain full raw-header
 control with `header(("If-Schedule-Tag-Match", "..."))`.
 
+## Bounded Schedule-Tag response metadata
+
+`Response::schedule_tag()` parses one bounded `Schedule-Tag` response field
+through the shared protocol `ScheduleTag` type, which reuses the shared
+`EntityTag` representation. `Response::schedule_tag_value()` returns the raw
+field when present. The helper accepts one entity-tag-shaped schedule validator
+such as `"sched-17"` or `W/"sched-17"`, trims HTTP OWS, and rejects empty,
+malformed, wildcard, comma-list, duplicate, injection, control-byte, and
+oversized (over 64 KiB) values while leaving raw headers available through the
+ordinary response header accessors. RTTP does not generate calendar versions,
+compare validators, inspect calendars, or apply scheduling policy.
+
 ## Bounded WebDAV Overwrite metadata
 
 `HttpClient::overwrite(value)` sets a WebDAV `Overwrite` request header
@@ -400,10 +412,13 @@ Conditional responses are exposed through response metadata helpers.
 `Response::is_precondition_failed()` identifies `412 Precondition Failed`,
 `Response::etag()` parses one bounded response `ETag` field into the protocol
 `EntityTag` type, `Response::etag_value()` returns the raw response `ETag` field
-when present, and `Response::last_modified()` returns the response
+when present, `Response::schedule_tag()` parses one bounded `Schedule-Tag`
+response field into the protocol `ScheduleTag` type, and
+`Response::last_modified()` returns the response
 `Last-Modified` field when present. Malformed, oversized, or duplicate `ETag`
-fields make the typed helper return an error while raw values remain available
-through `Response::etag_value()`, `Response::header_value()`, and
+or `Schedule-Tag` fields make the typed helper return an error while raw
+values remain available through `Response::etag_value()`,
+`Response::schedule_tag_value()`, `Response::header_value()`, and
 `Response::header_values()`. `Response::last_modified_date()` parses
 `Last-Modified` as an HTTP-date
 using the same parser used by the client date helpers: it returns `Ok(None)`
@@ -1436,7 +1451,7 @@ header-block model.
 | Lock-Token | `lock_token` emits bounded singleton WebDAV `Lock-Token` request metadata through the shared protocol type, replacing an existing same-name field and redacting the token from typed debug output; `Response::lock_token` parses bounded singleton response metadata | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
 | Destination | `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, preserving one absolute URI and replacing an existing same-name field | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Timeout | `timeout` emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, normalizing `Second-n`/`Infinite` alternatives to lowercase and replacing an existing same-name field | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
-| If-Schedule-Tag-Match | `if_schedule_tag_match` emits bounded singleton `If-Schedule-Tag-Match` request metadata through the shared protocol type, reusing the shared `EntityTag` representation for strong and weak validators and replacing an existing same-name field | No schedule-tag comparison, calendar inspection, scheduling policy, retry, or status-policy behavior |
+| If-Schedule-Tag-Match and Schedule-Tag | `if_schedule_tag_match` emits bounded singleton `If-Schedule-Tag-Match` request metadata, and `Response::schedule_tag` parses bounded singleton `Schedule-Tag` response metadata through shared protocol types backed by `EntityTag` | No calendar-version generation, schedule-tag comparison, calendar inspection, scheduling policy, retry, or status-policy behavior |
 | Overwrite | `overwrite` emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F` and replacing an existing same-name field | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |

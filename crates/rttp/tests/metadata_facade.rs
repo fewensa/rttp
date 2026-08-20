@@ -15,7 +15,7 @@ use rttp::server::{
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
   HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpSaveData, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
   HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
@@ -371,6 +371,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   let baggage_property: &rttp::BaggageProperty = &baggage_member.properties()[0];
   let etag: rttp::EntityTag =
     rttp_client::response::EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
+  let schedule_tag: rttp::ScheduleTag =
+    rttp_client::response::ScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
   let location: rttp::Location =
     rttp_client::response::Location::parse("/next").expect("Location should parse");
   let _: rttp::LocationParseError =
@@ -383,6 +385,7 @@ fn compatibility_facade_exports_client_metadata_types() {
     client_sec_websocket_accept.as_str(),
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
   );
+  assert_eq!(schedule_tag.header_value(), "\"sched-17\"");
   assert_eq!(
     client_sec_websocket_extensions.header_value(),
     r#"permessage-deflate; client_max_window_bits; mode="safe""#
@@ -1495,7 +1498,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let _: HttpAcceptLanguageParseError = HttpAcceptLanguages::parse("en; q=1.001")
     .expect_err("malformed Accept-Language should be rejected");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
-  let response = HttpResponse::ok("").with_etag(HttpEntityTag::weak("revision-42"));
+  let response = HttpResponse::ok("")
+    .with_etag(HttpEntityTag::weak("revision-42"))
+    .with_schedule_tag(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse"));
   let request_method: HttpAccessControlRequestMethod =
     HttpAccessControlRequestMethod::parse("patch")
       .expect("Access-Control-Request-Method should parse");
@@ -1827,6 +1832,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(
     response.etag().expect("ETag should parse"),
     Some(HttpEntityTag::weak("revision-42"))
+  );
+  assert_eq!(
+    response.schedule_tag().expect("Schedule-Tag should parse"),
+    Some(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse"))
   );
 }
 

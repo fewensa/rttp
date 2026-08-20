@@ -140,6 +140,7 @@ pub use rttp_protocol::fetch_metadata::{
 pub use rttp_protocol::if_schedule_tag_match::{IfScheduleTagMatch, IfScheduleTagMatchParseError};
 pub use rttp_protocol::lock_token::{LockToken, LockTokenParseError};
 pub use rttp_protocol::overwrite::{Overwrite, OverwriteParseError};
+pub use rttp_protocol::schedule_tag::{ScheduleTag, ScheduleTagParseError};
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
 pub use rttp_protocol::sec_websocket_extensions::{
   SecWebSocketExtension, SecWebSocketExtensionParameter, SecWebSocketExtensionParameterValue,

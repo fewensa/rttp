@@ -72,6 +72,7 @@ use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
+use rttp_protocol::schedule_tag::{ScheduleTag, ScheduleTagParseError};
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
 use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
@@ -363,6 +364,18 @@ impl Response {
       [value] => EntityTag::parse(value).map(Some),
       _ => Err(EntityTagParseError::new("Duplicate ETag header values")),
     }
+  }
+
+  pub fn schedule_tag_value(&self) -> Option<&String> {
+    self.header_value("schedule-tag")
+  }
+
+  pub fn schedule_tag(&self) -> Result<Option<ScheduleTag>, ScheduleTagParseError> {
+    let values = self.header_values("schedule-tag");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ScheduleTag::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
   pub fn last_modified(&self) -> Option<&String> {

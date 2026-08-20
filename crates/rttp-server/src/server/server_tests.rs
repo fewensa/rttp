@@ -1345,6 +1345,89 @@ fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() 
 }
 
 #[test]
+fn schedule_tag_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .schedule_tag()
+      .expect("absent Schedule-Tag should parse")
+  );
+
+  let schedule_tag = HttpScheduleTag::parse("W/\"sched-17\"")
+    .expect("weak Schedule-Tag should parse");
+  let response = HttpResponse::ok([])
+    .header("Schedule-Tag", "\"old\"")
+    .header("schedule-tag", "W/\"older\"")
+    .with_schedule_tag(schedule_tag.clone());
+  assert_eq!(
+    Some(schedule_tag),
+    response
+      .schedule_tag()
+      .expect("Schedule-Tag should parse")
+  );
+  assert_eq!(
+    vec![("Schedule-Tag", "W/\"sched-17\"")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let strong = HttpResponse::ok([]).header("Schedule-Tag", "\"sched-17\"");
+  assert_eq!(
+    Some(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse")),
+    strong
+      .schedule_tag()
+      .expect("strong Schedule-Tag should parse")
+  );
+}
+
+#[test]
+fn schedule_tag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"bad\"value\""] {
+    let response = HttpResponse::ok([]).header("Schedule-Tag", value);
+    assert!(
+      response.schedule_tag().is_err(),
+      "Schedule-Tag should reject {value:?}"
+    );
+    assert_eq!(
+      vec![("Schedule-Tag", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Schedule-Tag", "\"one\"")
+    .header("schedule-tag", "W/\"two\"");
+  assert!(duplicate.schedule_tag().is_err());
+  assert_eq!(
+    vec![("Schedule-Tag", "\"one\""), ("schedule-tag", "W/\"two\"")],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok([]).header("Schedule-Tag", &oversized);
+  assert!(response.schedule_tag().is_err());
+  assert_eq!(
+    vec![("Schedule-Tag", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn service_worker_allowed_response_helpers_validate_replace_and_parse_singleton_metadata() {
   assert_eq!(
     None,
