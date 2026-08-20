@@ -2523,6 +2523,105 @@ fn document_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
 }
 
 #[test]
+fn document_policy_report_only_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Document-Policy-Report-Only", "oversized-images=1.0")
+    .header("document-policy-report-only", "unsized-media=?0")
+    .with_document_policy_report_only(
+      "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    )
+    .expect("Document-Policy-Report-Only should be accepted");
+
+  let policy = response
+    .document_policy_report_only()
+    .expect("Document-Policy-Report-Only should parse")
+    .expect("Document-Policy-Report-Only should be present");
+  assert_eq!(
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    policy.header_value()
+  );
+  assert_eq!(3, policy.directives().len());
+  assert_eq!(
+    Some("default"),
+    policy.directive("*").unwrap().report_to()
+  );
+  assert_eq!(
+    vec![(
+      "Document-Policy-Report-Only",
+      "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn document_policy_report_only_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("Document-Policy-Report-Only", "oversized-images=2.0");
+  let policy = raw
+    .document_policy_report_only()
+    .expect("raw Document-Policy-Report-Only should parse")
+    .expect("Document-Policy-Report-Only should be present");
+  assert_eq!("oversized-images=2.0", policy.header_value());
+  assert_eq!(
+    Some("oversized-images=2.0"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Document-Policy-Report-Only"))
+      .map(|header| header.value.as_str())
+  );
+
+  for value in [
+    "",
+    "=()",
+    "=1.2345",
+    "unsized-media=src;foo=bar",
+    "oversized-images=1;report-to=first;report-to=second",
+    "oversized-images=1.0, oversized-images=2.0",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Document-Policy-Report-Only", value);
+    assert!(
+      malformed.document_policy_report_only().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(malformed.status_code == 200 && malformed.body.is_empty());
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Document-Policy-Report-Only"))
+        .map(|header| header.value.as_str())
+    );
+    assert!(
+      HttpResponse::ok([])
+        .with_document_policy_report_only(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .document_policy_report_only()
+      .expect("absent Document-Policy-Report-Only should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Document-Policy-Report-Only", "oversized-images=1.0")
+    .header("document-policy-report-only", "oversized-images=2.0");
+  assert!(duplicate.document_policy_report_only().is_err());
+  assert!(HttpResponse::ok([])
+    .with_document_policy_report_only("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
 fn supports_loading_mode_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Supports-Loading-Mode", "fenced-frame")

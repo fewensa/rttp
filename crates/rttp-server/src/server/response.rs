@@ -102,6 +102,12 @@ pub use rttp_protocol::document_policy::{
   DocumentPolicyParseError as HttpDocumentPolicyParseError,
   DocumentPolicyValue as HttpDocumentPolicyValue,
 };
+pub use rttp_protocol::document_policy_report_only::{
+  DocumentPolicyReportOnly as HttpDocumentPolicyReportOnly,
+  DocumentPolicyReportOnlyDirective as HttpDocumentPolicyReportOnlyDirective,
+  DocumentPolicyReportOnlyParseError as HttpDocumentPolicyReportOnlyParseError,
+  DocumentPolicyReportOnlyValue as HttpDocumentPolicyReportOnlyValue,
+};
 pub use rttp_protocol::keep_alive::{
   KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
   KeepAliveParseError as HttpKeepAliveParseError,
@@ -1424,6 +1430,17 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Document-Policy-Report-Only` metadata without
+  /// enforcing document policy or sending reports.
+  pub fn with_document_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpDocumentPolicyReportOnlyParseError> {
+    let policy = HttpDocumentPolicyReportOnly::parse(value)?;
+    self.set_browser_policy_header("Document-Policy-Report-Only", &policy.header_value());
+    Ok(self)
+  }
+
   /// Validates and replaces `Permissions-Policy` metadata without enforcing
   /// browser permissions or origin policy.
   pub fn with_permissions_policy(
@@ -2489,6 +2506,27 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpDocumentPolicy::parse_values(values).map(Some)
+  }
+
+  /// Returns attached `Document-Policy-Report-Only` metadata without enforcing
+  /// document policy or sending reports.
+  pub fn document_policy_report_only(
+    &self,
+  ) -> Result<Option<HttpDocumentPolicyReportOnly>, HttpDocumentPolicyReportOnlyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Document-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDocumentPolicyReportOnly::parse_values(values).map(Some)
   }
 
   /// Returns attached `Permissions-Policy` metadata without enforcing browser
