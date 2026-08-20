@@ -3024,6 +3024,53 @@ fn sync_client_and_server_exchange_bounded_depth_metadata_without_policy() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_destination_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Destination server");
+  let addr = server.local_addr().expect("Destination server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .destination()
+            .expect("Destination should parse")
+            .map(|destination| destination.header_value()),
+          request.header("Destination").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Destination metadata");
+        HttpResponse::new(201, "Created")
+      })
+      .expect("serve Destination request");
+  });
+
+  let response = client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .destination("https://dav.example.test/archive/source.txt")
+    .expect("Destination should be accepted")
+    .emit()
+    .expect("Destination response should parse");
+
+  let (typed, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe Destination metadata");
+  assert_eq!(
+    Some("https://dav.example.test/archive/source.txt".to_string()),
+    typed
+  );
+  assert_eq!(
+    Some("https://dav.example.test/archive/source.txt".to_string()),
+    raw
+  );
+  assert_eq!(201, response.code());
+  handle.join().expect("Destination server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_sec_websocket_key_metadata_without_handshake() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind sec websocket key server");

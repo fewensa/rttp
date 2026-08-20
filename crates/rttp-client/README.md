@@ -57,6 +57,18 @@ emits the canonical metadata value: RTTP does not traverse resources, select
 WebDAV methods, or enforce method policy. Callers needing an unusual value
 can retain full raw-header control with `header(("Depth", "..."))`.
 
+## Bounded WebDAV Destination metadata
+
+`HttpClient::destination(value)` sets a WebDAV `Destination` request header
+through the shared protocol `Destination` type. The helper accepts one
+absolute URI, trims HTTP OWS, preserves the trimmed URI string, and rejects
+empty, relative, scheme-relative, malformed, oversized (over 64 KiB),
+duplicate, injection, and control-byte values before a socket is opened. It
+only validates and emits the preserved metadata value: RTTP does not resolve
+the destination, normalize URI components, authorize access, select WebDAV
+methods, or copy or move resources. Callers needing an unusual value can
+retain full raw-header control with `header(("Destination", "..."))`.
+
 ## Bounded Idempotency-Key metadata
 
 `HttpClient::idempotency_key(value)` sets an `Idempotency-Key` request header
@@ -1224,6 +1236,7 @@ header-block model.
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Depth | `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, normalizing `infinity` to lowercase and replacing an existing same-name field | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
+| Destination | `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, preserving one absolute URI and replacing an existing same-name field | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Sec-WebSocket-Key | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output | No HTTP upgrade, `Sec-WebSocket-Accept` computation, random nonce generation, WebSocket frames, or handshake policy |
 | Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |

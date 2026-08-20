@@ -2189,6 +2189,101 @@ fn depth_helper_replaces_existing_fields() {
 }
 
 #[test]
+fn destination_helper_emits_canonical_webdav_metadata() {
+  for (value, expected) in [
+    (
+      "https://dav.example.test/archive/report.txt",
+      "https://dav.example.test/archive/report.txt",
+    ),
+    (
+      "http://example.test/collection/%E2%82%AC?copy=1#frag",
+      "http://example.test/collection/%E2%82%AC?copy=1#frag",
+    ),
+    (
+      " \thttps://dav.example.test/archive/report.txt\t ",
+      "https://dav.example.test/archive/report.txt",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("COPY")
+        .url(format!("{}/documents/source.txt", base_url))
+        .destination(value)
+        .expect("Destination should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Destination"));
+  }
+}
+
+#[test]
+fn destination_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("COPY")
+      .url(format!("{}/documents/source.txt", base_url))
+      .header(("Destination", "https://dav.example.test/old.txt"))
+      .destination("https://dav.example.test/archive/report.txt")
+      .expect("Destination should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("https://dav.example.test/archive/report.txt"),
+    header_value(&request, "Destination")
+  );
+}
+
+#[test]
+fn destination_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    "/relative",
+    "../path",
+    "//example.test/path",
+    "https://example.test/a b",
+    "https://example.test/%zz",
+    "https://example.test/a\r\nX: y",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("COPY")
+        .url(format!("{}/documents/source.txt", base_url))
+        .destination(value)
+        .expect_err("invalid Destination should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Destination helper input should not open a socket"
+    );
+  }
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("COPY")
+      .url(format!("{}/documents/source.txt", base_url))
+      .destination(oversized.as_str())
+      .expect_err("oversized Destination should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Destination helper input should not open a socket"
+  );
+}
+
+#[test]
 fn depth_helper_rejects_invalid_values_before_connecting() {
   for value in ["", "2", "-1", "1.0", "0, 1", "infinite", "1\r\nX: y"] {
     let request = capture_optional_request(|base_url| {

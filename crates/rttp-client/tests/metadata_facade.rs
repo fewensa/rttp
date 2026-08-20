@@ -30,10 +30,11 @@ use rttp_client::response::{
   ServiceWorkerAllowedParseError,
 };
 use rttp_client::{
-  Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, HttpClient,
-  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose,
-  TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
-  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
+  Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
+  DestinationParseError, HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  SecGpc, SecGpcParseError, SecPurpose, TraceParent, TraceParentParseError, TraceState,
+  TraceStateMember, TraceStateParseError, UpgradeInsecureRequests,
+  UpgradeInsecureRequestsParseError,
 };
 use rttp_protocol::expect::Expect;
 use rttp_test_support as support;
@@ -84,6 +85,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: ContentDprParseError =
     ContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
   let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
+  let destination = Destination::parse("https://dav.example.test/archive/report.txt")
+    .expect("Destination should parse");
+  let _: DestinationParseError =
+    Destination::parse("/relative").expect_err("relative Destination should be rejected");
   let depth = Depth::parse("infinity").expect("Depth should parse");
   let _: DepthParseError = Depth::parse("2").expect_err("malformed Depth should be rejected");
   let _: DeprecationParseError =
@@ -289,6 +294,14 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
+  assert_eq!(
+    destination.as_str(),
+    "https://dav.example.test/archive/report.txt"
+  );
+  assert_eq!(
+    destination.header_value(),
+    "https://dav.example.test/archive/report.txt"
+  );
   assert_eq!(Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert_eq!(
