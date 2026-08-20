@@ -2,18 +2,24 @@
 //!
 //! This module validates one or more `A-IM` field values as an ordered list of
 //! instance-manipulation tokens with optional quality weights and extension
-//! parameters. Callers decide whether and how to select or apply delta
-//! encodings. Unparsable input is an error; this parser never fails open.
+//! parameters. Token, parameter, ordering, duplicate, member-count, and size
+//! rules reuse the canonical instance-manipulation validator. Callers decide
+//! whether and how to select or apply delta encodings. Unparsable input is an
+//! error; this parser never fails open.
 
 use std::error::Error;
 use std::fmt;
 
-use crate::http1::{is_token, is_token_byte};
+use crate::instance_manipulation::{
+  parse_instance_manipulation_values, InstanceManipulationMember, InstanceManipulationParameter,
+  InstanceManipulationParameterValue, MAX_MEMBERS, MAX_PARAMETERS, MAX_TOTAL_BYTES,
+  MAX_VALUE_BYTES,
+};
 
-pub const MAX_A_IM_VALUE_BYTES: usize = 64 * 1024;
-pub const MAX_A_IM_TOTAL_BYTES: usize = 64 * 1024;
-pub const MAX_A_IM_MEMBERS: usize = 32;
-pub const MAX_A_IM_PARAMETERS: usize = 16;
+pub const MAX_A_IM_VALUE_BYTES: usize = MAX_VALUE_BYTES;
+pub const MAX_A_IM_TOTAL_BYTES: usize = MAX_TOTAL_BYTES;
+pub const MAX_A_IM_MEMBERS: usize = MAX_MEMBERS;
+pub const MAX_A_IM_PARAMETERS: usize = MAX_PARAMETERS;
 
 /// Parsed, bounded `A-IM` request metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,27 +79,14 @@ impl AIm {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let mut members = Vec::new();
-    let mut total_bytes = 0usize;
-
-    for value in values {
-      if value.len() > MAX_A_IM_VALUE_BYTES {
-        return Err(AImParseError::new("A-IM header value is too large"));
-      }
-      total_bytes = total_bytes.saturating_add(value.len());
-      if total_bytes > MAX_A_IM_TOTAL_BYTES {
-        return Err(AImParseError::new("A-IM header list is too large"));
-      }
-      if value.bytes().any(is_invalid_control_byte) {
-        return Err(AImParseError::new("invalid A-IM control byte"));
-      }
-      parse_field(value, &mut members)?;
-    }
-
-    if members.is_empty() {
-      return Err(AImParseError::new("invalid A-IM token"));
-    }
-    Ok(Self { members })
+    let members = parse_instance_manipulation_values("A-IM", values)
+      .map_err(|error| AImParseError::new(error.message()))?;
+    Ok(Self {
+      members: members
+        .into_iter()
+        .map(AImMember::try_from)
+        .collect::<Result<_, _>>()?,
+    })
   }
 
   pub fn from_members<I, M>(members: I) -> Result<Self, AImParseError>
@@ -163,6 +156,35 @@ impl AImMember {
   }
 }
 
+impl TryFrom<InstanceManipulationMember> for AImMember {
+  type Error = AImParseError;
+
+  fn try_from(member: InstanceManipulationMember) -> Result<Self, Self::Error> {
+    let mut quality = 1000;
+    let mut parameters = Vec::with_capacity(member.parameters.len());
+
+    for parameter in member.parameters {
+      let parameter = AImParameter::from(parameter);
+      if parameter.name.eq_ignore_ascii_case("q") {
+        let Some(parameter_value) = &parameter.value else {
+          return Err(AImParseError::new("invalid A-IM q-value"));
+        };
+        if parameter_value.quoted {
+          return Err(AImParseError::new("invalid A-IM q-value"));
+        }
+        quality = parse_qvalue(&parameter_value.value)?;
+      }
+      parameters.push(parameter);
+    }
+
+    Ok(Self {
+      token: member.token,
+      quality,
+      parameters,
+    })
+  }
+}
+
 impl AImParameter {
   pub fn name(&self) -> &str {
     &self.name
@@ -182,6 +204,15 @@ impl AImParameter {
   }
 }
 
+impl From<InstanceManipulationParameter> for AImParameter {
+  fn from(parameter: InstanceManipulationParameter) -> Self {
+    Self {
+      name: parameter.name,
+      value: parameter.value.map(AImParameterValue::from),
+    }
+  }
+}
+
 impl AImParameterValue {
   fn header_value(&self) -> String {
     if self.quoted {
@@ -195,153 +226,12 @@ impl AImParameterValue {
   }
 }
 
-fn parse_field(value: &str, members: &mut Vec<AImMember>) -> Result<(), AImParseError> {
-  let mut position = 0;
-  skip_ows(value, &mut position);
-  if position == value.len() {
-    return Err(AImParseError::new("invalid A-IM token"));
-  }
-
-  loop {
-    let member = parse_member(value, &mut position)?;
-    if members
-      .iter()
-      .any(|known: &AImMember| known.token.eq_ignore_ascii_case(&member.token))
-    {
-      return Err(AImParseError::new("duplicate A-IM token"));
+impl From<InstanceManipulationParameterValue> for AImParameterValue {
+  fn from(value: InstanceManipulationParameterValue) -> Self {
+    Self {
+      value: value.value,
+      quoted: value.quoted,
     }
-    if members.len() >= MAX_A_IM_MEMBERS {
-      return Err(AImParseError::new("too many A-IM members"));
-    }
-    members.push(member);
-    skip_ows(value, &mut position);
-    if position == value.len() {
-      return Ok(());
-    }
-    if take_byte(value, &mut position) != Some(b',') {
-      return Err(AImParseError::new("invalid A-IM token"));
-    }
-    skip_ows(value, &mut position);
-    if position == value.len() {
-      return Err(AImParseError::new("invalid A-IM token"));
-    }
-  }
-}
-
-fn parse_member(value: &str, position: &mut usize) -> Result<AImMember, AImParseError> {
-  let token = parse_token(value, position)?;
-  let mut quality = 1000;
-  let mut parameters = Vec::new();
-
-  loop {
-    skip_ows(value, position);
-    if !take_if(value, position, b';') {
-      break;
-    }
-    skip_ows(value, position);
-    let name = parse_token(value, position)?;
-    skip_ows(value, position);
-    let parameter_value = if take_if(value, position, b'=') {
-      skip_ows(value, position);
-      Some(parse_parameter_value(value, position, &name)?)
-    } else if name.eq_ignore_ascii_case("q") {
-      return Err(AImParseError::new("invalid A-IM q-value"));
-    } else {
-      None
-    };
-
-    if name.eq_ignore_ascii_case("q") {
-      let Some(parameter_value) = &parameter_value else {
-        return Err(AImParseError::new("invalid A-IM q-value"));
-      };
-      if parameter_value.quoted {
-        return Err(AImParseError::new("invalid A-IM q-value"));
-      }
-      quality = parse_qvalue(&parameter_value.value)?;
-    }
-
-    if parameters
-      .iter()
-      .any(|parameter: &AImParameter| parameter.name.eq_ignore_ascii_case(&name))
-    {
-      return Err(AImParseError::new("duplicate A-IM parameter"));
-    }
-    if parameters.len() >= MAX_A_IM_PARAMETERS {
-      return Err(AImParseError::new("too many A-IM parameters"));
-    }
-    parameters.push(AImParameter {
-      name,
-      value: parameter_value,
-    });
-  }
-
-  Ok(AImMember {
-    token,
-    quality,
-    parameters,
-  })
-}
-
-fn parse_parameter_value(
-  value: &str,
-  position: &mut usize,
-  name: &str,
-) -> Result<AImParameterValue, AImParseError> {
-  if name.eq_ignore_ascii_case("q") {
-    let qvalue = parse_token(value, position)?;
-    return Ok(AImParameterValue {
-      value: qvalue,
-      quoted: false,
-    });
-  }
-  if take_if(value, position, b'"') {
-    Ok(AImParameterValue {
-      value: parse_quoted_string(value, position)?,
-      quoted: true,
-    })
-  } else {
-    Ok(AImParameterValue {
-      value: parse_token(value, position)?,
-      quoted: false,
-    })
-  }
-}
-
-fn parse_quoted_string(value: &str, position: &mut usize) -> Result<String, AImParseError> {
-  let mut parsed = String::new();
-  while let Some(byte) = take_byte(value, position) {
-    match byte {
-      b'"' => return Ok(parsed),
-      b'\\' => {
-        let Some(escaped) = take_byte(value, position) else {
-          return Err(AImParseError::new("invalid A-IM quoted-string"));
-        };
-        if !(escaped == b'\t' || (0x20..=0x7e).contains(&escaped)) {
-          return Err(AImParseError::new("invalid A-IM quoted-string"));
-        }
-        parsed.push(escaped as char);
-      }
-      b'\t' | 0x20..=0x7e => parsed.push(byte as char),
-      _ => return Err(AImParseError::new("invalid A-IM quoted-string")),
-    }
-  }
-  Err(AImParseError::new("invalid A-IM quoted-string"))
-}
-
-fn parse_token(value: &str, position: &mut usize) -> Result<String, AImParseError> {
-  let start = *position;
-  while value
-    .as_bytes()
-    .get(*position)
-    .is_some_and(|byte| is_token_byte(*byte))
-  {
-    *position += 1;
-  }
-  let token = &value[start..*position];
-  if is_token(token) {
-    Ok(token.to_string())
-  } else {
-    Err(AImParseError::new("invalid A-IM token"))
   }
 }
 
@@ -372,33 +262,4 @@ fn parse_qvalue(qvalue: &str) -> Result<u16, AImParseError> {
   } else {
     fractional * 10_u16.pow(3 - fraction.len() as u32)
   })
-}
-
-fn skip_ows(value: &str, position: &mut usize) {
-  while value
-    .as_bytes()
-    .get(*position)
-    .is_some_and(|byte| matches!(*byte, b' ' | b'\t'))
-  {
-    *position += 1;
-  }
-}
-
-fn take_if(value: &str, position: &mut usize, expected: u8) -> bool {
-  if value.as_bytes().get(*position) == Some(&expected) {
-    *position += 1;
-    true
-  } else {
-    false
-  }
-}
-
-fn take_byte(value: &str, position: &mut usize) -> Option<u8> {
-  let byte = *value.as_bytes().get(*position)?;
-  *position += 1;
-  Some(byte)
-}
-
-fn is_invalid_control_byte(byte: u8) -> bool {
-  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }

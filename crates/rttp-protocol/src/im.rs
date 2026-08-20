@@ -2,18 +2,24 @@
 //!
 //! This module validates one or more RFC 3229 `IM` field values as an ordered
 //! list of instance-manipulation tokens with optional extension parameters.
-//! Callers decide whether and how to invert or apply instance manipulations.
-//! Unparsable input is an error; this parser never fails open.
+//! Token, parameter, ordering, duplicate, member-count, and size rules reuse
+//! the canonical instance-manipulation validator. Callers decide whether and
+//! how to invert or apply instance manipulations. Unparsable input is an
+//! error; this parser never fails open.
 
 use std::error::Error;
 use std::fmt;
 
-use crate::http1::{is_token, is_token_byte};
+use crate::instance_manipulation::{
+  parse_instance_manipulation_values, InstanceManipulationMember, InstanceManipulationParameter,
+  InstanceManipulationParameterValue, MAX_MEMBERS, MAX_PARAMETERS, MAX_TOTAL_BYTES,
+  MAX_VALUE_BYTES,
+};
 
-pub const MAX_IM_VALUE_BYTES: usize = 64 * 1024;
-pub const MAX_IM_TOTAL_BYTES: usize = 64 * 1024;
-pub const MAX_IM_MEMBERS: usize = 32;
-pub const MAX_IM_PARAMETERS: usize = 16;
+pub const MAX_IM_VALUE_BYTES: usize = MAX_VALUE_BYTES;
+pub const MAX_IM_TOTAL_BYTES: usize = MAX_TOTAL_BYTES;
+pub const MAX_IM_MEMBERS: usize = MAX_MEMBERS;
+pub const MAX_IM_PARAMETERS: usize = MAX_PARAMETERS;
 
 /// Parsed, bounded `IM` response metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,27 +77,11 @@ impl Im {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let mut members = Vec::new();
-    let mut total_bytes = 0usize;
-
-    for value in values {
-      if value.len() > MAX_IM_VALUE_BYTES {
-        return Err(ImParseError::new("IM header value is too large"));
-      }
-      total_bytes = total_bytes.saturating_add(value.len());
-      if total_bytes > MAX_IM_TOTAL_BYTES {
-        return Err(ImParseError::new("IM header list is too large"));
-      }
-      if value.bytes().any(is_invalid_control_byte) {
-        return Err(ImParseError::new("invalid IM control byte"));
-      }
-      parse_field(value, &mut members)?;
-    }
-
-    if members.is_empty() {
-      return Err(ImParseError::new("invalid IM token"));
-    }
-    Ok(Self { members })
+    let members = parse_instance_manipulation_values("IM", values)
+      .map_err(|error| ImParseError::new(error.message()))?;
+    Ok(Self {
+      members: members.into_iter().map(ImMember::from).collect(),
+    })
   }
 
   pub fn from_members<I, M>(members: I) -> Result<Self, ImParseError>
@@ -155,6 +145,19 @@ impl ImMember {
   }
 }
 
+impl From<InstanceManipulationMember> for ImMember {
+  fn from(member: InstanceManipulationMember) -> Self {
+    Self {
+      token: member.token,
+      parameters: member
+        .parameters
+        .into_iter()
+        .map(ImParameter::from)
+        .collect(),
+    }
+  }
+}
+
 impl ImParameter {
   pub fn name(&self) -> &str {
     &self.name
@@ -174,6 +177,15 @@ impl ImParameter {
   }
 }
 
+impl From<InstanceManipulationParameter> for ImParameter {
+  fn from(parameter: InstanceManipulationParameter) -> Self {
+    Self {
+      name: parameter.name,
+      value: parameter.value.map(ImParameterValue::from),
+    }
+  }
+}
+
 impl ImParameterValue {
   fn header_value(&self) -> String {
     if self.quoted {
@@ -187,156 +199,11 @@ impl ImParameterValue {
   }
 }
 
-fn parse_field(value: &str, members: &mut Vec<ImMember>) -> Result<(), ImParseError> {
-  let mut position = 0;
-  skip_ows(value, &mut position);
-  if position == value.len() {
-    return Err(ImParseError::new("invalid IM token"));
-  }
-
-  loop {
-    let member = parse_member(value, &mut position)?;
-    if members
-      .iter()
-      .any(|known: &ImMember| known.token.eq_ignore_ascii_case(&member.token))
-    {
-      return Err(ImParseError::new("duplicate IM token"));
-    }
-    if members.len() >= MAX_IM_MEMBERS {
-      return Err(ImParseError::new("too many IM members"));
-    }
-    members.push(member);
-    skip_ows(value, &mut position);
-    if position == value.len() {
-      return Ok(());
-    }
-    if take_byte(value, &mut position) != Some(b',') {
-      return Err(ImParseError::new("invalid IM token"));
-    }
-    skip_ows(value, &mut position);
-    if position == value.len() {
-      return Err(ImParseError::new("invalid IM token"));
+impl From<InstanceManipulationParameterValue> for ImParameterValue {
+  fn from(value: InstanceManipulationParameterValue) -> Self {
+    Self {
+      value: value.value,
+      quoted: value.quoted,
     }
   }
-}
-
-fn parse_member(value: &str, position: &mut usize) -> Result<ImMember, ImParseError> {
-  let token = parse_token(value, position)?;
-  let mut parameters = Vec::new();
-
-  loop {
-    skip_ows(value, position);
-    if !take_if(value, position, b';') {
-      break;
-    }
-    skip_ows(value, position);
-    let name = parse_token(value, position)?;
-    skip_ows(value, position);
-    let parameter_value = if take_if(value, position, b'=') {
-      skip_ows(value, position);
-      Some(parse_parameter_value(value, position)?)
-    } else {
-      None
-    };
-
-    if parameters
-      .iter()
-      .any(|parameter: &ImParameter| parameter.name.eq_ignore_ascii_case(&name))
-    {
-      return Err(ImParseError::new("duplicate IM parameter"));
-    }
-    if parameters.len() >= MAX_IM_PARAMETERS {
-      return Err(ImParseError::new("too many IM parameters"));
-    }
-    parameters.push(ImParameter {
-      name,
-      value: parameter_value,
-    });
-  }
-
-  Ok(ImMember { token, parameters })
-}
-
-fn parse_parameter_value(
-  value: &str,
-  position: &mut usize,
-) -> Result<ImParameterValue, ImParseError> {
-  if take_if(value, position, b'"') {
-    Ok(ImParameterValue {
-      value: parse_quoted_string(value, position)?,
-      quoted: true,
-    })
-  } else {
-    Ok(ImParameterValue {
-      value: parse_token(value, position)?,
-      quoted: false,
-    })
-  }
-}
-
-fn parse_quoted_string(value: &str, position: &mut usize) -> Result<String, ImParseError> {
-  let mut parsed = String::new();
-  while let Some(byte) = take_byte(value, position) {
-    match byte {
-      b'"' => return Ok(parsed),
-      b'\\' => {
-        let Some(escaped) = take_byte(value, position) else {
-          return Err(ImParseError::new("invalid IM quoted-string"));
-        };
-        if !(escaped == b'\t' || (0x20..=0x7e).contains(&escaped)) {
-          return Err(ImParseError::new("invalid IM quoted-string"));
-        }
-        parsed.push(escaped as char);
-      }
-      b'\t' | 0x20..=0x7e => parsed.push(byte as char),
-      _ => return Err(ImParseError::new("invalid IM quoted-string")),
-    }
-  }
-  Err(ImParseError::new("invalid IM quoted-string"))
-}
-
-fn parse_token(value: &str, position: &mut usize) -> Result<String, ImParseError> {
-  let start = *position;
-  while value
-    .as_bytes()
-    .get(*position)
-    .is_some_and(|byte| is_token_byte(*byte))
-  {
-    *position += 1;
-  }
-  let token = &value[start..*position];
-  if is_token(token) {
-    Ok(token.to_string())
-  } else {
-    Err(ImParseError::new("invalid IM token"))
-  }
-}
-
-fn skip_ows(value: &str, position: &mut usize) {
-  while value
-    .as_bytes()
-    .get(*position)
-    .is_some_and(|byte| matches!(*byte, b' ' | b'\t'))
-  {
-    *position += 1;
-  }
-}
-
-fn take_if(value: &str, position: &mut usize, expected: u8) -> bool {
-  if value.as_bytes().get(*position) == Some(&expected) {
-    *position += 1;
-    true
-  } else {
-    false
-  }
-}
-
-fn take_byte(value: &str, position: &mut usize) -> Option<u8> {
-  let byte = *value.as_bytes().get(*position)?;
-  *position += 1;
-  Some(byte)
-}
-
-fn is_invalid_control_byte(byte: u8) -> bool {
-  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }

@@ -137,9 +137,14 @@ pub use rttp_protocol::destination::{Destination, DestinationParseError};
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
+pub use rttp_protocol::if_header::{
+  If, IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag, IfStateToken,
+};
 pub use rttp_protocol::if_schedule_tag_match::{IfScheduleTagMatch, IfScheduleTagMatchParseError};
 pub use rttp_protocol::lock_token::{LockToken, LockTokenParseError};
+pub use rttp_protocol::negotiate::{Negotiate, NegotiateDirective, NegotiateParseError};
 pub use rttp_protocol::overwrite::{Overwrite, OverwriteParseError};
+pub use rttp_protocol::schedule_tag::{ScheduleTag, ScheduleTagParseError};
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
 pub use rttp_protocol::sec_websocket_extensions::{
   SecWebSocketExtension, SecWebSocketExtensionParameter, SecWebSocketExtensionParameterValue,
@@ -151,6 +156,7 @@ pub use rttp_protocol::sec_websocket_protocol::{
 pub use rttp_protocol::sec_websocket_version::{
   SecWebSocketVersion, SecWebSocketVersionParseError,
 };
+pub use rttp_protocol::tcn::{Tcn, TcnDirective, TcnParseError};
 pub use rttp_protocol::timeout::{Timeout, TimeoutParseError, TimeoutType};
 pub use rttp_protocol::trace_context::{
   TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
@@ -158,6 +164,7 @@ pub use rttp_protocol::trace_context::{
 pub use rttp_protocol::upgrade_insecure_requests::{
   UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
+pub use rttp_protocol::variant_vary::{VariantVary, VariantVaryParseError};
 pub use rttp_protocol::via::{Via, ViaMember, ViaParseError};
 pub use rttp_protocol::x_forwarded_for::{
   XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError,

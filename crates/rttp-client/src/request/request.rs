@@ -8,6 +8,7 @@ pub(crate) fn is_sensitive_redirect_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("lock-token")
+    || name.eq_ignore_ascii_case("if")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
     || name.eq_ignore_ascii_case("baggage")
@@ -94,6 +95,7 @@ fn raw_request_has_sensitive_header(raw: &str) -> bool {
       || name.trim().eq_ignore_ascii_case("sec-websocket-accept")
       || name.trim().eq_ignore_ascii_case("sec-websocket-key")
       || name.trim().eq_ignore_ascii_case("lock-token")
+      || name.trim().eq_ignore_ascii_case("if")
   })
 }
 

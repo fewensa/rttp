@@ -172,6 +172,15 @@ headers when typed parsing fails. Use `HttpResponse::precondition_failed()` for
 adds its own headers or body. Applications remain responsible for the normal
 successful `200` response when evaluation returns `Proceed`.
 
+`HttpResponse::with_schedule_tag(HttpScheduleTag::parse("\"sched-17\"")?)`
+declares one bounded `Schedule-Tag` response field, and
+`HttpResponse::schedule_tag()` parses attached singleton `Schedule-Tag`
+metadata through the shared protocol `HttpScheduleTag` type backed by
+`EntityTag`. The client facade re-exports the matching `ScheduleTag` type and
+`Response::schedule_tag()` accessor. These helpers only declare and expose
+response metadata; RTTP does not generate calendar versions, compare schedule
+validators, inspect calendars, or apply scheduling policy.
+
 ETag comparison is deliberately scoped to the supplied representation metadata.
 The helpers do not pick entity tags, read files, check authorization, choose a
 static-file policy, store cached responses, perform automatic revalidation, or
@@ -275,6 +284,18 @@ CDN cache metadata remains metadata-only. RTTP does not create or manage a CDN
 cache, compute freshness, evaluate surrogate keys, revalidate automatically,
 enforce shared-cache policy, retry, replay, redirect, or choose status behavior
 from `CDN-Cache-Control`.
+
+`HttpResponse::with_surrogate_control()` validates and replaces
+`Surrogate-Control` response metadata, `HttpResponse::surrogate_control()`
+parses attached raw response fields, and client `Response::surrogate_control()`
+parses received fields through the same shared protocol type. Validation
+accepts directives with optional token or quoted values, rejects duplicates
+case-insensitively across fields, bounds each value and the aggregate header set
+to 64 KiB, and limits parsed directives to 256. Surrogate metadata remains
+metadata-only: RTTP does not create or manage a CDN cache, compute freshness,
+evaluate surrogate keys, translate directives into `Cache-Control`, enforce
+shared-cache policy, retry, replay, redirect, or choose status behavior from
+`Surrogate-Control`.
 
 Server `Age` and `Expires` helpers expose adjacent response metadata without
 adding cache policy. `HttpResponse::with_age(delta_seconds)` adds an `Age`
@@ -477,6 +498,34 @@ headers remain available when the typed parser reports an error.
 These helpers declare and observe request metadata only. RTTP does not
 resolve the destination, authorize the target URI, select WebDAV methods, or
 copy, move, or delete application resources.
+
+## Bounded WebDAV If request metadata
+
+`HttpClient::if_header(value)` validates and emits one RFC 4918 section 10.4
+WebDAV `If` request field through the shared `rttp_protocol` `If` type,
+replacing any existing same-name field before a socket is opened.
+`Request::if_header()` and `HttpRequest::if_header()` parse received fields
+into the same `HttpIf` representation, returning `Ok(None)` when absent. A
+recognized value is either entirely untagged
+(`(<opaquelocktoken:...>) (Not <DAV:no-lock>)`) or entirely tagged
+(`<http://example.test/src> (<opaquelocktoken:...>) </dst> (Not <DAV:no-lock>)`);
+mixed productions are rejected. Each field value and the aggregate input are
+bounded to 64 KiB, the combined value is bounded to 32 lists and 256
+conditions. Resource tags accept an RFC 3986 `Simple-ref` (absolute-URI or
+path-absolute with optional query); state tokens are absolute coded URLs,
+including `<DAV:no-lock>`; conditions accept the case-sensitive `Not` token
+only when it is followed by SP or HTAB and then a state token or a bracketed
+entity tag (`[W/"etag"]`). List
+order, repeated lists, and resource tags are preserved, and
+`header_value()` re-emits the canonical field text. Empty, unterminated,
+mixed, malformed, duplicate, oversized, too-many-list, too-many-condition,
+and control-byte values are rejected while raw request headers remain
+available when the typed parser reports an error. State tokens are redacted
+from typed `Debug` and raw-header debug output.
+
+These helpers declare and observe request metadata only. RTTP does not
+evaluate locks, entity tags, or other resource state, and it does not
+generate precondition outcomes such as 412 Precondition Failed.
 
 ## Bounded If-Schedule-Tag-Match request metadata
 
@@ -803,6 +852,33 @@ These helpers only declare and inspect response metadata. They do not decode
 or apply instance manipulations and do not require or synthesize the
 `226 IM Used` status.
 
+## Bounded Negotiate request metadata
+
+`HttpClient::negotiate(value)` emits one bounded RFC 2295 `Negotiate` request
+field through the shared `rttp-protocol` primitive, replacing any existing
+same-name field before a socket is opened. Server-side `Request::negotiate()`
+and `HttpRequest::negotiate()` parse all received `Negotiate` fields in wire
+order into `HttpNegotiate` and return `Ok(None)` when the header is absent.
+Each `HttpNegotiateDirective` is a `trans`, `vlist`, `guess-small`, or `*`
+flag, a `major.minor` remote variant selection algorithm version, or a
+`token[=token]` extension. The shared protocol type is the authority for
+token, version, feature value, duplicate, member-count, and size validation.
+
+Parsing is bounded and validation-oriented. Each `Negotiate` field value and
+the combined raw field set are limited to 64 KiB, and the combined list is
+limited to 32 members. Flags match case-insensitively and emit lowercase,
+versions are normalized to `major.minor`, and duplicate directives are
+rejected: at most one of each flag and `*`, one occurrence of each version
+pair, and one extension per case-insensitive name. Empty members, malformed
+tokens, valued flags or versions, duplicates across one or more
+helper-parsed header fields, oversized values, and too many members return
+`HttpNegotiateParseError` from the helper. Raw
+`Request::header("Negotiate", ...)` values remain preserved exactly as
+ordinary headers; helper parse errors do not remove existing headers.
+
+These helpers declare and parse request metadata only. They do not select a
+variant, run transparent content negotiation, or change cache selection.
+
 ## Bounded Accept-Encoding request metadata
 
 Server-side `Accept-Encoding` helpers expose request metadata through the
@@ -1018,6 +1094,41 @@ remain available on parse failures.
 These helpers are metadata-only: RTTP does not select alternative services,
 rewrite origins, migrate sockets, retry, or change connection policy from
 `Alt-Used`.
+
+## Bounded Alternates response metadata
+
+`Alternates` and `HttpAlternates` share the protocol parser for bounded
+RFC 2295-style `Alternates` response metadata. Client responses can call
+`Response::alternates()` to parse attached fields, and server responses can
+call `HttpResponse::with_alternates(value)` or `HttpResponse::alternates()`
+to declare or observe the same metadata. Valid metadata preserves variant
+URI-references, the original accepted source-quality text, and attributes
+such as `type`, `language`, `encoding`, and `length`. Each field value is
+limited to 64 KiB, the combined field bytes are limited to 64 KiB, the
+variant count is limited to 256, and each variant holds at most 256
+attributes. Malformed members, invalid URIs, invalid qvalues, duplicate
+attributes or variants, and oversized values are rejected while raw headers
+remain available on parse failures.
+
+These helpers are metadata-only: RTTP does not select a variant, fetch a
+variant URI, replay requests, resolve URIs against the response URL, apply
+`Vary` matching, or change representation policy from `Alternates`.
+
+## Bounded TCN response metadata
+
+`Tcn` and `HttpTcn` share the protocol parser for bounded RFC 2295 `TCN`
+response metadata. Client responses can call `Response::tcn()` to parse
+attached fields, and server responses can call `HttpResponse::with_tcn(value)`
+or `HttpResponse::tcn()` to declare or observe the same metadata. Valid
+metadata is a singleton response field containing `list`, `choice`, `adhoc`,
+`re-choose`, or `keep` tokens, normalized to lowercase in wire order.
+Duplicate fields, duplicate tokens, malformed or unknown tokens, empty
+members, oversized values, and control-byte injection are rejected while raw
+headers remain available on accessor failures.
+
+These helpers are metadata-only: RTTP does not select a variant, synthesize
+`Alternates` or `Vary`, apply transparent content negotiation, or change cache
+behavior from `TCN`.
 
 ## Bounded Origin-Trial response metadata
 
@@ -1406,10 +1517,11 @@ scheduling, or async accept loops.
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` and `HttpRequest::evaluate_if_range` gate it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with the shared checked `HttpContentRange` formatter, `HttpResponse::content_range` parses attached `Content-Range` metadata, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, automatic cache validation, static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |
-| Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified`, `precondition_failed`, `with_etag`, and typed bounded `etag` serialize or expose `304`/`412` metadata while preserving raw headers | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
+| Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified`, `precondition_failed`, `with_etag`, and typed bounded `etag` serialize or expose `304`/`412` metadata while preserving raw headers; `with_schedule_tag` and `schedule_tag` declare and parse bounded `Schedule-Tag` response metadata through the shared protocol type | No cache storage, static-file serving policy, automatic revalidation, calendar-version generation, schedule-tag comparison, calendar inspection, scheduling policy, or cache-control engine |
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
-| Cache-Control, CDN-Cache-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
+| Cache-Control, CDN-Cache-Control, Surrogate-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::with_surrogate_control`/`surrogate_control` and client `Response::surrogate_control` parse or declare bounded `Surrogate-Control` directives through the shared protocol type, rejecting duplicates and oversized aggregate values while preserving raw headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, `Surrogate-Control` to `Cache-Control` translation, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
 | Alt-Used | `AltUsed`, `HttpAltUsed`, `Response::alt_used`, `HttpResponse::with_alt_used`, and `HttpResponse::alt_used` parse or declare bounded singleton response authority metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No alternative service selection, origin rewriting, socket migration, retry, or connection-policy behavior |
+| Alternates | `Alternates`, `HttpAlternates`, `Response::alternates`, `HttpResponse::with_alternates`, and `HttpResponse::alternates` parse or declare bounded RFC 2295-style variant metadata, validating URIs, qvalues, attributes, duplicates, member counts, and size bounds while preserving raw headers on parse failures and replacing raw response fields on typed declaration | No transparent content negotiation, variant selection, automatic fetch, request replay, URI resolution, cache storage, `Vary` matching, or quality ranking |
 | Origin-Trial | `OriginTrials`, `HttpOriginTrials`, `Response::origin_trials`, `HttpResponse::with_origin_trials`, and `HttpResponse::origin_trials` parse or declare bounded opaque `Origin-Trial` tokens in wire order, preserve duplicates, redact token material from debug output, and replace raw response fields on typed declaration | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
@@ -1419,8 +1531,9 @@ scheduling, or async accept loops.
 | Lock-Token | `HttpClient::lock_token` validates and emits one bounded WebDAV `Lock-Token` request field through the shared protocol type, `Request::lock_token`/`HttpRequest::lock_token` parse received request fields, and `HttpResponse::with_lock_token`/`lock_token` plus `Response::lock_token` declare or parse response fields while preserving raw headers on errors and redacting the token from typed debug output | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
 | Destination | `HttpClient::destination` validates and emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, and `Request::destination`/`HttpRequest::destination` parse received fields into the same representation while preserving raw headers on errors | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Timeout | `HttpClient::timeout` validates and emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, and `Request::timeout`/`HttpRequest::timeout` parse received fields into the same representation while preserving raw headers on errors | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
-| If-Schedule-Tag-Match | `HttpClient::if_schedule_tag_match` validates and emits bounded singleton `If-Schedule-Tag-Match` request metadata through the shared protocol type, reusing the shared `EntityTag` representation for strong and weak validators, and `Request::if_schedule_tag_match`/`HttpRequest::if_schedule_tag_match` parse received fields into the same representation while preserving raw headers on errors | No schedule-tag comparison, calendar inspection, scheduling policy, retry, or 412/status-policy behavior |
+| If-Schedule-Tag-Match and Schedule-Tag | `HttpClient::if_schedule_tag_match` validates and emits bounded singleton `If-Schedule-Tag-Match` request metadata, `Request::if_schedule_tag_match`/`HttpRequest::if_schedule_tag_match` parse received fields, and `Response::schedule_tag` parses bounded singleton `Schedule-Tag` response metadata through shared protocol types backed by `EntityTag` | No calendar-version generation, schedule-tag comparison, calendar inspection, scheduling policy, retry, or 412/status-policy behavior |
 | Overwrite | `HttpClient::overwrite` validates and emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F`, and `Request::overwrite`/`HttpRequest::overwrite` parse received fields into the same representation while preserving raw headers on errors | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
+| If | `HttpClient::if_header` validates and emits bounded RFC 4918 WebDAV `If` request metadata through the shared protocol type, accepting untagged or tagged condition lists with `Not`, state tokens, and bracketed entity tags and preserving order, and `Request::if_header`/`HttpRequest::if_header` parse received fields into the same `HttpIf` representation while preserving raw headers on errors and redacting state tokens from typed debug output | No lock, entity-tag, or resource-state evaluation; no 412 or other precondition outcome; no lock creation, refresh, or release; no COPY/MOVE/UNLOCK execution; no retry, or forwarding policy |
 | WebSocket handshake metadata | `HttpClient::sec_websocket_key` validates and emits one bounded `Sec-WebSocket-Key` request field through the shared protocol type, and `Request::sec_websocket_key`/`HttpRequest::sec_websocket_key` parse received fields into the same representation while preserving raw headers on errors; server responses can derive `Sec-WebSocket-Accept` with the RFC GUID plus SHA-1/base64 transform, and clients can parse and verify the response against a validated key; typed debug output redacts key and accept material; workspace integration tests cover live HTTP/1.1 and h2c metadata-only roundtrips | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `HttpClient::sec_websocket_version`, `Request::sec_websocket_version`/`HttpRequest::sec_websocket_version`, `HttpResponse::with_sec_websocket_version`/`sec_websocket_version`, and client `Response::sec_websocket_version` share the bounded protocol version-list representation, requiring canonical descending order and preserving raw headers on errors; workspace integration tests cover live HTTP/1.1 and h2c metadata-only roundtrips | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Sec-WebSocket-Protocol | `HttpClient::sec_websocket_protocol`, `Request::sec_websocket_protocol`/`HttpRequest::sec_websocket_protocol`, `HttpResponse::with_sec_websocket_protocol`/`sec_websocket_protocol`, and client `Response::sec_websocket_protocol` share the bounded protocol token representation: request offers preserve preference order while response values are selection singletons, with case-sensitive duplicates and raw headers preserved on errors; workspace integration tests cover live HTTP/1.1 and h2c metadata-only roundtrips | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |
@@ -1437,6 +1550,8 @@ scheduling, or async accept loops.
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | A-IM | `HttpClient::a_im`/`a_im_with_q`/`a_im_value` emit bounded `A-IM` request metadata through the shared protocol type, and `Request::a_im`/`HttpRequest::a_im` parse received fields into `HttpAIm` while preserving raw headers on errors | No automatic delta-encoding selection, application, compression, or response transformation |
 | IM | `HttpResponse::with_im` declares one validated `IM` header replacing raw duplicates, `HttpResponse::im` and client `Response::im` parse attached `IM` fields into the shared protocol `Im` type while preserving raw headers on errors | No instance-manipulation decoding, inversion, or application, and no `226 IM Used` status policy |
+| Negotiate | `HttpClient::negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared protocol type, and `Request::negotiate`/`HttpRequest::negotiate` parse received fields into `HttpNegotiate` while preserving raw headers on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN` synthesis, or automatic cache selection |
+| TCN | `Response::tcn()` and `HttpResponse::with_tcn()`/`tcn()` share bounded RFC 2295 `TCN` response metadata through `Tcn`/`HttpTcn` while preserving raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Sec-GPC | `HttpClient::sec_gpc`, `Request::sec_gpc`, and `HttpRequest::sec_gpc` share the bounded protocol `Sec-GPC` `1`-signal representation and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Pragma | `HttpClient::pragma`/`pragma_no_cache`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation across client construction, server access, server response declaration, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
@@ -1470,14 +1585,16 @@ checked `content_range()` for `206` and `416` responses. Manual `Range` and
 client helpers do not evaluate `If-Range`, retry requests, store cache entries,
 generate multipart range requests, or apply automatic cache validation. The
 client response API also includes `Response::cache_control()`,
-`Response::cdn_cache_control()`, and `Response::cache_status()` from
+`Response::cdn_cache_control()`, `Response::surrogate_control()`, and
+`Response::cache_status()` from
 `rttp_client`, which parse bounded response `Cache-Control` and
-`CDN-Cache-Control` directives and extensions and RFC 9211 `Cache-Status`
-members as metadata only, and `Response::allow()`, which parses bounded
+`CDN-Cache-Control` and `Surrogate-Control` directives and extensions and RFC
+9211 `Cache-Status` members as metadata only, and `Response::allow()`, which parses bounded
 ordered HTTP method metadata from `Allow`; the wrapper does not add cache
 storage, CDN cache, Cache-Status forwarding or freshness policy, automatic
 revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache
-policy enforcement, surrogate-key behavior, automatic conditional requests,
+policy enforcement, surrogate-key behavior, `Surrogate-Control` to
+`Cache-Control` translation, automatic conditional requests,
 fallback method selection, retry/replay, or status-code policy behavior. The
 `http2` feature exposes the bounded
 prior-knowledge h2c client path for GET, HEAD, bodyless DELETE, OPTIONS, or

@@ -1345,6 +1345,89 @@ fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() 
 }
 
 #[test]
+fn schedule_tag_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .schedule_tag()
+      .expect("absent Schedule-Tag should parse")
+  );
+
+  let schedule_tag = HttpScheduleTag::parse("W/\"sched-17\"")
+    .expect("weak Schedule-Tag should parse");
+  let response = HttpResponse::ok([])
+    .header("Schedule-Tag", "\"old\"")
+    .header("schedule-tag", "W/\"older\"")
+    .with_schedule_tag(schedule_tag.clone());
+  assert_eq!(
+    Some(schedule_tag),
+    response
+      .schedule_tag()
+      .expect("Schedule-Tag should parse")
+  );
+  assert_eq!(
+    vec![("Schedule-Tag", "W/\"sched-17\"")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let strong = HttpResponse::ok([]).header("Schedule-Tag", "\"sched-17\"");
+  assert_eq!(
+    Some(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse")),
+    strong
+      .schedule_tag()
+      .expect("strong Schedule-Tag should parse")
+  );
+}
+
+#[test]
+fn schedule_tag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"bad\"value\""] {
+    let response = HttpResponse::ok([]).header("Schedule-Tag", value);
+    assert!(
+      response.schedule_tag().is_err(),
+      "Schedule-Tag should reject {value:?}"
+    );
+    assert_eq!(
+      vec![("Schedule-Tag", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Schedule-Tag", "\"one\"")
+    .header("schedule-tag", "W/\"two\"");
+  assert!(duplicate.schedule_tag().is_err());
+  assert_eq!(
+    vec![("Schedule-Tag", "\"one\""), ("schedule-tag", "W/\"two\"")],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok([]).header("Schedule-Tag", &oversized);
+  assert!(response.schedule_tag().is_err());
+  assert_eq!(
+    vec![("Schedule-Tag", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn service_worker_allowed_response_helpers_validate_replace_and_parse_singleton_metadata() {
   assert_eq!(
     None,
@@ -3650,6 +3733,123 @@ fn request_lock_token_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_if_header_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"UNLOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.if_header().expect("missing value should be valid")
+  );
+
+  for (value, expected) in [
+    (
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+    ),
+    (
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+    ),
+    (
+      " \t(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \t(Not  [W/\"etag-one\"])",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [W/\"etag-one\"])",
+    ),
+  ] {
+    let valid = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .if_header()
+      .expect("value should parse")
+      .expect("If should be present");
+    assert_eq!(expected, parsed.header_value());
+  }
+  let redacted = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)\r\n\r\n",
+  )
+  .expect("request should parse")
+  .if_header()
+  .expect("value should parse")
+  .expect("If should be present");
+  assert!(!format!("{redacted:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  for value in ["", "()", "(junk)", "(</relative>)", "<relative> (<a:b>)"] {
+    let request = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.if_header().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("If"));
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("If".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.if_header().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("If")
+  );
+
+  let injected_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      (
+        "If".to_string(),
+        "(<a:b>)\r\nX-Injected: 1".to_string(),
+      ),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(injected_request.if_header().is_err());
+  assert_eq!(
+    Some("(<a:b>)\r\nX-Injected: 1"),
+    injected_request.header("If")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<a:b>)\r\nif: (<b:c>)\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.if_header().is_err());
+  assert_eq!(Some("(<a:b>)"), duplicate.header("If"));
+}
+
+#[test]
+fn request_if_metadata_does_not_drive_conditional_evaluation() {
+  let request = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(request.if_header().expect("If should parse").is_some());
+  assert_eq!(
+    HttpConditionalRequestOutcome::Proceed,
+    request.evaluate_conditional(&HttpConditionalMetadata::default()),
+    "the WebDAV If header must not drive HTTP conditional evaluation"
+  );
+}
+
+#[test]
 fn request_timeout_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"LOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");
@@ -5446,6 +5646,101 @@ hello\r\n\
       .expect("clear should parse")
       .expect("clear should be present")
       .is_clear());
+  }
+
+  #[test]
+  fn alternates_helpers_validate_replace_and_parse_response_metadata() {
+    let response = HttpResponse::ok([])
+      .header("Alternates", r#"{ "/stale" 1 }"#)
+      .header("alternates", r#"{ "/older" 0.1 }"#)
+      .with_alternates(
+        r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }, { "/resource.fr.html" 0.8 {type "text/html; charset=utf-8"} {language fr} }"#,
+      )
+      .expect("Alternates should be accepted");
+    let alternates = response
+      .alternates()
+      .expect("response Alternates should parse")
+      .expect("response Alternates should be present");
+
+    assert_eq!(2, alternates.len());
+    assert_eq!("/resource.en.html", alternates.variants()[0].uri());
+    assert_eq!("1.0", alternates.variants()[0].quality());
+    assert_eq!(Some("text/html"), alternates.variants()[0].attribute("type"));
+    assert_eq!(Some("fr"), alternates.variants()[1].attribute("language"));
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(1, serialized.matches("\r\nAlternates: ").count());
+    assert!(serialized.contains("\r\nAlternates: { \"/resource.en.html\" 1.0"));
+    assert!(!serialized.contains("/stale"));
+    assert!(!serialized.contains("/older"));
+
+    let malformed = HttpResponse::ok([]).header("Alternates", r#"{ "/broken" 1.001 }"#);
+    assert!(malformed.alternates().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nAlternates: { \"/broken\" 1.001 }\r\n"));
+
+    let absent = HttpResponse::ok([]);
+    assert_eq!(None, absent.alternates().expect("absent Alternates is Ok(None)"));
+  }
+
+  #[test]
+  fn alternates_builder_rejects_normalized_values_over_field_limit() {
+    let tight_value = (0..256)
+      .map(|index| {
+        let padding = "a".repeat(234 + usize::from(index < 113));
+        format!(r#"{{ "/v{index}" 1 {{note {padding}}}}}"#)
+      })
+      .collect::<Vec<_>>()
+      .join(",");
+
+    assert!(tight_value.len() <= 64 * 1024);
+    assert!(HttpAlternates::parse(&tight_value).is_ok());
+    assert!(HttpResponse::ok([])
+      .with_alternates(&tight_value)
+      .is_err());
+  }
+
+  #[test]
+  fn tcn_helpers_validate_replace_and_parse_response_metadata() {
+    let response = HttpResponse::ok([])
+      .header("TCN", "list")
+      .with_tcn("Choice, keep")
+      .expect("TCN should be accepted");
+    let tcn = response
+      .tcn()
+      .expect("response TCN should parse")
+      .expect("response TCN should be present");
+
+    assert_eq!(
+      &[HttpTcnDirective::Choice, HttpTcnDirective::Keep],
+      tcn.members()
+    );
+    assert_eq!("choice, keep", tcn.header_value());
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(1, serialized.matches("\r\nTCN: ").count());
+    assert!(serialized.contains("\r\nTCN: choice, keep\r\n"));
+    assert!(!serialized.contains("\r\nTCN: list\r\n"));
+
+    let duplicate_fields = HttpResponse::ok([])
+      .header("TCN", "list")
+      .header("tcn", "choice");
+    assert!(duplicate_fields.tcn().is_err());
+    assert!(String::from_utf8(duplicate_fields.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nTCN: list\r\n"));
+
+    let malformed = HttpResponse::ok([]).header("TCN", "variant");
+    assert!(malformed.tcn().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nTCN: variant\r\n"));
+
+    let absent = HttpResponse::ok([]);
+    assert_eq!(None, absent.tcn().expect("absent TCN is Ok(None)"));
+    assert!(HttpResponse::ok([]).with_tcn("list, LIST").is_err());
+
+    let oversized = format!("list{}", "x".repeat(64 * 1024));
+    assert!(HttpResponse::ok([]).with_tcn(&oversized).is_err());
   }
 
   #[test]

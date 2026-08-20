@@ -29,6 +29,10 @@ pub use rttp_protocol::alt_svc::{
 pub use rttp_protocol::alt_used::{
   AltUsed as HttpAltUsed, AltUsedParseError as HttpAltUsedParseError,
 };
+pub use rttp_protocol::alternates::{
+  AlternateAttribute as HttpAlternateAttribute, AlternateVariant as HttpAlternateVariant,
+  Alternates as HttpAlternates, AlternatesParseError as HttpAlternatesParseError,
+};
 pub use rttp_protocol::authentication_info::{
   AuthenticationInfo as HttpAuthenticationInfo,
   AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
@@ -166,6 +170,9 @@ pub use rttp_protocol::reporting_endpoints::{
   ReportingEndpoints as HttpReportingEndpoints,
   ReportingEndpointsParseError as HttpReportingEndpointsParseError,
 };
+pub use rttp_protocol::schedule_tag::{
+  ScheduleTag as HttpScheduleTag, ScheduleTagParseError as HttpScheduleTagParseError,
+};
 pub use rttp_protocol::sec_websocket_accept::{
   SecWebSocketAccept as HttpSecWebSocketAccept,
   SecWebSocketAcceptParseError as HttpSecWebSocketAcceptParseError,
@@ -207,8 +214,18 @@ pub use rttp_protocol::supports_loading_mode::{
   SupportsLoadingMode as HttpSupportsLoadingMode,
   SupportsLoadingModeParseError as HttpSupportsLoadingModeParseError,
 };
+pub use rttp_protocol::surrogate_control::{
+  SurrogateControl as HttpSurrogateControl,
+  SurrogateControlParseError as HttpSurrogateControlParseError,
+};
+pub use rttp_protocol::tcn::{
+  Tcn as HttpTcn, TcnDirective as HttpTcnDirective, TcnParseError as HttpTcnParseError,
+};
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
+};
+pub use rttp_protocol::variant_vary::{
+  VariantVary as HttpVariantVary, VariantVaryParseError as HttpVariantVaryParseError,
 };
 pub use rttp_protocol::via::{Via as HttpVia, ViaParseError as HttpViaParseError};
 pub use rttp_protocol::www_authenticate::{
@@ -1788,6 +1805,53 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Alternates` response metadata without selecting
+  /// or fetching a variant.
+  pub fn with_alternates(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAlternatesParseError> {
+    let alternates = HttpAlternates::parse(value)?;
+    let header_value = alternates.header_value();
+    HttpAlternates::parse(&header_value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Alternates"));
+    self
+      .headers
+      .push(HttpHeader::new("Alternates", header_value));
+    Ok(self)
+  }
+
+  /// Validates and replaces `TCN` response metadata without selecting a
+  /// variant or changing cache behavior.
+  pub fn with_tcn(mut self, value: impl AsRef<str>) -> Result<Self, HttpTcnParseError> {
+    let tcn = HttpTcn::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("TCN"));
+    self
+      .headers
+      .push(HttpHeader::new("TCN", tcn.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Variant-Vary` response metadata without
+  /// constructing a cache key or selecting a variant.
+  pub fn with_variant_vary(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpVariantVaryParseError> {
+    let variant_vary = HttpVariantVary::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Variant-Vary"));
+    self
+      .headers
+      .push(HttpHeader::new("Variant-Vary", variant_vary.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Alt-Used` response metadata without selecting an
   /// alternative service or changing connection policy.
   pub fn with_alt_used(mut self, value: impl AsRef<str>) -> Result<Self, HttpAltUsedParseError> {
@@ -1845,6 +1909,23 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("Pragma", pragma.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Surrogate-Control` response metadata without
+  /// applying CDN cache policy or translating directives into `Cache-Control`.
+  pub fn with_surrogate_control(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSurrogateControlParseError> {
+    let surrogate_control = HttpSurrogateControl::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Surrogate-Control"));
+    self.headers.push(HttpHeader::new(
+      "Surrogate-Control",
+      surrogate_control.header_value(),
+    ));
     Ok(self)
   }
 
@@ -1915,6 +1996,16 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("ETag", entity_tag.header_value()));
+    self
+  }
+
+  pub fn with_schedule_tag(mut self, schedule_tag: HttpScheduleTag) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Schedule-Tag"));
+    self
+      .headers
+      .push(HttpHeader::new("Schedule-Tag", schedule_tag.header_value()));
     self
   }
 
@@ -2189,6 +2280,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpCdnCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Surrogate-Control` response metadata without applying
+  /// CDN cache policy or translating directives into `Cache-Control`.
+  pub fn surrogate_control(
+    &self,
+  ) -> Result<Option<HttpSurrogateControl>, HttpSurrogateControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Surrogate-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSurrogateControl::parse_values(values).map(Some)
   }
 
   /// Parses attached `Cache-Status` response metadata without applying cache policy.
@@ -3021,6 +3129,51 @@ impl HttpResponse {
     HttpAltSvc::parse_values(values).map(Some)
   }
 
+  /// Parses attached `Alternates` metadata without changing raw headers,
+  /// selecting a variant, or fetching a variant URI.
+  pub fn alternates(&self) -> Result<Option<HttpAlternates>, HttpAlternatesParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Alternates"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAlternates::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `TCN` metadata without changing raw headers, selecting a
+  /// variant, or changing cache behavior.
+  pub fn tcn(&self) -> Result<Option<HttpTcn>, HttpTcnParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("TCN"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTcn::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Variant-Vary` metadata without changing raw headers,
+  /// constructing a cache key, or selecting a variant.
+  pub fn variant_vary(&self) -> Result<Option<HttpVariantVary>, HttpVariantVaryParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Variant-Vary"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVariantVary::parse_values(values).map(Some)
+  }
+
   /// Parses attached `Alt-Used` metadata without changing raw headers,
   /// alternative service selection, origins, or connections.
   pub fn alt_used(&self) -> Result<Option<HttpAltUsed>, HttpAltUsedParseError> {
@@ -3162,6 +3315,19 @@ impl HttpResponse {
       return Ok(None);
     };
     HttpEntityTag::parse(value).map(Some)
+  }
+
+  pub fn schedule_tag(&self) -> Result<Option<HttpScheduleTag>, HttpScheduleTagParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Schedule-Tag"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpScheduleTag::parse_values(values).map(Some)
   }
 
   pub fn content_disposition(
@@ -4934,6 +5100,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("if")
     || name.eq_ignore_ascii_case("lock-token")
     || name.eq_ignore_ascii_case("origin-trial")
     || name.eq_ignore_ascii_case("proxy-authorization")

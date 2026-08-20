@@ -25,11 +25,13 @@ use rttp_protocol::fetch_metadata::{
 };
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::idempotency_key::IdempotencyKey;
+use rttp_protocol::if_header::If;
 use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_schedule_tag_match::IfScheduleTagMatch;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
+use rttp_protocol::negotiate::Negotiate;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::overwrite::Overwrite;
 use rttp_protocol::pragma::Pragma;
@@ -878,6 +880,21 @@ impl HttpClient {
     Ok(self.header(Header::new("Timeout", timeout.header_value())))
   }
 
+  /// Set bounded RFC 2295 `Negotiate` request metadata.
+  ///
+  /// The value must be an ordered list of `trans`, `vlist`, `guess-small`,
+  /// `*`, `major.minor` remote variant selection algorithm versions, and
+  /// `token[=token]` extension directives. Members are normalized, duplicate
+  /// directives are rejected, and size and count bounds are enforced before
+  /// connecting. This only validates and emits the header; it does not select
+  /// a variant, run transparent content negotiation, or change cache
+  /// selection. Use `header` directly for unusual values.
+  pub fn negotiate<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let negotiate = Negotiate::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Negotiate", negotiate.header_value())))
+  }
+
   /// Set bounded `If-Schedule-Tag-Match` request metadata.
   ///
   /// The value must be one entity-tag-shaped schedule validator such as
@@ -892,6 +909,26 @@ impl HttpClient {
       "If-Schedule-Tag-Match",
       validator.header_value(),
     )))
+  }
+
+  /// Set bounded WebDAV `If` request metadata.
+  ///
+  /// The value must be one or more RFC 4918 condition lists, either entirely
+  /// untagged like `(<opaquelocktoken:...>) (Not <DAV:no-lock>)` or entirely
+  /// tagged like `<http://example.test/src> (<opaquelocktoken:...>)`. State
+  /// tokens, entity tags, `Not`, resource tags, list order, and repeated
+  /// lists are validated and preserved, and the whole value is limited to
+  /// 64 KiB with at most 32 lists and 256 conditions. Mixed tagged and
+  /// untagged productions, duplicate fields, CR, LF, NUL, other control
+  /// bytes, and obs-text are rejected before a socket is opened. This only
+  /// validates and emits the header; it does not evaluate locks, entity tags,
+  /// or other resource state, and it does not generate precondition
+  /// outcomes such as 412 Precondition Failed. Use `header` directly for
+  /// unusual values.
+  pub fn if_header<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let if_header =
+      If::parse(value.as_ref()).map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("If", if_header.header_value())))
   }
 
   /// Set bounded WebDAV `Overwrite` request metadata.

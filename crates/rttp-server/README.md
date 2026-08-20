@@ -49,6 +49,24 @@ handler-owned policy; it does not create or manage a CDN cache, compute
 freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose status behavior.
 
+## Response Surrogate-Control metadata
+
+`HttpResponse::with_surrogate_control()` validates and replaces
+`Surrogate-Control` response metadata through the shared protocol
+`HttpSurrogateControl` type. `HttpResponse::surrogate_control()` parses
+attached raw response fields on demand while preserving the raw headers on
+parse errors.
+
+Validation accepts directive names, optional token values, and well-formed
+quoted extension values. It rejects malformed syntax, duplicate directive
+names case-insensitively across fields, more than 256 directives, values larger
+than 64 KiB, and aggregate parsed header sets larger than 64 KiB.
+
+The helper only exposes metadata for handler-owned policy. It does not create
+or manage a CDN cache, compute freshness, evaluate surrogate keys, translate
+directives into `Cache-Control`, revalidate automatically, enforce shared-cache
+policy, retry, replay, redirect, or choose status behavior.
+
 ## Response Content-Security-Policy-Report-Only metadata
 
 `HttpResponse::with_content_security_policy_report_only(value)` validates and
@@ -152,6 +170,54 @@ raw headers continue to expose the original fields.
 
 These helpers only declare and inspect response metadata. They do not decode
 or apply instance manipulations and do not change the response status.
+
+## Negotiate request metadata
+
+Handlers can call `Request::negotiate()` and `HttpRequest::negotiate()` to
+observe bounded typed RFC 2295 `Negotiate` request metadata through the
+shared `rttp-protocol` primitive. The helpers combine case-insensitive
+fields in wire order into `HttpNegotiate`. Each `HttpNegotiateDirective` is a
+`trans`, `vlist`, `guess-small`, or `*` flag, a `major.minor` remote variant
+selection algorithm version, or a `token[=token]` extension. The shared
+protocol type is the authority for token, version, feature value, duplicate,
+member-count, and size validation. Each field value and the combined raw
+field set are limited to 64 KiB, and the combined list is limited to 32
+members. Absent metadata returns `Ok(None)`. Malformed, oversized, duplicate,
+empty, or over-limit values return a parse error while `Request::header()`
+and `Request::body()` continue to expose the original request.
+
+These helpers parse request metadata only. They do not select a variant, run
+transparent content negotiation, or change cache selection.
+
+## TCN response metadata
+
+`HttpResponse::with_tcn(value)` validates and replaces one bounded RFC 2295
+`TCN` response field through the shared `rttp-protocol` primitive.
+`HttpResponse::tcn()` parses attached raw `TCN` metadata without changing the
+response. Valid metadata is an ordered comma-separated list of `list`,
+`choice`, `adhoc`, `re-choose`, and `keep`, normalized to lowercase.
+Duplicate fields, duplicate tokens, malformed or unknown tokens, empty
+members, oversized values, and control-byte injection return
+`HttpTcnParseError` while raw response headers remain available.
+
+These helpers expose response metadata only. They do not select variants,
+synthesize `Alternates`, update `Vary`, or change cache behavior.
+
+## Variant-Vary response metadata
+
+`HttpResponse::with_variant_vary(value)` validates and replaces one bounded
+RFC 2295 `Variant-Vary` response field through the shared `rttp-protocol`
+primitive. `HttpResponse::variant_vary()` parses attached raw `Variant-Vary`
+metadata without changing the response. Valid metadata is either the
+exclusive `*` wildcard or an ordered list of HTTP field-name tokens,
+normalized to lowercase in first-seen order. Duplicate names, duplicate or
+mixed wildcards, malformed or empty members, oversized values, and
+control-byte injection return `HttpVariantVaryParseError` while raw response
+headers remain available.
+
+These helpers expose response metadata only. They do not construct cache
+keys, select variants, synthesize `Alternates`, update `TCN` or `Vary`, or
+change cache behavior.
 
 ## Accept-Encoding request metadata
 
@@ -318,6 +384,24 @@ values larger than 64 KiB are rejected.
 These helpers only declare and parse metadata. The server does not select
 alternative services, rewrite origins, migrate sockets, retry, or change
 connection policy from `Alt-Used`.
+
+## Alternates response metadata
+
+`HttpResponse::with_alternates(value)` validates bounded `Alternates`
+variant metadata through the shared protocol `HttpAlternates` type and
+replaces any existing `Alternates` fields with one normalized value.
+`HttpResponse::alternates()` parses attached raw fields into the same type,
+returning `Ok(None)` when the header is absent and returning parser errors
+without changing raw fields. Valid metadata preserves variant URIs, source
+quality text, and attributes such as `type`, `language`, `encoding`, and
+`length`. Each field value is limited to 64 KiB, the combined field bytes
+are limited to 64 KiB, the variant count is limited to 256, and each variant
+holds at most 256 attributes. Malformed members, invalid URIs, invalid
+qvalues, duplicate attributes or variants, and oversized values are rejected.
+
+These helpers only declare and parse metadata. The server does not select a
+variant, fetch a variant URI, replay requests, apply `Vary` matching, or
+change representation policy from `Alternates`.
 
 ## Origin-Trial response metadata
 
@@ -833,6 +917,22 @@ These helpers parse request metadata only. They do not compare the validator
 to stored calendar state, inspect calendars, select scheduling behavior, or
 apply 412 or scheduling policy.
 
+## Schedule-Tag response metadata
+
+Handlers can call `HttpResponse::with_schedule_tag(value)` to declare one
+bounded `Schedule-Tag` response field and `HttpResponse::schedule_tag()` to
+parse attached raw `Schedule-Tag` fields through the shared protocol
+`HttpScheduleTag` type, which reuses the shared `HttpEntityTag`
+representation. Absent fields return `Ok(None)`. A recognized value is one
+entity-tag-shaped schedule validator such as `"sched-17"` or `W/"sched-17"`,
+with optional surrounding SP or HTAB trimmed and weak syntax preserved.
+Malformed, wildcard, comma-list, duplicate, oversized, or control-byte values
+return a parser error while raw response headers remain available.
+
+These helpers declare and parse response metadata only. They do not generate
+calendar versions, compare validators, inspect calendars, select scheduling
+behavior, or apply scheduling policy.
+
 ## WebDAV Overwrite request metadata
 
 Handlers can call `Request::overwrite()` and `HttpRequest::overwrite()` to
@@ -846,6 +946,32 @@ control-byte values return a parser error while `Request::header()` and
 These helpers parse request metadata only. They do not overwrite destination
 resources, apply the RFC 4918 default `T` when the field is absent, or
 enforce WebDAV policy.
+
+## WebDAV If request metadata
+
+Handlers can call `Request::if_header()` and `HttpRequest::if_header()` to
+observe bounded typed RFC 4918 section 10.4 WebDAV `If` request metadata
+through the shared protocol `HttpIf` type. Absent fields return `Ok(None)`.
+A recognized value is either entirely untagged
+(`(<opaquelocktoken:...>) (Not <DAV:no-lock>)`) or entirely tagged
+(`<http://example.test/src> (<opaquelocktoken:...>) </dst> (Not <DAV:no-lock>)`);
+mixed productions are rejected. Each field value and the aggregate input are
+bounded to 64 KiB, the combined value is bounded to 32 lists and 256
+conditions. Resource tags accept an RFC 3986 `Simple-ref` (absolute-URI or
+path-absolute with optional query); state tokens are absolute coded URLs,
+including `<DAV:no-lock>`; conditions accept the case-sensitive `Not` token
+only when it is followed by SP or HTAB and then a state token or a bracketed
+entity tag (`[W/"etag"]`). List
+order, repeated lists, and resource tags are preserved, and
+`header_value()` re-emits the canonical field text. Malformed, empty,
+unterminated, mixed, duplicate, oversized, too-many-list, too-many-condition,
+or control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field. State
+tokens are redacted from typed `Debug` and from raw-header debug output.
+
+These helpers parse request metadata only. They do not evaluate locks,
+entity tags, or other resource state, and they do not generate precondition
+outcomes such as 412 Precondition Failed.
 
 ## Idempotency-Key request metadata
 
