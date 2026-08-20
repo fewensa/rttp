@@ -22,6 +22,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/authorization.rs",
     "tests/link.rs",
     "tests/location.rs",
+    "tests/lock_token.rs",
     "tests/max_forwards.rs",
     "tests/depth.rs",
     "tests/idempotency_key.rs",

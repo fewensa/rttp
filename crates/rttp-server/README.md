@@ -704,6 +704,26 @@ original raw field.
 These helpers parse request metadata only. They do not traverse resources,
 select WebDAV methods, or enforce method policy.
 
+## WebDAV Lock-Token request and response metadata
+
+Handlers can call `Request::lock_token()` and `HttpRequest::lock_token()` to
+observe bounded typed WebDAV `Lock-Token` request metadata through the shared
+protocol `HttpLockToken` type. Absent fields return `Ok(None)`. A recognized
+value is exactly one angle-bracketed absolute URI with optional surrounding
+SP or HTAB, bounded to 64 KiB. `as_str()` returns the stored coded URL and
+`header_value()` emits it unchanged. Malformed, oversized, duplicate, or
+control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field. The token
+is redacted from typed `Debug`.
+
+`HttpResponse::with_lock_token(value)` validates and replaces one bounded
+`Lock-Token` response field. `HttpResponse::lock_token()` parses attached
+response metadata for inspection. Unusual values can still be attached with
+`header()`.
+
+These helpers parse and emit metadata only. They do not create, refresh,
+release, persist, compare ownership of, or enforce WebDAV locks.
+
 ## Idempotency-Key request metadata
 
 Handlers can call `Request::idempotency_key()` and

@@ -4,7 +4,7 @@ use rttp_client::response::{
   ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Deprecation, DocumentPolicy,
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag,
-  HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime,
+  HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, LockToken, MementoDatetime,
   OriginTrials, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
   ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter,
   SecWebSocketAccept, ServerTiming, ServiceWorkerAllowed, SignatureInput, SpeculationRules,
@@ -118,6 +118,97 @@ fn sec_websocket_accept_response_helper_handles_absent_mismatch_and_invalid_meta
   let message = error.to_string();
   assert!(message.contains("Sec-WebSocket-Accept"));
   assert!(!message.contains("dGhlIHNhbXBsZSBub25jZQ=="));
+}
+
+#[test]
+fn lock_token_response_helper_parses_present_and_absent_metadata() {
+  let response = Response::new(
+    RoUrl::with("https://example.test/resource"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Lock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let token = response
+    .lock_token()
+    .expect("Lock-Token should parse")
+    .expect("Lock-Token should be present");
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    token.as_str()
+  );
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    token.header_value()
+  );
+  assert!(!format!("{token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+  let debug = format!("{response:?}");
+  assert!(debug.contains("Lock-Token"));
+  assert!(debug.contains("[REDACTED]"));
+  assert!(!debug.contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  let parsed = LockToken::parse("<http://example.test/locks/1>").expect("http token should parse");
+  assert_eq!("<http://example.test/locks/1>", parsed.as_str());
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test/resource"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  assert_eq!(None, absent.lock_token().expect("absent should parse"));
+}
+
+#[test]
+fn lock_token_response_helper_handles_malformed_and_duplicate_metadata() {
+  let malformed = Response::new(
+    RoUrl::with("https://example.test/resource"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Lock-Token: <relative>\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should preserve malformed metadata");
+  let error = malformed
+    .lock_token()
+    .expect_err("malformed Lock-Token should fail");
+  let message = error.to_string();
+  assert!(message.contains("Lock-Token"));
+  assert!(!message.contains("relative"));
+  assert_eq!(
+    Some("<relative>"),
+    malformed.header_value("Lock-Token").map(String::as_str)
+  );
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test/resource"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Lock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n",
+      "lock-token: <http://example.test/locks/2>\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should preserve duplicate metadata");
+  let error = duplicate
+    .lock_token()
+    .expect_err("duplicate Lock-Token should fail");
+  let message = error.to_string();
+  assert!(message.contains("Lock-Token"));
+  assert!(!message.contains("550e8400-e29b-41d4-a716-446655440000"));
+  assert_eq!(
+    Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
+    duplicate.header_value("Lock-Token").map(String::as_str)
+  );
 }
 
 #[test]

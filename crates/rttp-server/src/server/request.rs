@@ -67,6 +67,9 @@ pub use rttp_protocol::if_unmodified_since::{
   IfUnmodifiedSince as HttpIfUnmodifiedSince,
   IfUnmodifiedSinceParseError as HttpIfUnmodifiedSinceParseError,
 };
+pub use rttp_protocol::lock_token::{
+  LockToken as HttpLockToken, LockTokenParseError as HttpLockTokenParseError,
+};
 pub use rttp_protocol::max_forwards::{
   MaxForwards as HttpMaxForwards, MaxForwardsParseError as HttpMaxForwardsParseError,
 };
@@ -238,6 +241,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("lock-token")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("sec-websocket-accept")
     || name.eq_ignore_ascii_case("sec-websocket-key")
@@ -538,6 +542,17 @@ impl Request {
       return Ok(None);
     }
     HttpDepth::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded WebDAV `Lock-Token` field as typed metadata.
+  /// Duplicate fields are rejected to avoid ambiguous tokens. This accessor
+  /// does not create, refresh, release, persist, or enforce locks.
+  pub fn lock_token(&self) -> Result<Option<HttpLockToken>, HttpLockTokenParseError> {
+    let values: Vec<&str> = self.headers_named("Lock-Token").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpLockToken::parse_values(values).map(Some)
   }
 
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
@@ -2315,6 +2330,22 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpDepth::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded WebDAV `Lock-Token` field as typed metadata.
+  /// Duplicate fields are rejected to avoid ambiguous tokens. This accessor
+  /// does not create, refresh, release, persist, or enforce locks.
+  pub fn lock_token(&self) -> Result<Option<HttpLockToken>, HttpLockTokenParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Lock-Token"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpLockToken::parse_values(values).map(Some)
   }
 
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed

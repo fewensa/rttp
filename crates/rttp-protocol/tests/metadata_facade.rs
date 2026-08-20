@@ -46,6 +46,7 @@ use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
+use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::nel::Nel;
@@ -118,6 +119,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let max_forwards = MaxForwards::parse("0").expect("Max-Forwards should parse");
   let depth = Depth::parse("infinity").expect("Depth should parse");
+  let lock_token = LockToken::parse("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+    .expect("Lock-Token metadata should parse");
   let idempotency_key = IdempotencyKey::parse("charge-2026-08-19-9f3c")
     .expect("Idempotency-Key request metadata should parse");
   let sec_websocket_key = SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
@@ -330,6 +333,15 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(max_forwards.header_value(), "0");
   assert_eq!(Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
+  assert_eq!(
+    lock_token.as_str(),
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"
+  );
+  assert_eq!(
+    lock_token.header_value(),
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"
+  );
+  assert!(!format!("{lock_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
   assert_eq!(idempotency_key.as_str(), "charge-2026-08-19-9f3c");
   assert_eq!(idempotency_key.header_value(), "charge-2026-08-19-9f3c");
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));

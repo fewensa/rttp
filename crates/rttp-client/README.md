@@ -57,6 +57,23 @@ emits the canonical metadata value: RTTP does not traverse resources, select
 WebDAV methods, or enforce method policy. Callers needing an unusual value
 can retain full raw-header control with `header(("Depth", "..."))`.
 
+## Bounded WebDAV Lock-Token metadata
+
+`HttpClient::lock_token(value)` sets a WebDAV `Lock-Token` request header
+through the shared protocol `LockToken` type. The helper accepts exactly one
+angle-bracketed absolute URI, trims HTTP OWS, and rejects empty, unbracketed,
+relative, comma-list, extra-bracket, oversized (over 64 KiB), duplicate, and
+control-byte values before a socket is opened. It only validates and emits
+the trimmed coded URL, including `<` and `>`: RTTP does not create, refresh,
+release, persist, or enforce locks. The token is redacted from typed `Debug`
+and builder error text. Callers needing an unusual value can retain full
+raw-header control with `header(("Lock-Token", "..."))`.
+
+Responses expose `Response::lock_token()` to parse one bounded `Lock-Token`
+response field. Absent fields return `Ok(None)`. Malformed, duplicate, or
+oversized values return a response error while raw headers remain available.
+Parse errors do not include the token value.
+
 ## Bounded Idempotency-Key metadata
 
 `HttpClient::idempotency_key(value)` sets an `Idempotency-Key` request header
@@ -1253,6 +1270,7 @@ header-block model.
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Depth | `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, normalizing `infinity` to lowercase and replacing an existing same-name field | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
+| Lock-Token | `lock_token` emits bounded singleton WebDAV `Lock-Token` request metadata through the shared protocol type, replacing an existing same-name field and redacting the token from typed debug output; `Response::lock_token` parses bounded singleton response metadata | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |

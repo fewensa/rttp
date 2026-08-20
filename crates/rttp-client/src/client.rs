@@ -25,6 +25,7 @@ use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::idempotency_key::IdempotencyKey;
 use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
+use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::pragma::Pragma;
@@ -801,6 +802,21 @@ impl HttpClient {
     let depth = Depth::parse(value.as_ref())
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Depth", depth.header_value())))
+  }
+
+  /// Set bounded WebDAV `Lock-Token` request metadata.
+  ///
+  /// The value must be exactly one angle-bracketed absolute URI after HTTP
+  /// optional whitespace is trimmed, and is limited to 64 KiB. CR, LF, NUL,
+  /// other control bytes, obs-text, comma lists, extra brackets, relative
+  /// URIs, and trailing data are rejected before a socket is opened. This
+  /// only validates and emits the header; it does not create, refresh,
+  /// release, persist, or enforce locks. Use `header` directly for unusual
+  /// values.
+  pub fn lock_token<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let lock_token = LockToken::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Lock-Token", lock_token.header_value())))
   }
 
   /// Append a validated `Accept-Charset` range with the default quality of

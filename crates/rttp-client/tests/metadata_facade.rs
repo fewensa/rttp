@@ -12,18 +12,18 @@ use rttp_client::response::{
   CrossOriginResourcePolicy, Digest, DocumentPolicy, DocumentPolicyParseError,
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError, DocumentPolicyReportOnlyValue,
   DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive, LinkValues,
-  Location, LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
-  NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
-  PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
-  Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
-  ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
-  ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError, ServerTiming, Signature,
-  SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
-  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  SupportsLoadingMode, SupportsLoadingModeParseError, Trailer, TransferEncoding,
-  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest,
-  WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  Location, LocationParseError, LockToken, LockTokenParseError, MementoDatetime,
+  MementoDatetimeParseError, Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
+  OriginTrialParseError, OriginTrials, PermissionsPolicy, PermissionsPolicyParseError, Pragma,
+  PragmaParseError, PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
+  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError,
+  ReferrerPolicy, ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError,
+  ServerTiming, Signature, SignatureInput, SignatureInputParseError, SignatureParseError,
+  SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
+  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -95,6 +95,13 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
   let depth = Depth::parse("infinity").expect("Depth should parse");
   let _: DepthParseError = Depth::parse("2").expect_err("malformed Depth should be rejected");
+  let lock_token = LockToken::parse("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+    .expect("Lock-Token should parse");
+  let _: LockTokenParseError =
+    LockToken::parse("<relative>").expect_err("malformed Lock-Token should be rejected");
+  let _request_lock_token: rttp_client::LockToken = lock_token.clone();
+  let _: rttp_client::LockTokenParseError =
+    rttp_client::LockToken::parse("<>").expect_err("empty coded URL should be rejected");
   let x_forwarded_for =
     XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
   let _: XForwardedForParseError =
@@ -316,6 +323,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    lock_token.as_str()
+  );
+  assert!(!format!("{lock_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());

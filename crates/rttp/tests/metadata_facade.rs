@@ -9,11 +9,11 @@ use rttp::server::{
   HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
   HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpEntityTag, HttpExpectations,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince,
-  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpLockToken, HttpLockTokenParseError, HttpMaxForwards, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNel, HttpOriginTrialParseError, HttpOriginTrials,
+  HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError,
+  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets,
+  HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
   HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
@@ -135,6 +135,11 @@ fn compatibility_facade_exports_client_metadata_types() {
   let depth: rttp::Depth = rttp::Depth::parse("infinity").expect("Depth should parse");
   let _: rttp::DepthParseError =
     rttp::Depth::parse("2").expect_err("malformed Depth should be rejected");
+  let lock_token: rttp::LockToken =
+    rttp::LockToken::parse("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+      .expect("Lock-Token should parse");
+  let _: rttp::LockTokenParseError =
+    rttp::LockToken::parse("<relative>").expect_err("malformed Lock-Token should be rejected");
   let x_forwarded_for: rttp::XForwardedFor =
     rttp::XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
   let _: rttp::XForwardedForParseError =
@@ -342,6 +347,11 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(rttp::Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    lock_token.as_str()
+  );
+  assert!(!format!("{lock_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
@@ -901,6 +911,84 @@ fn compatibility_facade_roundtrips_depth_request_metadata_without_policy() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_lock_token_metadata_without_policy() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    concat!(
+      "HTTP/1.1 204 No Content\r\n",
+      "Lock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  );
+  let response = rttp::Http::client()
+    .method("UNLOCK")
+    .url(format!("http://{addr}/resource"))
+    .lock_token("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+    .expect("Lock-Token should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle
+    .join()
+    .expect("Lock-Token capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
+    header_value(&captured_request_text, "Lock-Token")
+  );
+  let response_token = response
+    .lock_token()
+    .expect("client Lock-Token should parse")
+    .expect("client Lock-Token should be present");
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    response_token.as_str()
+  );
+  assert!(!format!("{response_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let lock_token: HttpLockToken = server_request
+    .lock_token()
+    .expect("server Lock-Token should parse")
+    .expect("server Lock-Token should be present");
+
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    lock_token.as_str()
+  );
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    lock_token.header_value()
+  );
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: <relative>\r\n\r\n",
+  )
+  .expect("malformed Lock-Token request should still parse");
+  assert!(malformed.lock_token().is_err());
+  assert_eq!(Some("<relative>"), malformed.header("Lock-Token"));
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nlock-token: <http://example.test/locks/2>\r\n\r\n",
+  )
+  .expect("duplicate Lock-Token request should still parse");
+  assert!(duplicate.lock_token().is_err());
+  assert_eq!(
+    Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
+    duplicate.header("Lock-Token")
+  );
+
+  assert!(
+    rttp::LockToken::parse("x".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Lock-Token values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn client_accept_encoding_helpers_parse_through_shared_server_type() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
@@ -1003,6 +1091,11 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
   let depth: HttpDepth = HttpDepth::parse("infinity").expect("Depth should parse");
   let depth_error: Result<HttpDepth, HttpDepthParseError> = HttpDepth::parse("2");
+  let lock_token: HttpLockToken =
+    HttpLockToken::parse("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+      .expect("Lock-Token should parse");
+  let lock_token_error: Result<HttpLockToken, HttpLockTokenParseError> =
+    HttpLockToken::parse("<relative>");
   let expectations: HttpExpectations =
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let idempotency_key: HttpIdempotencyKey =
@@ -1138,6 +1231,12 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(HttpDepth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert!(depth_error.is_err());
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    lock_token.as_str()
+  );
+  assert!(!format!("{lock_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+  assert!(lock_token_error.is_err());
   assert!(expectations.expects_continue());
   assert_eq!(["preview"], expectations.unsupported());
   assert_eq!(expectations.header_value(), "100-continue, preview");
