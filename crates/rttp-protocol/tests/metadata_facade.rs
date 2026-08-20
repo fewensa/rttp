@@ -58,6 +58,7 @@ use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
+use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
 use rttp_protocol::signature::{Signature, SignatureParseError};
@@ -113,6 +114,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("Idempotency-Key request metadata should parse");
   let sec_websocket_key = SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
     .expect("Sec-WebSocket-Key request metadata should parse");
+  let sec_websocket_accept = SecWebSocketAccept::derive_from_key(&sec_websocket_key);
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
   let if_unmodified_since = IfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
@@ -295,6 +297,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_websocket_key.as_str(), "dGhlIHNhbXBsZSBub25jZQ==");
   assert_eq!(sec_websocket_key.header_value(), "dGhlIHNhbXBsZSBub25jZQ==");
   assert!(!format!("{sec_websocket_key:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert_eq!(
+    sec_websocket_accept.as_str(),
+    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+  );
+  assert!(sec_websocket_accept.verify_key(&sec_websocket_key));
+  assert!(!format!("{sec_websocket_accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"

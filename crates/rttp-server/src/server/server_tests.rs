@@ -3302,6 +3302,60 @@ fn request_sec_websocket_key_is_optional_bounded_and_preserves_invalid_headers()
 }
 
 #[test]
+fn response_sec_websocket_accept_can_parse_and_derive_from_validated_key() {
+  let key = rttp_protocol::sec_websocket_key::SecWebSocketKey::parse(
+    "dGhlIHNhbXBsZSBub25jZQ==",
+  )
+  .expect("Sec-WebSocket-Key should parse");
+
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Accept", "legacy")
+    .with_sec_websocket_accept_for_key(&key);
+  let accept = response
+    .sec_websocket_accept()
+    .expect("Sec-WebSocket-Accept should parse")
+    .expect("Sec-WebSocket-Accept should be present");
+
+  assert_eq!("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept.as_str());
+  assert!(accept.verify_key(&key));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(serialized.contains("\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"));
+  assert!(!serialized.contains("\r\nSec-WebSocket-Accept: legacy\r\n"));
+  assert!(!format!("{accept:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert!(!format!("{accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+
+  let manual = HttpResponse::new(101, "Switching Protocols")
+    .with_sec_websocket_accept(" \ts3pPLMBiTxaQ9kYGzzhZRbK+xOo=\t ")
+    .expect("manual Sec-WebSocket-Accept should parse");
+  assert_eq!(
+    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
+    manual
+      .sec_websocket_accept()
+      .expect("manual accept should parse")
+      .expect("manual accept should be present")
+      .header_value()
+  );
+}
+
+#[test]
+fn response_sec_websocket_accept_preserves_invalid_raw_headers() {
+  let duplicate = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
+    .header("sec-websocket-accept", "AAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+  assert!(duplicate.sec_websocket_accept().is_err());
+
+  let oversized = "A".repeat(64 * 1024 + 1);
+  let oversized_response =
+    HttpResponse::new(101, "Switching Protocols").header("Sec-WebSocket-Accept", oversized);
+  let error = oversized_response
+    .sec_websocket_accept()
+    .expect_err("oversized Sec-WebSocket-Accept should fail");
+  let message = error.to_string();
+  assert!(message.contains("Sec-WebSocket-Accept"));
+  assert!(!message.contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+}
+
+#[test]
 fn request_trace_context_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");
@@ -4316,6 +4370,14 @@ hello\r\n\
     assert!(header_debug.contains("Sec-WebSocket-Key"));
     assert!(header_debug.contains("[REDACTED]"));
     assert!(!header_debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+    let accept_header_debug = format!(
+      "{:?}",
+      HttpHeader::new("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
+    );
+    assert!(accept_header_debug.contains("Sec-WebSocket-Accept"));
+    assert!(accept_header_debug.contains("[REDACTED]"));
+    assert!(!accept_header_debug.contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
   }
 
   #[test]

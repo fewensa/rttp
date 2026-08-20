@@ -226,6 +226,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("sec-websocket-accept")
     || name.eq_ignore_ascii_case("sec-websocket-key")
     || name.eq_ignore_ascii_case("set-cookie")
     || name.eq_ignore_ascii_case("traceparent")

@@ -27,14 +27,16 @@ use rttp_server::server::{
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
   HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
   HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
-  HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTraceParent,
-  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
+  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
+  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -800,6 +802,34 @@ fn response_facade_builds_and_parses_upgrade_metadata() {
   assert!(serialized.contains("\r\nUpgrade: websocket, TLS/1.3\r\n"));
   assert!(!serialized.contains("\r\nUpgrade: raw\r\n"));
   assert!(!serialized.contains("\r\nContent-Length:"));
+}
+
+#[test]
+fn response_facade_builds_and_parses_sec_websocket_accept_metadata() {
+  let key =
+    HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Accept", "legacy")
+    .with_sec_websocket_accept_for_key(&key);
+
+  let accept = response
+    .sec_websocket_accept()
+    .expect("Sec-WebSocket-Accept should parse")
+    .expect("Sec-WebSocket-Accept should be present");
+
+  assert_eq!("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept.as_str());
+  assert!(accept.verify_key(&key));
+  assert!(!format!("{accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+  let _: Result<HttpSecWebSocketKey, HttpSecWebSocketKeyParseError> =
+    HttpSecWebSocketKey::parse("the sample nonce");
+  let _: Result<HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError> =
+    HttpSecWebSocketAccept::parse("the accept value");
+
+  let mut serialized = Vec::new();
+  response.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains("\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"));
+  assert!(!serialized.contains("\r\nSec-WebSocket-Accept: legacy\r\n"));
 }
 
 #[test]

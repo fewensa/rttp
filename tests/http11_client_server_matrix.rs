@@ -3030,6 +3030,66 @@ fn sync_client_and_server_exchange_bounded_sec_websocket_key_metadata_without_ha
 }
 
 #[test]
+fn sync_client_and_server_exchange_sec_websocket_accept_metadata_without_framing() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind sec websocket accept server");
+  let addr = server
+    .local_addr()
+    .expect("sec websocket accept server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let key = request
+          .sec_websocket_key()
+          .expect("Sec-WebSocket-Key should parse")
+          .expect("Sec-WebSocket-Key should be present");
+        let observed = (
+          key.as_str().to_string(),
+          request.header("Upgrade").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket accept metadata");
+        HttpResponse::new(101, "Switching Protocols").with_sec_websocket_accept_for_key(&key)
+      })
+      .expect("serve sec websocket accept request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_key("dGhlIHNhbXBsZSBub25jZQ==")
+    .expect("Sec-WebSocket-Key should be accepted")
+    .emit()
+    .expect("sec websocket accept response should parse");
+
+  let key = rttp_server::server::HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
+    .expect("Sec-WebSocket-Key should parse");
+  let accept = response
+    .sec_websocket_accept()
+    .expect("Sec-WebSocket-Accept should parse")
+    .expect("Sec-WebSocket-Accept should be present");
+  assert_eq!("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept.as_str());
+  assert!(response
+    .verify_sec_websocket_accept(&key)
+    .expect("Sec-WebSocket-Accept should verify"));
+  assert!(!format!("{accept:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert!(!format!("{accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+
+  let (typed_key, upgrade) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket key metadata");
+  assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", typed_key);
+  assert_eq!(
+    None, upgrade,
+    "typed WebSocket handshake metadata must not set an Upgrade field"
+  );
+  assert_eq!(101, response.code());
+  handle.join().expect("sec websocket accept server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_pragma_metadata_without_policy() {
   const PRAGMA_REQUEST: &str = "no-cache, community=private";
   const PRAGMA_RESPONSE: &str = "no-cache, vendor=private";

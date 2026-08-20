@@ -696,9 +696,16 @@ or control-byte values return a parser error while `Request::header()` and
 `HttpRequest::header()` continue to expose the original raw field. The nonce
 is redacted from typed `Debug`.
 
-These helpers parse request metadata only. They do not perform an HTTP
-upgrade, compute `Sec-WebSocket-Accept`, generate a random nonce, or
-implement WebSocket frames.
+`HttpResponse::with_sec_websocket_accept(value)` validates and replaces one
+bounded `Sec-WebSocket-Accept` response field. `with_sec_websocket_accept_for_key()`
+derives the RFC 6455 value from a validated `HttpSecWebSocketKey` using the
+standard GUID plus SHA-1 and base64 transform, and
+`HttpResponse::sec_websocket_accept()` parses attached response metadata for
+inspection. The derived value for the RFC example key
+`dGhlIHNhbXBsZSBub25jZQ==` is `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`.
+
+These helpers parse and emit handshake metadata only. They do not perform an
+HTTP upgrade, generate a random nonce, or implement WebSocket frames.
 
 ## Pragma request and response metadata
 

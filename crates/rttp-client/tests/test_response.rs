@@ -6,10 +6,11 @@ use rttp_client::response::{
   DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues,
   Location, MementoDatetime, OriginTrials, PermissionsPolicy, ProxyAuthenticate,
   ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken,
-  Response, RetryAfter, ServerTiming, ServiceWorkerAllowed, SignatureInput,
+  Response, RetryAfter, SecWebSocketAccept, ServerTiming, ServiceWorkerAllowed, SignatureInput,
   StrictTransportSecurity, SupportsLoadingMode, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
+use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use std::io::Write;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -30,6 +31,92 @@ fn test_parse_cookie_name_can_match_attribute_name() {
   assert_eq!("Path", path.name());
   assert_eq!("value", path.value());
   assert!(path.http_only());
+}
+
+#[test]
+fn sec_websocket_accept_response_helper_parses_and_verifies_metadata() {
+  let key =
+    SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+  let response = Response::new(
+    RoUrl::with("https://example.test/chat"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let accept = response
+    .sec_websocket_accept()
+    .expect("Sec-WebSocket-Accept should parse")
+    .expect("Sec-WebSocket-Accept should be present");
+  assert_eq!("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept.as_str());
+  assert_eq!("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept.header_value());
+  assert!(accept.verify_key(&key));
+  assert!(response
+    .verify_sec_websocket_accept(&key)
+    .expect("Sec-WebSocket-Accept should verify"));
+  assert!(!format!("{accept:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert!(!format!("{accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+
+  let derived = SecWebSocketAccept::derive_from_key(&key);
+  assert_eq!(derived, accept);
+}
+
+#[test]
+fn sec_websocket_accept_response_helper_handles_absent_mismatch_and_invalid_metadata() {
+  let key =
+    SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test/chat"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  assert_eq!(
+    None,
+    absent.sec_websocket_accept().expect("absent should parse")
+  );
+  assert!(!absent
+    .verify_sec_websocket_accept(&key)
+    .expect("absent accept should not verify"));
+
+  let mismatch = Response::new(
+    RoUrl::with("https://example.test/chat"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Accept: AAAAAAAAAAAAAAAAAAAAAAAAAAA=\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  assert!(!mismatch
+    .verify_sec_websocket_accept(&key)
+    .expect("mismatched accept should parse"));
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test/chat"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n",
+      "sec-websocket-accept: AAAAAAAAAAAAAAAAAAAAAAAAAAA=\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should preserve duplicate metadata");
+  let error = duplicate
+    .sec_websocket_accept()
+    .expect_err("duplicate Sec-WebSocket-Accept should fail");
+  let message = error.to_string();
+  assert!(message.contains("Sec-WebSocket-Accept"));
+  assert!(!message.contains("dGhlIHNhbXBsZSBub25jZQ=="));
 }
 
 #[test]
