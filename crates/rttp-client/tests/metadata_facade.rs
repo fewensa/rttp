@@ -33,10 +33,11 @@ use rttp_client::response::{
 use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
   DestinationParseError, HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
-  SecGpc, SecGpcParseError, SecPurpose, TraceParent, TraceParentParseError, TraceState,
-  TraceStateMember, TraceStateParseError, UpgradeInsecureRequests,
-  UpgradeInsecureRequestsParseError, XForwardedFor, XForwardedForParseError, XForwardedHost,
-  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  SecGpc, SecGpcParseError, SecPurpose, Timeout, TimeoutParseError, TimeoutType, TraceParent,
+  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
+  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, XForwardedFor,
+  XForwardedForParseError, XForwardedHost, XForwardedHostParseError, XForwardedProto,
+  XForwardedProtoParseError,
 };
 use rttp_protocol::expect::Expect;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
@@ -99,6 +100,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     Destination::parse("/relative").expect_err("relative Destination should be rejected");
   let depth = Depth::parse("infinity").expect("Depth should parse");
   let _: DepthParseError = Depth::parse("2").expect_err("malformed Depth should be rejected");
+  let timeout = Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
+  let _: TimeoutParseError =
+    Timeout::parse("Second-60, second-60").expect_err("duplicate Timeout should be rejected");
   let x_forwarded_for =
     XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
   let _: XForwardedForParseError =
@@ -335,6 +339,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
+  assert_eq!(
+    &[TimeoutType::Second(60), TimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"

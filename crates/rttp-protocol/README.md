@@ -149,6 +149,18 @@ reports declared request metadata only; it does not authorize the target
 URI, compare source and destination resources, select WebDAV methods, or
 copy, move, or delete application resources.
 
+## Timeout
+
+`timeout` parses WebDAV `Timeout` request fields as an ordered list of
+`Second-n` and `Infinite` alternatives. Each field value and the aggregate
+input are bounded to 64 KiB, and the combined list is bounded to 32 members.
+Surrounding SP and HTAB are trimmed as optional whitespace. `Second-n` values
+must fit in `u64`; `Infinite` and `Second-` prefixes are accepted
+case-insensitively and emitted in lowercase. Empty members, overflow,
+duplicates, too many members, oversized input, and forbidden ASCII control
+bytes are errors. This parser reports declared request metadata only; it does
+not create locks, refresh locks, or select an application timeout.
+
 ## Idempotency-Key
 
 `idempotency_key` parses a singleton HTTP `Idempotency-Key` request field as

@@ -720,6 +720,20 @@ destination against the request target, normalize URI components, authorize
 access, select WebDAV methods, or copy, move, or delete application
 resources.
 
+## WebDAV Timeout request metadata
+
+Handlers can call `Request::timeout()` and `HttpRequest::timeout()` to observe
+bounded typed WebDAV `Timeout` request metadata through the shared protocol
+`HttpTimeout` type. Absent fields return `Ok(None)`. Recognized values are
+ordered `Second-n` and `Infinite` alternatives, with optional surrounding SP
+or HTAB and lowercase canonical emission. Malformed, overflowing, oversized,
+duplicate, too-many-member, or control-byte values return a parser error
+while `Request::header()` and `HttpRequest::header()` continue to expose the
+original raw field.
+
+These helpers parse request metadata only. They do not create locks, refresh
+locks, or select an application timeout.
+
 ## Idempotency-Key request metadata
 
 Handlers can call `Request::idempotency_key()` and

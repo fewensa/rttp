@@ -115,6 +115,10 @@ pub use rttp_protocol::signature_input::{
 pub use rttp_protocol::te::{
   Te as HttpRequestTe, TeCoding as HttpTe, TeParseError as HttpTeParseError,
 };
+pub use rttp_protocol::timeout::{
+  Timeout as HttpTimeout, TimeoutParseError as HttpTimeoutParseError,
+  TimeoutType as HttpTimeoutType,
+};
 pub use rttp_protocol::trace_context::{
   TraceParent as HttpTraceParent, TraceParentParseError as HttpTraceParentParseError,
   TraceState as HttpTraceState, TraceStateMember as HttpTraceStateMember,
@@ -555,6 +559,16 @@ impl Request {
       return Ok(None);
     }
     HttpDestination::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Timeout` request metadata without creating locks,
+  /// refreshing locks, or selecting an application timeout.
+  pub fn timeout(&self) -> Result<Option<HttpTimeout>, HttpTimeoutParseError> {
+    let values: Vec<&str> = self.headers_named("Timeout").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTimeout::parse_values(values).map(Some)
   }
 
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
@@ -2360,6 +2374,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpDestination::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Timeout` request metadata without creating locks,
+  /// refreshing locks, or selecting an application timeout.
+  pub fn timeout(&self) -> Result<Option<HttpTimeout>, HttpTimeoutParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Timeout"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTimeout::parse_values(values).map(Some)
   }
 
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed

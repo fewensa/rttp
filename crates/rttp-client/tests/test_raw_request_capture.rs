@@ -2438,6 +2438,107 @@ fn depth_helper_rejects_invalid_values_before_connecting() {
 }
 
 #[test]
+fn timeout_helper_emits_canonical_webdav_metadata() {
+  for (value, expected) in [
+    ("Second-60", "second-60"),
+    ("Infinite", "infinite"),
+    (
+      " Second-60,\tInfinite, second-120 ",
+      "second-60, infinite, second-120",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("LOCK")
+        .url(format!("{}/collection", base_url))
+        .timeout(value)
+        .expect("Timeout should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Timeout"));
+  }
+}
+
+#[test]
+fn timeout_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("LOCK")
+      .url(format!("{}/collection", base_url))
+      .header(("Timeout", "Second-30"))
+      .timeout("Infinite")
+      .expect("Timeout should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("infinite"), header_value(&request, "Timeout"));
+}
+
+#[test]
+fn timeout_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    "Second-",
+    "Second--1",
+    "Second-1.0",
+    "Second-18446744073709551616",
+    "Second-60, second-60",
+    "Second-1\r\nX: y",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("LOCK")
+        .url(format!("{}/collection", base_url))
+        .timeout(value)
+        .expect_err("invalid Timeout should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Timeout helper input should not open a socket"
+    );
+  }
+
+  let oversized = format!("{}Second-1", " ".repeat(64 * 1024 + 1));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("LOCK")
+      .url(format!("{}/collection", base_url))
+      .timeout(oversized.as_str())
+      .expect_err("oversized Timeout should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Timeout helper input should not open a socket"
+  );
+}
+
+#[test]
+fn manual_timeout_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("LOCK")
+      .url(format!("{}/collection", base_url))
+      .header(("Timeout", "unusual-value"))
+      .emit()
+      .expect("manual Timeout header should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("unusual-value"), header_value(&request, "Timeout"));
+}
+
+#[test]
 fn idempotency_key_helper_emits_canonical_metadata() {
   for (value, expected) in [
     ("charge-2026-08-19-9f3c", "charge-2026-08-19-9f3c"),

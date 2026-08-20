@@ -35,13 +35,14 @@ use rttp_server::server::{
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
   HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpTraceParent, HttpTraceParentParseError, HttpTraceState,
-  HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
-  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
+  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
+  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpWantContentDigest, HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError,
+  HttpXForwardedHost, HttpXForwardedHostParseError, HttpXForwardedProto,
+  HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  SecPurpose,
 };
 
 #[test]
@@ -124,6 +125,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpMaxForwards::parse("4294967296");
   let depth: HttpDepth = HttpDepth::parse("infinity").expect("Depth should parse");
   let depth_error: Result<HttpDepth, HttpDepthParseError> = HttpDepth::parse("2");
+  let timeout: HttpTimeout =
+    HttpTimeout::parse("Second-60, Infinite").expect("Timeout should parse");
+  let timeout_error: Result<HttpTimeout, HttpTimeoutParseError> =
+    HttpTimeout::parse("Second-60, second-60");
   let expectations: HttpExpectations =
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let expectations_error: Result<HttpExpectations, HttpExpectParseError> =
@@ -333,6 +338,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(HttpDepth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert!(depth_error.is_err());
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
+  assert!(timeout_error.is_err());
   assert!(expectations.expects_continue());
   assert_eq!(["preview"], expectations.unsupported());
   assert_eq!(expectations.header_value(), "100-continue, preview");
@@ -978,6 +989,59 @@ fn request_facade_parses_depth_metadata_without_policy() {
   .expect("request should parse");
   assert!(duplicate.depth().is_err());
   assert_eq!(Some("0"), duplicate.header("Depth"));
+}
+
+#[test]
+fn request_facade_parses_timeout_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"LOCK /collection HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60, Infinite\r\n\r\n",
+  )
+  .expect("request should parse");
+  let timeout: HttpTimeout = request
+    .timeout()
+    .expect("Timeout should parse")
+    .expect("Timeout should be present");
+
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
+  assert_eq!(Some("Second-60, Infinite"), request.header("Timeout"));
+
+  let absent = HttpRequest::parse(b"LOCK /collection HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .timeout()
+      .expect("missing Timeout should be accepted")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"LOCK /collection HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-\r\n\r\n",
+  )
+  .expect("malformed Timeout request should still parse");
+  assert!(malformed.timeout().is_err());
+  assert_eq!(Some("Second-"), malformed.header("Timeout"));
+
+  let overflow = HttpRequest::parse(
+    b"LOCK /collection HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-18446744073709551616\r\n\r\n",
+  )
+  .expect("overflow Timeout request should still parse");
+  assert!(overflow.timeout().is_err());
+
+  let duplicate = HttpRequest::parse(
+    b"LOCK /collection HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60\r\ntimeout: second-60\r\n\r\n",
+  )
+  .expect("duplicate Timeout request should still parse");
+  assert!(duplicate.timeout().is_err());
+  assert_eq!(Some("Second-60"), duplicate.header("Timeout"));
+
+  assert!(
+    HttpTimeout::parse(format!("{}Second-1", " ".repeat(64 * 1024 + 1))).is_err(),
+    "oversized Timeout values must fail closed"
+  );
 }
 
 #[test]

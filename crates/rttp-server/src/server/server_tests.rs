@@ -3314,6 +3314,77 @@ fn request_depth_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_timeout_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"LOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.timeout().expect("missing value should be valid")
+  );
+
+  let valid = Request::from_raw_frame(
+    b"LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60, Infinite\r\n\r\n",
+  )
+  .expect("request should parse");
+  let parsed = valid
+    .timeout()
+    .expect("value should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    parsed.members()
+  );
+  assert_eq!("second-60, infinite", parsed.header_value());
+
+  for value in [
+    "",
+    "Second-",
+    "Second--1",
+    "Second-1.0",
+    "Second-18446744073709551616",
+    "Second-60, second-60",
+    "Infinite, infinite",
+  ] {
+    let request = Request::from_raw_frame(
+      format!("LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.timeout().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Timeout"));
+  }
+
+  let oversized = format!("{}Second-1", " ".repeat(64 * 1024 + 1));
+  let oversized_request = Request {
+    method: "LOCK".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Timeout".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.timeout().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_request.header("Timeout"));
+
+  let split = Request::from_raw_frame(
+    b"LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60\r\ntimeout: Infinite\r\n\r\n",
+  )
+  .expect("request should retain split metadata");
+  let split_timeout = split
+    .timeout()
+    .expect("split Timeout should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    split_timeout.members()
+  );
+}
+
+#[test]
 fn request_idempotency_key_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");

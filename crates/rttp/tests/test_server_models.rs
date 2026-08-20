@@ -13,7 +13,7 @@ use rttp::server::{
   HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets,
   HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpTimeoutType, HttpVary,
 };
 
 #[test]
@@ -1363,6 +1363,63 @@ fn request_depth_is_optional_and_rejects_invalid_metadata() {
   ));
   assert!(duplicate.depth().is_err());
   assert_eq!(Some("0"), duplicate.header("Depth"));
+}
+
+#[test]
+fn request_timeout_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("LOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent.timeout().expect("missing Timeout should be valid")
+  );
+
+  let valid =
+    parse_request("LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60, Infinite\r\n\r\n");
+  let timeout = valid
+    .timeout()
+    .expect("Timeout should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
+
+  for value in [
+    "",
+    "Second-",
+    "Second--1",
+    "Second-1.0",
+    "Second-18446744073709551616",
+    "Second-60, second-60",
+    "Infinite, infinite",
+  ] {
+    let request = parse_request(&format!(
+      "LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: {value}\r\n\r\n"
+    ));
+    assert!(request.timeout().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Timeout"));
+  }
+
+  assert!(
+    rttp::server::HttpTimeout::parse(format!("{}Second-1", " ".repeat(64 * 1024 + 1))).is_err()
+  );
+
+  let split = parse_request(concat!(
+    "LOCK / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Timeout: Second-60\r\n",
+    "timeout: Infinite\r\n",
+    "\r\n"
+  ));
+  let split_timeout = split
+    .timeout()
+    .expect("split Timeout should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    split_timeout.members()
+  );
 }
 
 #[test]
