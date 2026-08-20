@@ -25,6 +25,7 @@ use rttp_protocol::fetch_metadata::{
 };
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::idempotency_key::IdempotencyKey;
+use rttp_protocol::if_header::If;
 use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_schedule_tag_match::IfScheduleTagMatch;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
@@ -908,6 +909,26 @@ impl HttpClient {
       "If-Schedule-Tag-Match",
       validator.header_value(),
     )))
+  }
+
+  /// Set bounded WebDAV `If` request metadata.
+  ///
+  /// The value must be one or more RFC 4918 condition lists, either entirely
+  /// untagged like `(<opaquelocktoken:...>) (Not <DAV:no-lock>)` or entirely
+  /// tagged like `<http://example.test/src> (<opaquelocktoken:...>)`. State
+  /// tokens, entity tags, `Not`, resource tags, list order, and repeated
+  /// lists are validated and preserved, and the whole value is limited to
+  /// 64 KiB with at most 32 lists and 256 conditions. Mixed tagged and
+  /// untagged productions, duplicate fields, CR, LF, NUL, other control
+  /// bytes, and obs-text are rejected before a socket is opened. This only
+  /// validates and emits the header; it does not evaluate locks, entity tags,
+  /// or other resource state, and it does not generate precondition
+  /// outcomes such as 412 Precondition Failed. Use `header` directly for
+  /// unusual values.
+  pub fn if_header<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let if_header =
+      If::parse(value.as_ref()).map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("If", if_header.header_value())))
   }
 
   /// Set bounded WebDAV `Overwrite` request metadata.

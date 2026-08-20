@@ -499,6 +499,34 @@ These helpers declare and observe request metadata only. RTTP does not
 resolve the destination, authorize the target URI, select WebDAV methods, or
 copy, move, or delete application resources.
 
+## Bounded WebDAV If request metadata
+
+`HttpClient::if_header(value)` validates and emits one RFC 4918 section 10.4
+WebDAV `If` request field through the shared `rttp_protocol` `If` type,
+replacing any existing same-name field before a socket is opened.
+`Request::if_header()` and `HttpRequest::if_header()` parse received fields
+into the same `HttpIf` representation, returning `Ok(None)` when absent. A
+recognized value is either entirely untagged
+(`(<opaquelocktoken:...>) (Not <DAV:no-lock>)`) or entirely tagged
+(`<http://example.test/src> (<opaquelocktoken:...>) </dst> (Not <DAV:no-lock>)`);
+mixed productions are rejected. Each field value and the aggregate input are
+bounded to 64 KiB, the combined value is bounded to 32 lists and 256
+conditions. Resource tags accept an RFC 3986 `Simple-ref` (absolute-URI or
+path-absolute with optional query); state tokens are absolute coded URLs,
+including `<DAV:no-lock>`; conditions accept the case-sensitive `Not` token
+only when it is followed by SP or HTAB and then a state token or a bracketed
+entity tag (`[W/"etag"]`). List
+order, repeated lists, and resource tags are preserved, and
+`header_value()` re-emits the canonical field text. Empty, unterminated,
+mixed, malformed, duplicate, oversized, too-many-list, too-many-condition,
+and control-byte values are rejected while raw request headers remain
+available when the typed parser reports an error. State tokens are redacted
+from typed `Debug` and raw-header debug output.
+
+These helpers declare and observe request metadata only. RTTP does not
+evaluate locks, entity tags, or other resource state, and it does not
+generate precondition outcomes such as 412 Precondition Failed.
+
 ## Bounded If-Schedule-Tag-Match request metadata
 
 `HttpClient::if_schedule_tag_match(value)` validates and emits one
@@ -1487,6 +1515,7 @@ scheduling, or async accept loops.
 | Timeout | `HttpClient::timeout` validates and emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, and `Request::timeout`/`HttpRequest::timeout` parse received fields into the same representation while preserving raw headers on errors | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
 | If-Schedule-Tag-Match and Schedule-Tag | `HttpClient::if_schedule_tag_match` validates and emits bounded singleton `If-Schedule-Tag-Match` request metadata, `Request::if_schedule_tag_match`/`HttpRequest::if_schedule_tag_match` parse received fields, and `Response::schedule_tag` parses bounded singleton `Schedule-Tag` response metadata through shared protocol types backed by `EntityTag` | No calendar-version generation, schedule-tag comparison, calendar inspection, scheduling policy, retry, or 412/status-policy behavior |
 | Overwrite | `HttpClient::overwrite` validates and emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F`, and `Request::overwrite`/`HttpRequest::overwrite` parse received fields into the same representation while preserving raw headers on errors | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
+| If | `HttpClient::if_header` validates and emits bounded RFC 4918 WebDAV `If` request metadata through the shared protocol type, accepting untagged or tagged condition lists with `Not`, state tokens, and bracketed entity tags and preserving order, and `Request::if_header`/`HttpRequest::if_header` parse received fields into the same `HttpIf` representation while preserving raw headers on errors and redacting state tokens from typed debug output | No lock, entity-tag, or resource-state evaluation; no 412 or other precondition outcome; no lock creation, refresh, or release; no COPY/MOVE/UNLOCK execution; no retry, or forwarding policy |
 | WebSocket handshake metadata | `HttpClient::sec_websocket_key` validates and emits one bounded `Sec-WebSocket-Key` request field through the shared protocol type, and `Request::sec_websocket_key`/`HttpRequest::sec_websocket_key` parse received fields into the same representation while preserving raw headers on errors; server responses can derive `Sec-WebSocket-Accept` with the RFC GUID plus SHA-1/base64 transform, and clients can parse and verify the response against a validated key; typed debug output redacts key and accept material; workspace integration tests cover live HTTP/1.1 and h2c metadata-only roundtrips | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `HttpClient::sec_websocket_version`, `Request::sec_websocket_version`/`HttpRequest::sec_websocket_version`, `HttpResponse::with_sec_websocket_version`/`sec_websocket_version`, and client `Response::sec_websocket_version` share the bounded protocol version-list representation, requiring canonical descending order and preserving raw headers on errors; workspace integration tests cover live HTTP/1.1 and h2c metadata-only roundtrips | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Sec-WebSocket-Protocol | `HttpClient::sec_websocket_protocol`, `Request::sec_websocket_protocol`/`HttpRequest::sec_websocket_protocol`, `HttpResponse::with_sec_websocket_protocol`/`sec_websocket_protocol`, and client `Response::sec_websocket_protocol` share the bounded protocol token representation: request offers preserve preference order while response values are selection singletons, with case-sensitive duplicates and raw headers preserved on errors; workspace integration tests cover live HTTP/1.1 and h2c metadata-only roundtrips | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |

@@ -930,6 +930,32 @@ These helpers parse request metadata only. They do not overwrite destination
 resources, apply the RFC 4918 default `T` when the field is absent, or
 enforce WebDAV policy.
 
+## WebDAV If request metadata
+
+Handlers can call `Request::if_header()` and `HttpRequest::if_header()` to
+observe bounded typed RFC 4918 section 10.4 WebDAV `If` request metadata
+through the shared protocol `HttpIf` type. Absent fields return `Ok(None)`.
+A recognized value is either entirely untagged
+(`(<opaquelocktoken:...>) (Not <DAV:no-lock>)`) or entirely tagged
+(`<http://example.test/src> (<opaquelocktoken:...>) </dst> (Not <DAV:no-lock>)`);
+mixed productions are rejected. Each field value and the aggregate input are
+bounded to 64 KiB, the combined value is bounded to 32 lists and 256
+conditions. Resource tags accept an RFC 3986 `Simple-ref` (absolute-URI or
+path-absolute with optional query); state tokens are absolute coded URLs,
+including `<DAV:no-lock>`; conditions accept the case-sensitive `Not` token
+only when it is followed by SP or HTAB and then a state token or a bracketed
+entity tag (`[W/"etag"]`). List
+order, repeated lists, and resource tags are preserved, and
+`header_value()` re-emits the canonical field text. Malformed, empty,
+unterminated, mixed, duplicate, oversized, too-many-list, too-many-condition,
+or control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field. State
+tokens are redacted from typed `Debug` and from raw-header debug output.
+
+These helpers parse request metadata only. They do not evaluate locks,
+entity tags, or other resource state, and they do not generate precondition
+outcomes such as 412 Precondition Failed.
+
 ## Idempotency-Key request metadata
 
 Handlers can call `Request::idempotency_key()` and

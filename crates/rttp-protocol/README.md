@@ -278,6 +278,33 @@ token unchanged. This parser reports declared request metadata only; it does
 not overwrite destination resources, apply the RFC 4918 default `T` when the
 field is absent, or enforce WebDAV policy.
 
+## If
+
+`if_header` parses RFC 4918 section 10.4 WebDAV `If` request fields as typed,
+bounded condition lists. A value is either entirely untagged
+(`(<opaquelocktoken:...>) (Not <DAV:no-lock>)`) or entirely tagged
+(`<http://example.test/src> (<opaquelocktoken:...>) </dst> (Not <DAV:no-lock>)`);
+mixed productions are rejected. Each field value and the aggregate input are
+bounded to 64 KiB, the combined value is bounded to 32 lists, and the
+combined value is bounded to 256 conditions. Resource tags accept an RFC 3986
+`Simple-ref`: an absolute-URI or a path-absolute with optional query, wrapped
+in `<` and `>`. State tokens are absolute coded URLs, including
+`<DAV:no-lock>`. Conditions accept the case-sensitive `Not` token only when it
+is followed by SP or HTAB and then a state token or a bracketed entity tag
+(`[W/"etag"]`). Surrounding SP and
+HTAB are trimmed as optional whitespace; list order, repeated lists, and
+resource tags are preserved, and `header_value()` re-emits the canonical
+field text with single SP separators and the tag repeated before each of its
+lists. Empty values, empty or unterminated lists, a resource tag with no
+list, invalid state tokens or resource tags, malformed entity tags, relative
+or fragment-bearing URIs, duplicates across fields, oversized input, too many
+lists or conditions, and forbidden ASCII control bytes (including CR, LF,
+NUL, and obs-text) are errors. State tokens are redacted from typed `Debug`,
+and parse errors describe only the header and validation category. This
+parser reports declared request metadata only; it does not evaluate locks,
+entity tags, or other resource state, and it does not generate precondition
+outcomes such as 412 Precondition Failed.
+
 ## Idempotency-Key
 
 `idempotency_key` parses a singleton HTTP `Idempotency-Key` request field as

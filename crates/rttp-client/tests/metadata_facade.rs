@@ -36,11 +36,12 @@ use rttp_client::response::{
 };
 use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, Baggage, BaggageMember, BaggageParseError,
-  BaggageProperty, Depth, DepthParseError, Destination, DestinationParseError, HttpClient,
-  IfScheduleTagMatch, IfScheduleTagMatchParseError, Negotiate, NegotiateDirective,
-  NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Tcn, TcnDirective, TcnParseError, Timeout,
-  TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  BaggageProperty, Depth, DepthParseError, Destination, DestinationParseError, HttpClient, If,
+  IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag, IfScheduleTagMatch,
+  IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective, NegotiateParseError,
+  Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc,
+  SecGpcParseError, SecPurpose, Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError,
+  TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
   TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
   Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError,
   XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
@@ -124,6 +125,26 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     IfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
   let _: IfScheduleTagMatchParseError =
     IfScheduleTagMatch::parse("*").expect_err("wildcard If-Schedule-Tag-Match should be rejected");
+  let if_header = If::parse(
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [\"etag-one\"])",
+  )
+  .expect("WebDAV If should parse");
+  let _: IfParseError = If::parse("(junk)").expect_err("malformed WebDAV If should be rejected");
+  let _: IfParseError = If::parse("(Not<DAV:no-lock>)")
+    .expect_err("Not without required whitespace should be rejected");
+  let _request_if: If = if_header.clone();
+  let _request_if_list: IfList = if_header.lists()[0].clone();
+  let _request_if_condition: IfCondition = if_header.lists()[0].conditions()[0].clone();
+  let _request_if_predicate: IfPredicate = if_header.lists()[0].conditions()[0].predicate().clone();
+  let _request_if_state_token: IfStateToken = match if_header.lists()[0].conditions()[0].predicate()
+  {
+    IfPredicate::StateToken(token) => token.clone(),
+    IfPredicate::EntityTag(_) => panic!("expected a state token"),
+  };
+  let _request_if_resource_tag: IfResourceTag = if_header.lists()[0]
+    .resource_tag()
+    .expect("tagged list")
+    .clone();
   let overwrite = Overwrite::parse("F").expect("Overwrite should parse");
   let _: OverwriteParseError =
     Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
@@ -430,6 +451,18 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
   assert!(!if_schedule_tag_match.is_weak());
   assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
+  assert!(if_header.is_tagged());
+  assert_eq!(2, if_header.lists().len());
+  assert_eq!(
+    if_header.header_value(),
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+     <http://example.test/src> (Not [\"etag-one\"])"
+  );
+  assert!(if_header.lists()[1].conditions()[0].is_negated());
+  assert!(if_header.lists()[1].conditions()[0]
+    .predicate()
+    .is_entity_tag());
+  assert!(!format!("{if_header:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"

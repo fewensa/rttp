@@ -10,14 +10,14 @@ use rttp::server::{
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
   HttpDepthParseError, HttpDestination, HttpDestinationParseError, HttpEntityTag, HttpExpectations,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfScheduleTagMatch,
-  HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError,
-  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
-  HttpNegotiateDirective, HttpNegotiateParseError, HttpNel, HttpOriginTrialParseError,
-  HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError,
-  HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSaveData,
-  HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfModifiedSince,
+  HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken,
+  HttpLockTokenParseError, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
+  HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError, HttpNel,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
+  HttpSaveData, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
   HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
@@ -1340,6 +1340,74 @@ fn compatibility_facade_roundtrips_lock_token_metadata_without_policy() {
   assert!(
     rttp::LockToken::parse("x".repeat(64 * 1024 + 1)).is_err(),
     "oversized Lock-Token values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_if_metadata_without_policy() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  let response = rttp::Http::client()
+    .method("UNLOCK")
+    .url(format!("http://{addr}/resource"))
+    .if_header(
+      "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [\"etag-one\"])",
+    )
+    .expect("WebDAV If should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle.join().expect("If capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some(
+      "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+       <http://example.test/src> (Not [\"etag-one\"])"
+    ),
+    header_value(&captured_request_text, "If")
+  );
+  assert_eq!(204, response.code());
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let if_header: HttpIf = server_request
+    .if_header()
+    .expect("server WebDAV If should parse")
+    .expect("server WebDAV If should be present");
+
+  assert!(if_header.is_tagged());
+  assert_eq!(2, if_header.lists().len());
+  assert_eq!(
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+     <http://example.test/src> (Not [\"etag-one\"])",
+    if_header.header_value()
+  );
+  assert!(!format!("{if_header:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (junk)\r\n\r\n",
+  )
+  .expect("malformed WebDAV If request should still parse");
+  assert!(malformed.if_header().is_err());
+  assert_eq!(Some("(junk)"), malformed.header("If"));
+  assert!(
+    rttp::If::parse("(Not<DAV:no-lock>)").is_err(),
+    "Not without required whitespace should be rejected"
+  );
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<a:b>)\r\nIf: (<b:c>)\r\n\r\n",
+  )
+  .expect("duplicate WebDAV If request should still parse");
+  assert!(duplicate.if_header().is_err());
+  assert_eq!(Some("(<a:b>)"), duplicate.header("If"));
+
+  assert!(
+    rttp::If::parse("x".repeat(64 * 1024 + 1)).is_err(),
+    "oversized WebDAV If values must fail closed"
   );
 }
 

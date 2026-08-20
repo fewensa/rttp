@@ -69,6 +69,7 @@ pub mod from;
 pub mod host;
 pub mod http1;
 pub mod idempotency_key;
+pub mod if_header;
 pub mod if_modified_since;
 pub mod if_schedule_tag_match;
 pub mod if_unmodified_since;
