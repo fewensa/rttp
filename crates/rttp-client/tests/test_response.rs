@@ -5828,6 +5828,42 @@ fn test_parse_cdn_cache_control_response_metadata() {
 }
 
 #[test]
+fn test_parse_surrogate_control_response_metadata_without_policy() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Surrogate-Control: max-age=600, content=\"ESI/1.0\"\r\n",
+    "surrogate-control: surrogate-key=\"article 42\"\r\n",
+    "Cache-Control: max-age=1\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse Surrogate-Control response");
+
+  let metadata = response
+    .surrogate_control()
+    .expect("valid Surrogate-Control should parse")
+    .expect("Surrogate-Control should be present");
+
+  assert_eq!(metadata.len(), 3);
+  assert_eq!(metadata.directives()[0].name(), "max-age");
+  assert_eq!(metadata.directives()[0].value(), Some("600"));
+  assert_eq!(metadata.directives()[1].name(), "content");
+  assert_eq!(metadata.directives()[1].value(), Some("ESI/1.0"));
+  assert_eq!(metadata.directives()[2].value(), Some("article 42"));
+  assert_eq!(
+    response
+      .cache_control()
+      .expect("Cache-Control remains independent")
+      .expect("Cache-Control should be present")
+      .max_age(),
+    Some(1)
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
 fn test_parse_cache_status_response_metadata() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
@@ -5930,6 +5966,56 @@ fn test_parse_cdn_cache_control_rejects_invalid_helper_values_without_rejecting_
 
   assert!(response
     .cdn_cache_control()
+    .expect("missing header should be valid")
+    .is_none());
+}
+
+#[test]
+fn test_parse_surrogate_control_rejects_invalid_helper_values_without_rejecting_response() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let invalid_values = [
+    "max-age=",
+    "max-age=not a token",
+    "extension=\"unterminated",
+    "max-age=60, Max-Age=120",
+    oversized.as_str(),
+  ];
+
+  for value in invalid_values {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nSurrogate-Control: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.surrogate_control().is_err(),
+      "Surrogate-Control helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Surrogate-Control")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let first = format!("a={}", "x".repeat((64 * 1024 / 2) - 2));
+  let second = format!("b={}", "x".repeat((64 * 1024 / 2) - 1));
+  let raw = format!(
+    "HTTP/1.1 200 OK\r\nSurrogate-Control: {first}\r\nSurrogate-Control: {second}\r\nContent-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response remains usable");
+  assert!(response.surrogate_control().is_err());
+  assert_eq!("OK", response.body().string().unwrap());
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  )
+  .expect("raw response without Surrogate-Control remains usable");
+
+  assert!(response
+    .surrogate_control()
     .expect("missing header should be valid")
     .is_none());
 }

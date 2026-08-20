@@ -213,6 +213,10 @@ pub use rttp_protocol::supports_loading_mode::{
   SupportsLoadingMode as HttpSupportsLoadingMode,
   SupportsLoadingModeParseError as HttpSupportsLoadingModeParseError,
 };
+pub use rttp_protocol::surrogate_control::{
+  SurrogateControl as HttpSurrogateControl,
+  SurrogateControlParseError as HttpSurrogateControlParseError,
+};
 pub use rttp_protocol::tcn::{
   Tcn as HttpTcn, TcnDirective as HttpTcnDirective, TcnParseError as HttpTcnParseError,
 };
@@ -1897,6 +1901,23 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Surrogate-Control` response metadata without
+  /// applying CDN cache policy or translating directives into `Cache-Control`.
+  pub fn with_surrogate_control(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSurrogateControlParseError> {
+    let surrogate_control = HttpSurrogateControl::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Surrogate-Control"));
+    self.headers.push(HttpHeader::new(
+      "Surrogate-Control",
+      surrogate_control.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Clear-Site-Data` metadata without clearing server state.
   pub fn with_clear_site_data(
     mut self,
@@ -2231,6 +2252,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpCdnCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Surrogate-Control` response metadata without applying
+  /// CDN cache policy or translating directives into `Cache-Control`.
+  pub fn surrogate_control(
+    &self,
+  ) -> Result<Option<HttpSurrogateControl>, HttpSurrogateControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Surrogate-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSurrogateControl::parse_values(values).map(Some)
   }
 
   /// Parses attached `Cache-Status` response metadata without applying cache policy.

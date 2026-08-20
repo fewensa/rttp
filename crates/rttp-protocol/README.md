@@ -751,6 +751,23 @@ compute freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose response-acceptance
 behavior.
 
+## Surrogate-Control
+
+`surrogate_control` parses one or more `Surrogate-Control` response field
+values into ordered directive metadata. It preserves extension directives with
+each directive token name and optional parsed value, including well-formed
+quoted-string values.
+
+Each field value is bounded to 64 KiB, the aggregate parsed header set is
+bounded to 64 KiB, and the directive count is bounded to 256. Directive names
+and unquoted values must be valid HTTP tokens. Duplicate directive names are
+rejected case-insensitively across all parsed fields.
+
+The parser only reports bounded wire metadata. It does not create a CDN cache,
+compute freshness, evaluate surrogate keys, translate directives into
+`Cache-Control`, revalidate automatically, enforce shared-cache policy, retry,
+replay, redirect, or choose response-acceptance behavior.
+
 ## CDN-Loop
 
 `cdn_loop` parses one or more RFC 8586 `CDN-Loop` request field values into

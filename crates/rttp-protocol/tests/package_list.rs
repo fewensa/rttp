@@ -69,6 +69,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/sec_websocket_protocol.rs",
     "tests/sec_websocket_version.rs",
     "tests/service_worker_allowed.rs",
+    "tests/surrogate_control.rs",
   ] {
     assert!(
       package_files.lines().any(|path| path == expected),

@@ -125,6 +125,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::CdnCacheControlParseError =
     rttp_client::response::CdnCacheControl::parse("max-age=")
       .expect_err("invalid CDN-Cache-Control should fail");
+  let surrogate_control: rttp::SurrogateControl =
+    rttp_client::response::SurrogateControl::parse("max-age=600, content=\"ESI/1.0\"")
+      .expect("Surrogate-Control should parse");
+  let _: rttp::SurrogateControlParseError =
+    rttp_client::response::SurrogateControl::parse("max-age=60, Max-Age=120")
+      .expect_err("duplicate Surrogate-Control should fail");
   let accept_patch: rttp::AcceptPatch =
     rttp_client::response::AcceptPatch::parse("application/json")
       .expect("Accept-Patch should parse");
@@ -428,6 +434,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   );
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(surrogate_control.directives()[1].value(), Some("ESI/1.0"));
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
   assert_eq!(content_range_window.header_value(), "bytes 3-6/10");

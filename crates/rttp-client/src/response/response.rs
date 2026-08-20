@@ -85,6 +85,7 @@ use rttp_protocol::speculation_rules::SpeculationRules;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
+use rttp_protocol::surrogate_control::SurrogateControl;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::vary::Vary;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
@@ -1271,6 +1272,18 @@ impl Response {
       return Ok(None);
     }
     CdnCacheControl::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Surrogate-Control` response metadata without applying CDN
+  /// cache policy or translating directives into `Cache-Control`.
+  pub fn surrogate_control(&self) -> error::Result<Option<SurrogateControl>> {
+    let values = self.header_values("surrogate-control");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SurrogateControl::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
