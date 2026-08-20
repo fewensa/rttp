@@ -562,6 +562,22 @@ oversized values are rejected.
 These helpers only declare and parse metadata. RTTP does not prerender
 documents, admit fenced frames, change navigation, or alter resource loading.
 
+## Speculation-Rules response metadata
+
+`HttpResponse::with_speculation_rules(value)` validates a declared opaque
+`Speculation-Rules` value through the shared protocol parser and replaces any
+existing raw `Speculation-Rules` fields with one field.
+`HttpResponse::speculation_rules()` parses attached raw fields into
+`HttpSpeculationRules`, returning `Ok(None)` when absent and parser errors
+without changing raw fields.
+Values are bounded to 64 KiB, duplicate fields fail closed, and control bytes
+that could inject response fields are rejected. Typed `Debug` and typed parse
+errors do not dump the field value.
+
+These helpers only declare and parse metadata. RTTP does not fetch, parse,
+validate, or execute speculation rule resources, and it does not prefetch,
+prerender, change navigation, or alter cache behavior based on this field.
+
 ## Want-Content-Digest request metadata
 
 Handlers can call `Request::want_content_digest()` and

@@ -18,11 +18,11 @@ use rttp_client::response::{
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
   ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  SupportsLoadingMode, SupportsLoadingModeParseError, Trailer, TransferEncoding,
-  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest,
-  WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  SignatureParseError, SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
+  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -181,6 +181,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     OriginTrials::parse_values(["token-one", "token-two"]).expect("Origin-Trial should parse");
   let _: OriginTrialParseError = OriginTrials::parse("token\r\nX-Injected: 1")
     .expect_err("injected Origin-Trial should be rejected");
+  let speculation_rules = SpeculationRules::parse("https://example.test/speculation-rules.json")
+    .expect("Speculation-Rules should parse");
+  let _: SpeculationRulesParseError =
+    SpeculationRules::parse("https://example.test/rules.json\r\nX-Injected: 1")
+      .expect_err("injected Speculation-Rules should be rejected");
   let content_range = ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
   let _: ContentRangeParseError =
     ContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
@@ -379,6 +384,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
   assert!(!format!("{origin_trials:?}").contains("token-one"));
+  assert_eq!(
+    speculation_rules.header_value(),
+    "https://example.test/speculation-rules.json"
+  );
+  assert!(!format!("{speculation_rules:?}").contains("speculation-rules.json"));
   assert_eq!(
     ContentRange::Bytes {
       start: 3,
@@ -974,6 +984,59 @@ fn response_facade_parses_origin_trial_metadata() {
     Some(&oversized),
     oversized_response.header_value("Origin-Trial")
   );
+}
+
+#[test]
+fn response_facade_parses_speculation_rules_metadata() {
+  let value = "https://example.test/speculation-rules.json";
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    format!("HTTP/1.1 200 OK\r\nSpeculation-Rules: {value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+  let rules = response
+    .speculation_rules()
+    .expect("Speculation-Rules should parse")
+    .expect("Speculation-Rules should be present");
+
+  assert_eq!(rules.as_str(), value);
+  assert_eq!(rules.header_value(), value);
+  assert_eq!(
+    Some(&value.to_string()),
+    response.header_value("Speculation-Rules")
+  );
+  assert!(!format!("{rules:?}").contains(value));
+  let headers_debug = format!("{:?}", response.headers());
+  assert!(headers_debug.contains("[REDACTED]"));
+  assert!(!headers_debug.contains(value));
+  let response_debug = format!("{response:?}");
+  assert!(response_debug.contains("[REDACTED]"));
+  assert!(!response_debug.contains(value));
+
+  let duplicate = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Speculation-Rules: https://example.test/one.json\r\n",
+      "speculation-rules: https://example.test/two.json\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("duplicate raw response should remain usable");
+  assert!(duplicate.speculation_rules().is_err());
+
+  let absent = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  assert!(absent
+    .speculation_rules()
+    .expect("missing Speculation-Rules should be accepted")
+    .is_none());
 }
 
 #[test]

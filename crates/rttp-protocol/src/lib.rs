@@ -96,6 +96,7 @@ pub mod server_timing;
 pub mod service_worker_allowed;
 pub mod signature;
 pub mod signature_input;
+pub mod speculation_rules;
 pub mod strict_transport_security;
 pub mod sunset;
 pub mod supports_loading_mode;
