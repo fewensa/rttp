@@ -109,6 +109,10 @@ pub use rttp_protocol::digest::{
 pub use rttp_protocol::document_policy::{
   DocumentPolicy, DocumentPolicyDirective, DocumentPolicyParseError, DocumentPolicyValue,
 };
+pub use rttp_protocol::document_policy_report_only::{
+  DocumentPolicyReportOnly, DocumentPolicyReportOnlyDirective, DocumentPolicyReportOnlyParseError,
+  DocumentPolicyReportOnlyValue,
+};
 pub use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::link::{LinkParameter, LinkParseError, LinkValue, LinkValues};
@@ -161,6 +165,7 @@ pub use rttp_protocol::signature_input::{
 pub use rttp_protocol::signature_input::{
   SignatureInputBareItem, SignatureInputComponent, SignatureInputEntry, SignatureInputParameter,
 };
+pub use rttp_protocol::speculation_rules::{SpeculationRules, SpeculationRulesParseError};
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity, StrictTransportSecurityParseError,
 };

@@ -959,6 +959,11 @@ parameters, and bound violations are errors. The parser reports declared metadat
 execute configuration points, block document loads, compare required
 policies, echo `Sec-Required-Document-Policy`, or send reports.
 
+`document_policy_report_only` parses `Document-Policy-Report-Only` with the
+same directive model, parser, formatter, and bounds while exposing distinct
+report-only types and parse errors. It is also metadata-only: it does not
+enforce policy or deliver reports.
+
 ## Supports-Loading-Mode
 
 `supports_loading_mode` parses bounded `Supports-Loading-Mode` response
@@ -975,6 +980,15 @@ case-insensitive comparison. Empty members, strings, integers, inner lists,
 parameterized items, non-token members, and oversized values are rejected.
 The parser reports declared metadata only: it does not prerender documents,
 admit fenced frames, change navigation, or alter resource loading.
+
+## Speculation-Rules
+
+`speculation_rules` preserves one bounded `Speculation-Rules` response field
+value as opaque metadata. The value is limited to 64 KiB, duplicate fields are
+rejected, and control bytes that could inject response fields are rejected.
+Typed `Debug` reports only the byte length, and parse errors do not echo the
+field value. The parser does not fetch, parse, validate, or execute
+speculation rule resources.
 
 ## Pragma
 

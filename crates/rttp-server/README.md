@@ -534,6 +534,14 @@ These helpers only declare and parse metadata. RTTP does not execute
 configuration points, block document loads, compare required policies, echo
 `Sec-Required-Document-Policy`, or send reports.
 
+`HttpResponse::with_document_policy_report_only(value)` validates and
+canonicalizes `Document-Policy-Report-Only` through the same shared protocol
+parser, formatter, directive model, and bounds while
+`HttpResponse::document_policy_report_only()` returns distinct
+`HttpDocumentPolicyReportOnly` metadata. The helpers replace raw duplicate
+report-only fields on declaration, preserve raw fields on parse errors, and
+do not enforce policy or deliver reports.
+
 ## Supports-Loading-Mode response metadata
 
 `HttpResponse::with_supports_loading_mode(tokens)` validates a declared token
@@ -553,6 +561,22 @@ oversized values are rejected.
 
 These helpers only declare and parse metadata. RTTP does not prerender
 documents, admit fenced frames, change navigation, or alter resource loading.
+
+## Speculation-Rules response metadata
+
+`HttpResponse::with_speculation_rules(value)` validates a declared opaque
+`Speculation-Rules` value through the shared protocol parser and replaces any
+existing raw `Speculation-Rules` fields with one field.
+`HttpResponse::speculation_rules()` parses attached raw fields into
+`HttpSpeculationRules`, returning `Ok(None)` when absent and parser errors
+without changing raw fields.
+Values are bounded to 64 KiB, duplicate fields fail closed, and control bytes
+that could inject response fields are rejected. Typed `Debug` and typed parse
+errors do not dump the field value.
+
+These helpers only declare and parse metadata. RTTP does not fetch, parse,
+validate, or execute speculation rule resources, and it does not prefetch,
+prerender, change navigation, or alter cache behavior based on this field.
 
 ## Want-Content-Digest request metadata
 

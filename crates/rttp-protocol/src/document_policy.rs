@@ -101,6 +101,23 @@ impl fmt::Display for DocumentPolicyParseError {
 
 impl Error for DocumentPolicyParseError {}
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DocumentPolicyCoreParseError {
+  message: String,
+}
+
+impl DocumentPolicyCoreParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+
+  pub(crate) fn message(&self) -> &str {
+    &self.message
+  }
+}
+
 impl DocumentPolicy {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, DocumentPolicyParseError> {
     Self::parse_values([value.as_ref()])
@@ -110,28 +127,9 @@ impl DocumentPolicy {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let mut directives = Vec::new();
-    let mut total_bytes = 0usize;
-    for value in values {
-      if value.len() > MAX_DOCUMENT_POLICY_VALUE_BYTES {
-        return Err(DocumentPolicyParseError::new(
-          "Document-Policy header value is too large",
-        ));
-      }
-      total_bytes = total_bytes.saturating_add(value.len());
-      if total_bytes > MAX_DOCUMENT_POLICY_TOTAL_BYTES {
-        return Err(DocumentPolicyParseError::new(
-          "Document-Policy dictionary is too large",
-        ));
-      }
-      parse_field(value, &mut directives)?;
-    }
-    if directives.is_empty() {
-      return Err(DocumentPolicyParseError::new(
-        "Document-Policy field must contain a directive",
-      ));
-    }
-    Ok(Self { directives })
+    parse_document_policy_values("Document-Policy", values)
+      .map(|directives| Self { directives })
+      .map_err(|error| DocumentPolicyParseError::new(error.message))
   }
 
   pub fn directives(&self) -> &[DocumentPolicyDirective] {
@@ -154,13 +152,47 @@ impl DocumentPolicy {
   }
 
   pub fn header_value(&self) -> String {
-    self
-      .directives
-      .iter()
-      .map(DocumentPolicyDirective::header_value)
-      .collect::<Vec<_>>()
-      .join(", ")
+    format_document_policy_directives(&self.directives)
   }
+}
+
+pub(crate) fn parse_document_policy_values<'a, I>(
+  header_name: &'static str,
+  values: I,
+) -> Result<Vec<DocumentPolicyDirective>, DocumentPolicyCoreParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut directives = Vec::new();
+  let mut total_bytes = 0usize;
+  for value in values {
+    if value.len() > MAX_DOCUMENT_POLICY_VALUE_BYTES {
+      return Err(DocumentPolicyCoreParseError::new(format!(
+        "{header_name} header value is too large"
+      )));
+    }
+    total_bytes = total_bytes.saturating_add(value.len());
+    if total_bytes > MAX_DOCUMENT_POLICY_TOTAL_BYTES {
+      return Err(DocumentPolicyCoreParseError::new(format!(
+        "{header_name} dictionary is too large"
+      )));
+    }
+    parse_field(header_name, value, &mut directives)?;
+  }
+  if directives.is_empty() {
+    return Err(DocumentPolicyCoreParseError::new(format!(
+      "{header_name} field must contain a directive"
+    )));
+  }
+  Ok(directives)
+}
+
+pub(crate) fn format_document_policy_directives(directives: &[DocumentPolicyDirective]) -> String {
+  directives
+    .iter()
+    .map(DocumentPolicyDirective::header_value)
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 impl DocumentPolicyDirective {
@@ -210,41 +242,42 @@ impl DocumentPolicyReportTo {
 }
 
 fn parse_field(
+  header_name: &'static str,
   value: &str,
   directives: &mut Vec<DocumentPolicyDirective>,
-) -> Result<(), DocumentPolicyParseError> {
+) -> Result<(), DocumentPolicyCoreParseError> {
   let dictionary = Parser::new(value)
     .parse::<Dictionary>()
-    .map_err(|_| invalid_member())?;
+    .map_err(|_| invalid_member(header_name))?;
   if dictionary.is_empty() {
-    return Err(DocumentPolicyParseError::new(
-      "Document-Policy field must contain a directive",
-    ));
+    return Err(DocumentPolicyCoreParseError::new(format!(
+      "{header_name} field must contain a directive"
+    )));
   }
   if top_level_member_count(value) != dictionary.len() {
-    return Err(DocumentPolicyParseError::new(
-      "duplicate Document-Policy directive name",
-    ));
+    return Err(DocumentPolicyCoreParseError::new(format!(
+      "duplicate {header_name} directive name"
+    )));
   }
-  reject_duplicate_parameters(value)?;
+  reject_duplicate_parameters(header_name, value)?;
 
   for (key, member) in dictionary {
     let name = key.as_str().to_owned();
     if directives.iter().any(|directive| directive.name == name) {
-      return Err(DocumentPolicyParseError::new(
-        "duplicate Document-Policy directive name",
-      ));
+      return Err(DocumentPolicyCoreParseError::new(format!(
+        "duplicate {header_name} directive name"
+      )));
     }
     if directives.len() >= MAX_DOCUMENT_POLICY_DIRECTIVES {
-      return Err(DocumentPolicyParseError::new(
-        "too many Document-Policy directives",
-      ));
+      return Err(DocumentPolicyCoreParseError::new(format!(
+        "too many {header_name} directives"
+      )));
     }
     let ListEntry::Item(item) = member else {
-      return Err(invalid_member());
+      return Err(invalid_member(header_name));
     };
-    let value = parse_value(item.bare_item)?;
-    let report_to = parse_report_to(&item.params)?;
+    let value = parse_value(header_name, item.bare_item)?;
+    let report_to = parse_report_to(header_name, &item.params)?;
     directives.push(DocumentPolicyDirective {
       name,
       value,
@@ -254,34 +287,41 @@ fn parse_field(
   Ok(())
 }
 
-fn parse_value(bare_item: BareItem) -> Result<DocumentPolicyValue, DocumentPolicyParseError> {
+fn parse_value(
+  header_name: &'static str,
+  bare_item: BareItem,
+) -> Result<DocumentPolicyValue, DocumentPolicyCoreParseError> {
   match bare_item {
     BareItem::Boolean(value) => Ok(DocumentPolicyValue::Boolean(value)),
     BareItem::Integer(value) => Ok(DocumentPolicyValue::Integer(i64::from(value))),
     BareItem::Decimal(value) => Ok(DocumentPolicyValue::Decimal(value.to_string())),
     BareItem::Token(value) => Ok(DocumentPolicyValue::Token(value.as_str().to_owned())),
-    _ => Err(invalid_member()),
+    _ => Err(invalid_member(header_name)),
   }
 }
 
 fn parse_report_to(
+  header_name: &'static str,
   params: &sfv::Parameters,
-) -> Result<Option<DocumentPolicyReportTo>, DocumentPolicyParseError> {
+) -> Result<Option<DocumentPolicyReportTo>, DocumentPolicyCoreParseError> {
   let mut report_to = None;
   for (name, value) in params {
     if name.as_str() != "report-to" {
-      return Err(invalid_member());
+      return Err(invalid_member(header_name));
     }
     report_to = Some(match value {
       BareItem::Token(token) => DocumentPolicyReportTo::Token(token.as_str().to_owned()),
       BareItem::String(string) => DocumentPolicyReportTo::String(string.as_str().to_owned()),
-      _ => return Err(invalid_member()),
+      _ => return Err(invalid_member(header_name)),
     });
   }
   Ok(report_to)
 }
 
-fn reject_duplicate_parameters(value: &str) -> Result<(), DocumentPolicyParseError> {
+fn reject_duplicate_parameters(
+  header_name: &'static str,
+  value: &str,
+) -> Result<(), DocumentPolicyCoreParseError> {
   let bytes = value.as_bytes();
   let mut index = 0usize;
   while index < bytes.len() {
@@ -295,13 +335,13 @@ fn reject_duplicate_parameters(value: &str) -> Result<(), DocumentPolicyParseErr
         index += 1;
       }
       if start == index {
-        return Err(invalid_member());
+        return Err(invalid_member(header_name));
       }
       let name = &value[start..index];
       if seen.contains(&name) {
-        return Err(DocumentPolicyParseError::new(
-          "duplicate Document-Policy parameter",
-        ));
+        return Err(DocumentPolicyCoreParseError::new(format!(
+          "duplicate {header_name} parameter"
+        )));
       }
       seen.push(name);
       skip_sp(bytes, &mut index);
@@ -398,6 +438,6 @@ fn escape_sf_string(value: &str) -> String {
   escaped
 }
 
-fn invalid_member() -> DocumentPolicyParseError {
-  DocumentPolicyParseError::new("invalid Document-Policy dictionary member")
+fn invalid_member(header_name: &'static str) -> DocumentPolicyCoreParseError {
+  DocumentPolicyCoreParseError::new(format!("invalid {header_name} dictionary member"))
 }

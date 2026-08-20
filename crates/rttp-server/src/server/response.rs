@@ -102,6 +102,12 @@ pub use rttp_protocol::document_policy::{
   DocumentPolicyParseError as HttpDocumentPolicyParseError,
   DocumentPolicyValue as HttpDocumentPolicyValue,
 };
+pub use rttp_protocol::document_policy_report_only::{
+  DocumentPolicyReportOnly as HttpDocumentPolicyReportOnly,
+  DocumentPolicyReportOnlyDirective as HttpDocumentPolicyReportOnlyDirective,
+  DocumentPolicyReportOnlyParseError as HttpDocumentPolicyReportOnlyParseError,
+  DocumentPolicyReportOnlyValue as HttpDocumentPolicyReportOnlyValue,
+};
 pub use rttp_protocol::keep_alive::{
   KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
   KeepAliveParseError as HttpKeepAliveParseError,
@@ -165,6 +171,10 @@ pub use rttp_protocol::service_worker_allowed::{
 };
 pub use rttp_protocol::signature_input::{
   SignatureInput as HttpSignatureInput, SignatureInputParseError as HttpSignatureInputParseError,
+};
+pub use rttp_protocol::speculation_rules::{
+  SpeculationRules as HttpSpeculationRules,
+  SpeculationRulesParseError as HttpSpeculationRulesParseError,
 };
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity as HttpStrictTransportSecurity,
@@ -1188,6 +1198,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces opaque `Speculation-Rules` response metadata
+  /// without fetching, parsing, or executing speculation rule resources.
+  pub fn with_speculation_rules(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSpeculationRulesParseError> {
+    let rules = HttpSpeculationRules::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Speculation-Rules"));
+    self
+      .headers
+      .push(HttpHeader::new("Speculation-Rules", rules.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Cross-Origin-Embedder-Policy` response metadata
   /// without applying embedder policy.
   pub fn with_cross_origin_embedder_policy(
@@ -1366,6 +1392,17 @@ impl HttpResponse {
   ) -> Result<Self, HttpDocumentPolicyParseError> {
     let policy = HttpDocumentPolicy::parse(value)?;
     self.set_browser_policy_header("Document-Policy", &policy.header_value());
+    Ok(self)
+  }
+
+  /// Validates and replaces `Document-Policy-Report-Only` metadata without
+  /// enforcing document policy or sending reports.
+  pub fn with_document_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpDocumentPolicyReportOnlyParseError> {
+    let policy = HttpDocumentPolicyReportOnly::parse(value)?;
+    self.set_browser_policy_header("Document-Policy-Report-Only", &policy.header_value());
     Ok(self)
   }
 
@@ -2441,6 +2478,27 @@ impl HttpResponse {
     HttpDocumentPolicy::parse_values(values).map(Some)
   }
 
+  /// Returns attached `Document-Policy-Report-Only` metadata without enforcing
+  /// document policy or sending reports.
+  pub fn document_policy_report_only(
+    &self,
+  ) -> Result<Option<HttpDocumentPolicyReportOnly>, HttpDocumentPolicyReportOnlyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Document-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDocumentPolicyReportOnly::parse_values(values).map(Some)
+  }
+
   /// Returns attached `Permissions-Policy` metadata without enforcing browser
   /// permissions or origin policy.
   pub fn permissions_policy(
@@ -2747,6 +2805,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpNel::parse_values(values).map(Some)
+  }
+
+  /// Parses attached opaque `Speculation-Rules` metadata without fetching,
+  /// parsing, or executing speculation rule resources.
+  pub fn speculation_rules(
+    &self,
+  ) -> Result<Option<HttpSpeculationRules>, HttpSpeculationRulesParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Speculation-Rules"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSpeculationRules::parse_values(values).map(Some)
   }
 
   /// Parses attached `Keep-Alive` metadata without changing connection lifetime.
@@ -4588,6 +4663,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("sec-websocket-key")
     || name.eq_ignore_ascii_case("set-cookie")
+    || name.eq_ignore_ascii_case("speculation-rules")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
     || name.eq_ignore_ascii_case("baggage")

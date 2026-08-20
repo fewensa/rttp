@@ -3,10 +3,11 @@ use rttp_client::response::{
   ContentLocation, ContentRange, ContentSecurityPolicy, ContentSecurityPolicyReportOnly,
   ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Deprecation, DocumentPolicy,
-  DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues,
-  Location, MementoDatetime, OriginTrials, PermissionsPolicy, ProxyAuthenticate,
-  ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken,
-  Response, RetryAfter, SecWebSocketVersion, ServerTiming, ServiceWorkerAllowed, SignatureInput,
+  DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag,
+  HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime,
+  OriginTrials, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
+  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter,
+  SecWebSocketVersion, ServerTiming, ServiceWorkerAllowed, SignatureInput, SpeculationRules,
   StrictTransportSecurity, SupportsLoadingMode, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
@@ -957,6 +958,125 @@ fn document_policy_metadata_is_absent_without_a_header() {
 }
 
 #[test]
+fn document_policy_report_only_metadata_parses_without_enforcing_or_reporting() {
+  let value = "oversized-images=2.0, unsized-media=?0, *;report-to=default";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nDocument-Policy-Report-Only: {value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .document_policy_report_only()
+    .expect("Document-Policy-Report-Only should parse")
+    .expect("Document-Policy-Report-Only should be present");
+
+  assert_eq!(metadata.directives().len(), 3);
+  assert_eq!(
+    metadata.directive("oversized-images").unwrap().value(),
+    &DocumentPolicyReportOnlyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(
+    metadata.directive("*").unwrap().report_to(),
+    Some("default")
+  );
+  assert_eq!(metadata.header_value(), value);
+  assert_eq!(
+    response.header_value("Document-Policy-Report-Only"),
+    Some(&value.to_string())
+  );
+}
+
+#[test]
+fn document_policy_report_only_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in [
+    "",
+    "=()",
+    "=1.2345",
+    "unsized-media=src;foo=bar",
+    "oversized-images=1;report-to=first;report-to=second",
+    "oversized-images=1.0, oversized-images=2.0",
+    "UnSized-Media=?0",
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!(
+        "HTTP/1.1 200 OK\r\nDocument-Policy-Report-Only: {value}\r\nContent-Length: 0\r\n\r\n"
+      )
+      .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.document_policy_report_only().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Document-Policy-Report-Only"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Document-Policy-Report-Only: oversized-images=1.0\r\n",
+      "Document-Policy-Report-Only: oversized-images=2.0\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.document_policy_report_only().is_err());
+  assert_eq!(
+    response.header_values("Document-Policy-Report-Only"),
+    [
+      &"oversized-images=1.0".to_string(),
+      &"oversized-images=2.0".to_string()
+    ]
+  );
+}
+
+#[test]
+fn document_policy_report_only_metadata_rejects_oversized_values_and_absent_headers() {
+  let oversized = format!("x={}", "a".repeat(64 * 1024));
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nDocument-Policy-Report-Only: {oversized}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert!(response.document_policy_report_only().is_err());
+  assert_eq!(
+    response.header_value("Document-Policy-Report-Only"),
+    Some(&oversized)
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    absent
+      .document_policy_report_only()
+      .expect("header is absent"),
+    None
+  );
+  let _: Option<DocumentPolicyReportOnly> = absent
+    .document_policy_report_only()
+    .expect("header is absent");
+}
+
+#[test]
 fn supports_loading_mode_metadata_parses_tokens_without_applying_loading_policy() {
   let value = "fenced-frame, credentialed-prerender";
   let response = Response::new(
@@ -1555,6 +1675,85 @@ fn test_parse_reporting_endpoints_escaped_duplicate_and_bounded_metadata() {
     Some(&excessive_value),
     excessive.header_value("Reporting-Endpoints")
   );
+}
+
+#[test]
+fn test_parse_speculation_rules_response_metadata_preserves_singleton_value() {
+  let value = "https://example.test/speculation-rules.json";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nSpeculation-Rules: {value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+  let rules = response
+    .speculation_rules()
+    .expect("Speculation-Rules metadata should parse")
+    .expect("Speculation-Rules should be present");
+
+  assert_eq!(rules.as_str(), value);
+  assert_eq!(
+    rules,
+    SpeculationRules::parse(value).expect("canonical Speculation-Rules should parse")
+  );
+  assert_eq!(
+    Some(&value.to_string()),
+    response.header_value("Speculation-Rules")
+  );
+  assert!(!format!("{rules:?}").contains(value));
+  let headers_debug = format!("{:?}", response.headers());
+  assert!(headers_debug.contains("[REDACTED]"));
+  assert!(!headers_debug.contains(value));
+  let response_debug = format!("{response:?}");
+  assert!(response_debug.contains("[REDACTED]"));
+  assert!(!response_debug.contains(value));
+}
+
+#[test]
+fn test_parse_speculation_rules_rejects_duplicate_and_unsafe_values_without_hiding_headers() {
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Speculation-Rules: https://example.test/one.json\r\n",
+      "speculation-rules: https://example.test/two.json\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response should remain inspectable");
+  assert!(duplicate.speculation_rules().is_err());
+  assert_eq!(
+    vec![
+      "https://example.test/one.json",
+      "https://example.test/two.json"
+    ],
+    duplicate
+      .header_values("Speculation-Rules")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+
+  let oversized_value = "x".repeat(64 * 1024 + 1);
+  let oversized = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nSpeculation-Rules: {oversized_value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("raw response should remain inspectable");
+  assert!(oversized.speculation_rules().is_err());
+  assert_eq!(
+    Some(&oversized_value),
+    oversized.header_value("Speculation-Rules")
+  );
+  let headers_debug = format!("{:?}", oversized.headers());
+  assert!(headers_debug.contains("[REDACTED]"));
+  assert!(!headers_debug.contains(&oversized_value));
+  let response_debug = format!("{oversized:?}");
+  assert!(response_debug.contains("[REDACTED]"));
+  assert!(!response_debug.contains(&oversized_value));
 }
 
 #[test]

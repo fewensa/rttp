@@ -20,6 +20,7 @@ fn package_includes_client_test_files() {
   for expected in [
     "tests/test_http_basic.rs",
     "tests/test_http_async.rs",
+    "tests/test_response.rs",
     "tests/test_rustls.rs",
     "tests/test_raw_request_capture.rs",
     "tests/metadata_facade.rs",
