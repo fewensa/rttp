@@ -79,11 +79,19 @@ base64 encoding of exactly 16 nonce bytes, trims HTTP OWS, and rejects empty,
 interior-whitespace, non-base64, URL-safe or unpadded, wrong-decoded-length,
 control-byte (including CR/LF/NUL and obs-text), duplicate, and oversized
 values before a socket is opened. It validates and emits the trimmed encoded
-nonce unchanged: RTTP does not perform an HTTP upgrade, compute
-`Sec-WebSocket-Accept`, generate a random nonce, or implement WebSocket
-frames. The nonce is redacted from typed `Debug` and builder error text.
+nonce unchanged: RTTP does not perform an HTTP upgrade, generate a random
+nonce, or implement WebSocket frames. The nonce is redacted from typed
+`Debug` and builder error text.
 Callers needing an unusual value can retain full raw-header control with
 `header(("Sec-WebSocket-Key", "..."))`.
+
+Responses expose `Response::sec_websocket_accept()` to parse one bounded
+`Sec-WebSocket-Accept` response field and
+`Response::verify_sec_websocket_accept(&key)` to compare it against the RFC
+6455 GUID plus SHA-1 and base64 derivation from a validated
+`SecWebSocketKey`. The RFC example key `dGhlIHNhbXBsZSBub25jZQ==` verifies
+against `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`. Accept values are redacted from typed
+`Debug`, and parse errors do not include key or accept material.
 
 ## Bounded Sec-WebSocket-Version metadata
 
@@ -148,6 +156,27 @@ members, and bound violations are rejected before connecting.
 The helper only declares forwarding metadata: RTTP does not insert a local CDN
 identifier, append the field on every outbound request, reject requests
 because an identifier is already present, or treat `CDN-Loop` as hop-by-hop.
+
+## Bounded X-Forwarded compatibility metadata
+
+`HttpClient::x_forwarded_for(value)`, `x_forwarded_host(value)`, and
+`x_forwarded_proto(value)` validate and emit bounded `X-Forwarded-For`,
+`X-Forwarded-Host`, and `X-Forwarded-Proto` request metadata through the
+shared protocol types. Repeated helper calls combine existing same-name fields
+with the new values in wire order before a socket is opened.
+
+`X-Forwarded-For` accepts ordered IP node values and `unknown`,
+`X-Forwarded-Host` accepts ordered host authorities, and `X-Forwarded-Proto`
+accepts ordered URI scheme tokens. Each field family is bounded to 64 KiB per
+field value, 64 KiB for the combined raw field set including `", "` separator
+overhead, 64 KiB for serialized output, and 256 members. Malformed values,
+empty members, control-byte injection, and bound violations are rejected
+before connecting.
+
+These helpers only emit caller-supplied compatibility metadata. RTTP does not
+trust, rewrite, or enforce forwarded identity, select a client address, change
+routing, redirect, upgrade, or choose a trusted proxy set. Applications that
+use these fields must choose and enforce their own trusted proxies.
 
 ## Bounded HTTP/1.1 byte ranges
 
@@ -1243,7 +1272,7 @@ header-block model.
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Depth | `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, normalizing `infinity` to lowercase and replacing an existing same-name field | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
-| Sec-WebSocket-Key | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output | No HTTP upgrade, `Sec-WebSocket-Accept` computation, random nonce generation, WebSocket frames, or handshake policy |
+| WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_version` parses received fields including rejection-response version lists | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `traceparent` and `tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types, replacing existing same-name fields and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |

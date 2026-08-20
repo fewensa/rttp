@@ -2050,6 +2050,122 @@ fn cdn_loop_helper_rejects_malformed_or_excessive_metadata_before_connecting() {
 }
 
 #[test]
+fn x_forwarded_helpers_emit_bounded_compatibility_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .x_forwarded_for("192.0.2.60, unknown")
+      .expect("first X-Forwarded-For value should be accepted")
+      .x_forwarded_for("[2001:db8:cafe::17]")
+      .expect("second X-Forwarded-For value should be accepted")
+      .x_forwarded_host("example.test:443")
+      .expect("first X-Forwarded-Host value should be accepted")
+      .x_forwarded_host("[2001:db8::1]:8443")
+      .expect("second X-Forwarded-Host value should be accepted")
+      .x_forwarded_proto("https")
+      .expect("first X-Forwarded-Proto value should be accepted")
+      .x_forwarded_proto("http")
+      .expect("second X-Forwarded-Proto value should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("192.0.2.60, unknown, [2001:db8:cafe::17]"),
+    header_value(&request, "X-Forwarded-For")
+  );
+  assert_eq!(
+    Some("example.test:443, [2001:db8::1]:8443"),
+    header_value(&request, "X-Forwarded-Host")
+  );
+  assert_eq!(
+    Some("https, http"),
+    header_value(&request, "X-Forwarded-Proto")
+  );
+}
+
+#[test]
+fn x_forwarded_helpers_reject_malformed_or_excessive_metadata_before_connecting() {
+  for (name, value) in [
+    ("X-Forwarded-For", "client.example"),
+    ("X-Forwarded-For", "192.0.2.60\r\nX-Injected: 1"),
+    ("X-Forwarded-Host", "https://example.test"),
+    ("X-Forwarded-Host", "example.test\r\nX-Injected: 1"),
+    ("X-Forwarded-Proto", "https://"),
+    ("X-Forwarded-Proto", "https\r\nX-Injected: 1"),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = match name {
+        "X-Forwarded-For" => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_for(value)
+          .expect_err("invalid X-Forwarded-For metadata should be rejected"),
+        "X-Forwarded-Host" => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_host(value)
+          .expect_err("invalid X-Forwarded-Host metadata should be rejected"),
+        _ => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_proto(value)
+          .expect_err("invalid X-Forwarded-Proto metadata should be rejected"),
+      };
+      assert!(error.is_builder());
+    });
+    assert!(request.is_empty(), "invalid {name} must not open a socket");
+  }
+
+  let too_many_for = (0..257)
+    .map(|index| format!("192.0.2.{}", index % 255))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let too_many_host = (0..257)
+    .map(|index| format!("h{index}.example"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let too_many_proto = (0..257)
+    .map(|index| format!("s{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  for (name, value) in [
+    ("X-Forwarded-For", too_many_for.as_str()),
+    ("X-Forwarded-Host", too_many_host.as_str()),
+    ("X-Forwarded-Proto", too_many_proto.as_str()),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = match name {
+        "X-Forwarded-For" => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_for(value)
+          .expect_err("excessive X-Forwarded-For metadata should be rejected"),
+        "X-Forwarded-Host" => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_host(value)
+          .expect_err("excessive X-Forwarded-Host metadata should be rejected"),
+        _ => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_proto(value)
+          .expect_err("excessive X-Forwarded-Proto metadata should be rejected"),
+      };
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "excessive {name} must not open a socket"
+    );
+  }
+}
+
+#[test]
 fn manual_range_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

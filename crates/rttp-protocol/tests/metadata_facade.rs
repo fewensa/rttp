@@ -62,6 +62,7 @@ use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
+use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
@@ -79,6 +80,9 @@ use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
 use rttp_protocol::warning::Warning;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
+use rttp_protocol::x_forwarded_for::{XForwardedFor, XForwardedForParseError};
+use rttp_protocol::x_forwarded_host::{XForwardedHost, XForwardedHostParseError};
+use rttp_protocol::x_forwarded_proto::{XForwardedProto, XForwardedProtoParseError};
 use rttp_protocol::x_frame_options::XFrameOptions;
 
 #[test]
@@ -121,6 +125,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("Sec-WebSocket-Key request metadata should parse");
   let sec_websocket_version =
     SecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version metadata should parse");
+  let sec_websocket_accept = SecWebSocketAccept::derive_from_key(&sec_websocket_key);
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
   let if_unmodified_since = IfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
@@ -213,6 +218,17 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("CDN-Loop request metadata should parse");
   let _: CdnLoopParseError =
     CdnLoop::parse("cdn; trace").expect_err("valueless CDN-Loop parameter should be rejected");
+  let x_forwarded_for =
+    XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
+  let _: XForwardedForParseError =
+    XForwardedFor::parse("client.example").expect_err("invalid X-Forwarded-For should fail");
+  let x_forwarded_host =
+    XForwardedHost::parse("example.test:443").expect("X-Forwarded-Host should parse");
+  let _: XForwardedHostParseError = XForwardedHost::parse("https://example.test")
+    .expect_err("invalid X-Forwarded-Host should fail");
+  let x_forwarded_proto = XForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
+  let _: XForwardedProtoParseError =
+    XForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
   let accept_charset =
     AcceptCharset::parse("utf-8, iso-8859-1;q=0.5, *;q=0").expect("Accept-Charset should parse");
   let accept_encoding =
@@ -326,6 +342,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_websocket_version.versions(), ["13"]);
   assert!(sec_websocket_version.contains("13"));
   assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(
+    sec_websocket_accept.as_str(),
+    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+  );
+  assert!(sec_websocket_accept.verify_key(&sec_websocket_key));
+  assert!(!format!("{sec_websocket_accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -444,6 +466,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
   assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
+  assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
+  assert!(x_forwarded_for.nodes()[1].is_unknown());
+  assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
+  assert_eq!(Some("443"), x_forwarded_host.hosts()[0].port());
+  assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
   assert_eq!(accept_charset.charsets()[0].charset(), "utf-8");
   assert_eq!(accept_charset.charsets()[0].quality(), 1000);
   assert_eq!(accept_charset.charsets()[1].charset(), "iso-8859-1");

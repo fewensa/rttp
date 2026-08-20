@@ -734,9 +734,16 @@ or control-byte values return a parser error while `Request::header()` and
 `HttpRequest::header()` continue to expose the original raw field. The nonce
 is redacted from typed `Debug`.
 
-These helpers parse request metadata only. They do not perform an HTTP
-upgrade, compute `Sec-WebSocket-Accept`, generate a random nonce, or
-implement WebSocket frames.
+`HttpResponse::with_sec_websocket_accept(value)` validates and replaces one
+bounded `Sec-WebSocket-Accept` response field. `with_sec_websocket_accept_for_key()`
+derives the RFC 6455 value from a validated `HttpSecWebSocketKey` using the
+standard GUID plus SHA-1 and base64 transform, and
+`HttpResponse::sec_websocket_accept()` parses attached response metadata for
+inspection. The derived value for the RFC example key
+`dGhlIHNhbXBsZSBub25jZQ==` is `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`.
+
+These helpers parse and emit handshake metadata only. They do not perform an
+HTTP upgrade, generate a random nonce, or implement WebSocket frames.
 
 ## Sec-WebSocket-Version request and response metadata
 
@@ -833,6 +840,27 @@ wire order, and repeated CDN identifiers are valid loop-visible metadata.
 These helpers expose loop metadata only; they do not detect or break loops,
 reject requests because an identifier is already present, or forward the
 field automatically.
+
+## X-Forwarded compatibility metadata
+
+Handlers can call `Request::x_forwarded_for()`, `x_forwarded_host()`, and
+`x_forwarded_proto()` plus the matching `HttpRequest` helpers to observe
+bounded compatibility forwarding metadata through shared protocol types.
+Absent fields return `Ok(None)`. Malformed, oversized, empty-member, or
+over-limit values return parser errors while raw request headers remain
+available.
+
+`HttpXForwardedFor` preserves ordered IP node values and `unknown`;
+`HttpXForwardedHost` preserves ordered host authorities; and
+`HttpXForwardedProto` preserves ordered URI scheme tokens. Each field family
+is bounded to 64 KiB per field value, 64 KiB for the combined raw field set
+including `", "` separator overhead, 64 KiB for serialized output, and 256
+members. Repeated fields are combined in wire order.
+
+These helpers expose compatibility metadata only. RTTP does not trust,
+rewrite, or enforce forwarded identity, select a client address, change
+routing, redirect, upgrade, or choose a trusted proxy set. Applications that
+use these fields must choose and enforce their own trusted proxies.
 
 ## Conditional HTTP-date request metadata
 

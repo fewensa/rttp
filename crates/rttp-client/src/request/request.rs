@@ -90,6 +90,7 @@ fn raw_request_has_sensitive_header(raw: &str) -> bool {
     };
     is_sensitive_redirect_header(name.trim())
       || name.trim().eq_ignore_ascii_case("set-cookie")
+      || name.trim().eq_ignore_ascii_case("sec-websocket-accept")
       || name.trim().eq_ignore_ascii_case("sec-websocket-key")
   })
 }

@@ -156,6 +156,10 @@ pub use rttp_protocol::reporting_endpoints::{
   ReportingEndpoints as HttpReportingEndpoints,
   ReportingEndpointsParseError as HttpReportingEndpointsParseError,
 };
+pub use rttp_protocol::sec_websocket_accept::{
+  SecWebSocketAccept as HttpSecWebSocketAccept,
+  SecWebSocketAcceptParseError as HttpSecWebSocketAcceptParseError,
+};
 pub use rttp_protocol::sec_websocket_version::{
   SecWebSocketVersion as HttpSecWebSocketVersion,
   SecWebSocketVersionParseError as HttpSecWebSocketVersionParseError,
@@ -1060,6 +1064,41 @@ impl HttpResponse {
       .headers
       .push(HttpHeader::new("Upgrade", upgrade.header_value()));
     Ok(self)
+  }
+
+  /// Validates and replaces `Sec-WebSocket-Accept` response metadata without
+  /// performing an HTTP upgrade or adding WebSocket framing.
+  pub fn with_sec_websocket_accept<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpSecWebSocketAcceptParseError> {
+    let accept = HttpSecWebSocketAccept::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sec-WebSocket-Accept"));
+    self.headers.push(HttpHeader::new(
+      "Sec-WebSocket-Accept",
+      accept.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Derives and replaces `Sec-WebSocket-Accept` response metadata from a
+  /// validated request key. This does not perform an HTTP upgrade or implement
+  /// WebSocket frames.
+  pub fn with_sec_websocket_accept_for_key(
+    mut self,
+    key: &rttp_protocol::sec_websocket_key::SecWebSocketKey,
+  ) -> Self {
+    let accept = HttpSecWebSocketAccept::derive_from_key(key);
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sec-WebSocket-Accept"));
+    self.headers.push(HttpHeader::new(
+      "Sec-WebSocket-Accept",
+      accept.header_value(),
+    ));
+    self
   }
 
   pub fn with_allow<I, M>(mut self, methods: I) -> Result<Self, HttpAllowParseError>
@@ -2088,6 +2127,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpUpgrade::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Sec-WebSocket-Accept` response metadata without changing
+  /// socket handoff behavior or interpreting WebSocket frames.
+  pub fn sec_websocket_accept(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketAccept>, HttpSecWebSocketAcceptParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Accept"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketAccept::parse_values(values).map(Some)
   }
 
   /// Parses attached `Pragma` response metadata without applying cache or
@@ -4661,6 +4717,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("origin-trial")
     || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("sec-websocket-accept")
     || name.eq_ignore_ascii_case("sec-websocket-key")
     || name.eq_ignore_ascii_case("set-cookie")
     || name.eq_ignore_ascii_case("speculation-rules")

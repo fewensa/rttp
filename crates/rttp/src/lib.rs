@@ -28,19 +28,21 @@ pub use rttp_client::response::{
   NelParseError, NelUnknownMember, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
   OriginTrialParseError, OriginTrials, PermissionsPolicy, PermissionsPolicyAllowlist,
   PermissionsPolicyAllowlistMember, PermissionsPolicyDirective, PermissionsPolicyParseError,
-  Pragma, PragmaParseError, ReprDigest, SecWebSocketVersion, SecWebSocketVersionParseError,
-  ServiceWorkerAllowed, ServiceWorkerAllowedParseError, SpeculationRules,
-  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  SupportsLoadingMode, SupportsLoadingModeParseError, Upgrade, UpgradeParseError,
-  WantContentDigest, WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge,
-  WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  Pragma, PragmaParseError, ReprDigest, SecWebSocketAccept, SecWebSocketAcceptParseError,
+  SecWebSocketVersion, SecWebSocketVersionParseError, ServiceWorkerAllowed,
+  ServiceWorkerAllowedParseError, SpeculationRules, SpeculationRulesParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
+  SupportsLoadingModeParseError, Upgrade, UpgradeParseError, WantContentDigest, WantReprDigest,
+  WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, SecFetchDest,
   SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose, TraceParent, TraceParentParseError,
-  TraceState, TraceStateMember, TraceStateParseError,
+  TraceState, TraceStateMember, TraceStateParseError, XForwardedFor, XForwardedForNode,
+  XForwardedForNodeKind, XForwardedForParseError, XForwardedHost, XForwardedHostParseError,
+  XForwardedProto, XForwardedProtoParseError,
 };
 
 impl Http {
