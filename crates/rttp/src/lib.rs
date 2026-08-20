@@ -40,9 +40,9 @@ pub use rttp_client::response::{
 pub use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, SecFetchDest,
   SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose, TraceParent, TraceParentParseError,
-  TraceState, TraceStateMember, TraceStateParseError, XForwardedFor, XForwardedForNode,
-  XForwardedForNodeKind, XForwardedForParseError, XForwardedHost, XForwardedHostParseError,
-  XForwardedProto, XForwardedProtoParseError,
+  TraceState, TraceStateMember, TraceStateParseError, Via, ViaMember, ViaParseError, XForwardedFor,
+  XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError, XForwardedHost,
+  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 
 impl Http {

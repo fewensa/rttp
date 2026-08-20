@@ -30,6 +30,7 @@ use crate::response::SignatureInput;
 use crate::response::Trailer;
 use crate::response::TransferEncoding;
 use crate::response::Upgrade;
+use crate::response::Via;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
@@ -956,6 +957,18 @@ impl Response {
       return Ok(None);
     }
     ProxyAuthenticationInfo::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Via` fields as bounded hop-chain metadata without appending
+  /// or removing hops or applying proxy policy.
+  pub fn via(&self) -> error::Result<Option<Via>> {
+    let values = self.header_values("via");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Via::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

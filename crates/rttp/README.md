@@ -510,6 +510,24 @@ metadata only: RTTP does not detect or break loops, reject requests because an
 identifier is already present, insert a local CDN identifier, forward the
 field automatically, or treat `CDN-Loop` as hop-by-hop.
 
+## Bounded Via request and response metadata
+
+`HttpClient::via()` validates and emits bounded HTTP `Via` request metadata
+through the shared `rttp_protocol` `Via` type, combining any existing `Via`
+field with the new hops in wire order before a socket is opened.
+`Request::via()` / `HttpRequest::via()` parse received fields into `HttpVia`,
+returning `Ok(None)` when absent and preserving raw headers on parse errors.
+`Response::via()` parses the same representation from client responses.
+`HttpResponse::with_via()` replaces raw response fields with one validated
+caller-supplied chain, and `HttpResponse::via()` parses attached raw fields.
+
+`Via` validates received-protocol, received-by, comments, and bounds: 64 KiB
+per field value, per combined raw field set including `", "` separator
+overhead, and per combined serialized value, and 256 combined members.
+Duplicate hops are preserved in wire order. These helpers expose hop metadata
+only: RTTP does not append or remove hops, infer trusted proxies, or change
+HTTP/1.1 or HTTP/2 proxy policy.
+
 ## Bounded X-Forwarded compatibility metadata
 
 `HttpClient::x_forwarded_for()`, `x_forwarded_host()`, and
@@ -1231,6 +1249,7 @@ scheduling, or async accept loops.
 | W3C Baggage | `HttpClient::baggage` validates and emits bounded W3C Baggage request metadata, and `Request::baggage` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
 | X-Forwarded compatibility metadata | `HttpClient::x_forwarded_for`/`x_forwarded_host`/`x_forwarded_proto` emit bounded compatibility request metadata; `Request` and `HttpRequest` helpers parse ordered node, authority, and scheme values while preserving raw headers on errors | No forwarded identity trust, client address selection, routing rewrite, scheme rewrite, redirect, upgrade, enforcement, or trusted-proxy selection; applications must choose trusted proxies |
 | CDN-Loop | `HttpClient::cdn_loop` validates and emits bounded RFC 8586 `CDN-Loop` request metadata, combining an existing same-name field with the new member in wire order, and `Request::cdn_loop` plus `HttpRequest` helpers parse received fields into `HttpCdnLoop` while preserving raw headers on errors | No CDN identifier insertion, loop detection or rejection, automatic forwarding, or hop-by-hop handling |
+| Via | `HttpClient::via` validates and emits bounded HTTP `Via` hop metadata, combining an existing same-name field with the new hops in wire order; `Request::via` plus `HttpRequest` helpers and `Response::via` parse received fields into the shared type; `HttpResponse::with_via`/`via` declare or parse caller-supplied chains while preserving raw headers on errors | No automatic hop insertion or removal, trusted-proxy inference, identity rewrite, or HTTP/1.1 or HTTP/2 proxy-policy changes |
 | No-Vary-Search | `NoVarySearch`, `HttpNoVarySearch`, `Response::no_vary_search`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Client Hints | `HttpAcceptCh`/`HttpCriticalCh`, `HttpResponse::with_accept_ch`/`with_critical_ch`, and `accept_ch`/`critical_ch` declare and parse bounded Client Hints opt-in metadata; `Response::accept_ch` and `critical_ch` expose it to clients | No browser opt-in state, request-header generation, automatic retry, persistence, or Client Hints policy |

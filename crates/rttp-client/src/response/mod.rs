@@ -178,6 +178,7 @@ pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
 pub use rttp_protocol::transfer_encoding::{TransferEncoding, TransferEncodingParseError};
 pub use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 pub use rttp_protocol::vary::{Vary, VaryParseError};
+pub use rttp_protocol::via::{Via, ViaMember, ViaParseError};
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest, WantContentDigestEntry, WantContentDigestParseError,
 };

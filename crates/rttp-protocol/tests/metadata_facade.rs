@@ -76,6 +76,7 @@ use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::transfer_encoding::TransferEncoding;
 use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
+use rttp_protocol::via::{Via, ViaParseError};
 use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
 use rttp_protocol::warning::Warning;
@@ -229,6 +230,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let x_forwarded_proto = XForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
   let _: XForwardedProtoParseError =
     XForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
+  let via = Via::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream")
+    .expect("Via request metadata should parse");
+  let _: ViaParseError = Via::parse("1.1").expect_err("incomplete Via hop should be rejected");
   let accept_charset =
     AcceptCharset::parse("utf-8, iso-8859-1;q=0.5, *;q=0").expect("Accept-Charset should parse");
   let accept_encoding =
@@ -471,6 +475,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(Some("443"), x_forwarded_host.hosts()[0].port());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
   assert_eq!(accept_charset.charsets()[0].charset(), "utf-8");
   assert_eq!(accept_charset.charsets()[0].quality(), 1000);
   assert_eq!(accept_charset.charsets()[1].charset(), "iso-8859-1");

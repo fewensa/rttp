@@ -577,6 +577,27 @@ loops, reject requests because an identifier is already present, insert a
 local CDN identifier, forward the field automatically, or treat
 `CDN-Loop` as hop-by-hop.
 
+## Via
+
+`via` parses one or more HTTP `Via` field values into an ordered hop chain.
+Each member preserves an optional protocol name, a protocol version,
+received-by, and an optional comment. Repeated fields are combined in wire
+order. Duplicate received-by values are valid chain metadata and are not
+rejected.
+
+Each field value is bounded to 64 KiB, combined field values are bounded to
+64 KiB including `", "` separator overhead, the combined serialized value is
+bounded to 64 KiB, and the combined member count is bounded to 256. Empty
+members, invalid received-protocol, invalid received-by, malformed comments,
+control bytes other than HTAB, and bound violations are rejected. Formatting
+normalizes optional whitespace to `protocol received-by` plus ` (comment)`
+when a comment is present, while preserving accepted token spelling and
+comment content.
+
+The parser only reports bounded hop metadata. It does not append or remove
+hops, infer trusted proxies, rewrite identity, or change HTTP/1.1 or HTTP/2
+proxy policy.
+
 ## X-Forwarded compatibility metadata
 
 `x_forwarded_for`, `x_forwarded_host`, and `x_forwarded_proto` parse
