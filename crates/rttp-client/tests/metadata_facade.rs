@@ -23,8 +23,9 @@ use rttp_client::response::{
   SignatureParseError, SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Trailer,
   TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  Via, ViaParseError, WantContentDigest, WantReprDigest, Warning, WwwAuthenticate,
+  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
+  XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -33,12 +34,12 @@ use rttp_client::response::{
 };
 use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
-  DestinationParseError, HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
-  SecGpc, SecGpcParseError, SecPurpose, Timeout, TimeoutParseError, TimeoutType, TraceParent,
-  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
-  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, XForwardedFor,
-  XForwardedForParseError, XForwardedHost, XForwardedHostParseError, XForwardedProto,
-  XForwardedProtoParseError,
+  DestinationParseError, HttpClient, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode,
+  SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Timeout, TimeoutParseError,
+  TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
+  Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError,
+  XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 use rttp_protocol::expect::Expect;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
@@ -111,6 +112,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let timeout = Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let _: TimeoutParseError =
     Timeout::parse("Second-60, second-60").expect_err("duplicate Timeout should be rejected");
+  let overwrite = Overwrite::parse("F").expect("Overwrite should parse");
+  let _: OverwriteParseError =
+    Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
   let x_forwarded_for =
     XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
   let _: XForwardedForParseError =
@@ -122,6 +126,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let x_forwarded_proto = XForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
   let _: XForwardedProtoParseError =
     XForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
+  let via = Via::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: ViaParseError = Via::parse("1.1").expect_err("incomplete Via hop should be rejected");
+  let _: ClientVia = ClientVia::parse("1.1 edge-a").expect("crate-root Via should parse");
+  let _: ClientViaParseError =
+    ClientVia::parse("1.1 hop extra").expect_err("malformed crate-root Via should fail");
   let _: DeprecationParseError =
     Deprecation::parse("true").expect_err("historical Deprecation token should be rejected");
   let content_security_policy =
@@ -358,11 +367,15 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
   assert_eq!(
     &[TimeoutType::Second(60), TimeoutType::Infinite],
     timeout.members()
   );
   assert_eq!("second-60, infinite", timeout.header_value());
+  assert_eq!(Overwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
@@ -1212,4 +1225,13 @@ fn client_expect_continue_uses_the_shared_protocol_singleton() {
       == ["tea-time"]
   );
   assert!(Expect::parse("a".repeat(64 * 1024 + 1)).is_err());
+}
+
+#[test]
+fn via_facade_exports_shared_request_and_response_type() {
+  let via = Via::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: ViaParseError = Via::parse("1.1").expect_err("incomplete Via hop should be rejected");
+  let _: ClientVia = ClientVia::parse("1.1 edge-a").expect("crate-root Via should parse");
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
 }

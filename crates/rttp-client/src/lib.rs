@@ -130,12 +130,14 @@ pub use self::connection::{
 };
 pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingResponse};
 pub use rttp_protocol::baggage::{Baggage, BaggageMember, BaggageParseError, BaggageProperty};
+pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
 pub use rttp_protocol::depth::{Depth, DepthParseError};
 pub use rttp_protocol::destination::{Destination, DestinationParseError};
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 pub use rttp_protocol::lock_token::{LockToken, LockTokenParseError};
+pub use rttp_protocol::overwrite::{Overwrite, OverwriteParseError};
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
 pub use rttp_protocol::sec_websocket_protocol::{
   SecWebSocketProtocol, SecWebSocketProtocolParseError,
@@ -150,6 +152,7 @@ pub use rttp_protocol::trace_context::{
 pub use rttp_protocol::upgrade_insecure_requests::{
   UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
+pub use rttp_protocol::via::{Via, ViaMember, ViaParseError};
 pub use rttp_protocol::x_forwarded_for::{
   XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError,
 };

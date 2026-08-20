@@ -29,6 +29,7 @@ use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::origin::Origin;
+use rttp_protocol::overwrite::Overwrite;
 use rttp_protocol::pragma::Pragma;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
@@ -44,6 +45,7 @@ use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::trailer::Trailer;
 use rttp_protocol::upgrade::Upgrade;
 use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
+use rttp_protocol::via::{Via, MAX_VIA_VALUE_BYTES};
 use rttp_protocol::x_forwarded_for::{XForwardedFor, MAX_X_FORWARDED_FOR_VALUE_BYTES};
 use rttp_protocol::x_forwarded_host::{XForwardedHost, MAX_X_FORWARDED_HOST_VALUE_BYTES};
 use rttp_protocol::x_forwarded_proto::{XForwardedProto, MAX_X_FORWARDED_PROTO_VALUE_BYTES};
@@ -677,6 +679,30 @@ impl HttpClient {
     Ok(self)
   }
 
+  /// Append bounded HTTP `Via` request metadata.
+  ///
+  /// This validates and preserves received-protocol, received-by, and comment
+  /// hops, combining with any existing validated `Via` field before a socket
+  /// is opened. It only emits caller-supplied metadata: it does not append a
+  /// local hop, remove existing hops, or change proxy or tunnel policy.
+  pub fn via<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let via = Via::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Via"))
+    {
+      let combined = Via::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_via_header_value(combined)?;
+      header.replace(Header::new("Via", value));
+    } else {
+      headers.push(Header::new("Via", bounded_via_header_value(via)?));
+    }
+    Ok(self)
+  }
+
   /// Append bounded `X-Forwarded-For` request metadata.
   ///
   /// This validates ordered IP and `unknown` node values and combines with any
@@ -847,6 +873,19 @@ impl HttpClient {
     let timeout = Timeout::parse(value.as_ref())
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Timeout", timeout.header_value())))
+  }
+
+  /// Set bounded WebDAV `Overwrite` request metadata.
+  ///
+  /// The value must be the singleton `T` or `F` token, with optional
+  /// surrounding SP or HTAB trimmed. This only validates and emits the header;
+  /// it does not overwrite destination resources, apply the RFC 4918 default
+  /// `T` when the header is absent, or enforce WebDAV policy. Use `header`
+  /// directly for unusual values.
+  pub fn overwrite<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let overwrite = Overwrite::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Overwrite", overwrite.header_value())))
   }
 
   /// Append a validated `Accept-Charset` range with the default quality of
@@ -1766,6 +1805,14 @@ fn bounded_cdn_loop_header_value(cdn_loop: CdnLoop) -> error::Result<String> {
     return Err(error::builder_with_message(
       "CDN-Loop header value is too large",
     ));
+  }
+  Ok(value)
+}
+
+fn bounded_via_header_value(via: Via) -> error::Result<String> {
+  let value = via.header_value();
+  if value.len() > MAX_VIA_VALUE_BYTES {
+    return Err(error::builder_with_message("Via header value is too large"));
   }
   Ok(value)
 }

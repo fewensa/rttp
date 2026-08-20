@@ -23,28 +23,64 @@ use rttp_server::server::{
   HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
   HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
-  HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
-  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
-  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
-  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
-  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
-  HttpWantContentDigest, HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError,
-  HttpXForwardedHost, HttpXForwardedHostParseError, HttpXForwardedProto,
-  HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
-  SecPurpose,
+  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite,
+  HttpOverwriteParseError, HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist,
+  HttpPermissionsPolicyAllowlistMember, HttpPermissionsPolicyDirective,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
+  HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
+  HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError, HttpTraceState,
+  HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaMember,
+  HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose,
 };
+
+#[test]
+fn server_dav_response_metadata_uses_protocol_representation() {
+  let response = HttpResponse::ok("")
+    .header("DAV", "legacy")
+    .with_dav("1, 2, extended-mkcol, <https://dav.example.test/ns>")
+    .expect("valid DAV metadata should be accepted");
+  let dav = response
+    .dav()
+    .expect("DAV metadata should parse")
+    .expect("DAV metadata should be present");
+
+  assert_eq!(
+    "1, 2, extended-mkcol, <https://dav.example.test/ns>",
+    dav.header_value()
+  );
+  let rendered = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(rendered.contains("\r\nDAV: 1, 2, extended-mkcol, <https://dav.example.test/ns>\r\n"));
+  assert!(!rendered.contains("\r\nDAV: legacy\r\n"));
+
+  let unchanged = HttpResponse::ok("").header("DAV", "1");
+  assert!(unchanged.clone().with_dav("1, 1").is_err());
+  assert_eq!(
+    "1",
+    unchanged
+      .dav()
+      .expect("original DAV should still parse")
+      .expect("original DAV should be present")
+      .header_value()
+  );
+
+  let oversized = format!("x{}", "a".repeat(64 * 1024));
+  let invalid = HttpResponse::ok("").header("DAV", oversized);
+  assert!(invalid.dav().is_err());
+}
 
 #[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
@@ -135,6 +171,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpTimeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let timeout_error: Result<HttpTimeout, HttpTimeoutParseError> =
     HttpTimeout::parse("Second-60, second-60");
+  let overwrite: HttpOverwrite = HttpOverwrite::parse("F").expect("Overwrite should parse");
+  let overwrite_error: Result<HttpOverwrite, HttpOverwriteParseError> = HttpOverwrite::parse("t");
   let expectations: HttpExpectations =
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let expectations_error: Result<HttpExpectations, HttpExpectParseError> =
@@ -178,6 +216,13 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpXForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
   let _: HttpXForwardedProtoParseError =
     HttpXForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
+  let via: HttpVia =
+    HttpVia::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: HttpViaParseError =
+    HttpVia::parse("1.1").expect_err("incomplete Via hop should be rejected");
+  let via_response = HttpResponse::ok("")
+    .with_via("1.1 edge-a (TLS terminator), HTTP/2 upstream")
+    .expect("Via should be accepted");
   let content_range = HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
   let content_range_error: Result<HttpContentRange, HttpContentRangeParseError> =
     HttpContentRange::parse("bytes */*");
@@ -365,6 +410,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!("second-60, infinite", timeout.header_value());
   assert!(timeout_error.is_err());
+  assert_eq!(HttpOverwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
+  assert!(overwrite_error.is_err());
   assert!(expectations.expects_continue());
   assert_eq!(["preview"], expectations.unsupported());
   assert_eq!(expectations.header_value(), "100-continue, preview");
@@ -392,6 +440,16 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+  assert_eq!(
+    "1.1 edge-a (TLS terminator), HTTP/2 upstream",
+    via_response
+      .via()
+      .expect("declared Via should parse")
+      .expect("Via should be present")
+      .header_value()
+  );
   assert_eq!(report_only_policy.header_value(), "require-corp");
   assert_eq!(
     HttpCrossOriginOpenerPolicy::SameOrigin,
@@ -1156,6 +1214,51 @@ fn request_facade_parses_timeout_metadata_without_policy() {
 }
 
 #[test]
+fn request_facade_parses_overwrite_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: F\r\n\r\n",
+  )
+  .expect("request should parse");
+  let overwrite: HttpOverwrite = request
+    .overwrite()
+    .expect("Overwrite should parse")
+    .expect("Overwrite should be present");
+
+  assert_eq!(HttpOverwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
+  assert_eq!(Some("F"), request.header("Overwrite"));
+
+  let absent =
+    HttpRequest::parse(b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .overwrite()
+      .expect("missing Overwrite should be accepted")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: true\r\n\r\n",
+  )
+  .expect("malformed Overwrite request should still parse");
+  assert!(malformed.overwrite().is_err());
+  assert_eq!(Some("true"), malformed.header("Overwrite"));
+
+  let duplicate = HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: T\r\noverwrite: F\r\n\r\n",
+  )
+  .expect("duplicate Overwrite request should still parse");
+  assert!(duplicate.overwrite().is_err());
+  assert_eq!(Some("T"), duplicate.header("Overwrite"));
+
+  assert!(
+    HttpOverwrite::parse("T".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Overwrite values must fail closed"
+  );
+}
+
+#[test]
 fn request_facade_parses_expect_metadata() {
   let request = HttpRequest::parse(
     b"POST /upload HTTP/1.1\r\nHost: example.test\r\nExpect: 100-continue\r\nExpect: preview=sha256; chunk=1\r\n\r\n",
@@ -1332,6 +1435,75 @@ fn request_facade_parses_baggage_metadata_without_policy() {
   let baggage_error: Result<HttpBaggage, HttpBaggageParseError> =
     HttpBaggage::parse("tenant=1,tenant=2");
   assert!(baggage_error.is_err());
+}
+
+#[test]
+fn request_via_parses_ordered_hops_without_policy() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nVia: 1.1 edge-a (TLS terminator)\r\nVia: HTTP/2 upstream\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let via: HttpVia = request
+    .via()
+    .expect("Via should parse")
+    .expect("Via should be present");
+  let member: &HttpViaMember = &via.members()[0];
+
+  assert_eq!(2, via.len());
+  assert_eq!("edge-a", member.received_by());
+  assert_eq!(Some("TLS terminator"), member.comment());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+  assert_eq!("upstream", via.members()[1].received_by());
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.via().expect("missing Via"));
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nVia: 1.1 hop extra\r\n\r\n")
+      .expect("malformed metadata should not reject raw request parsing");
+  assert!(malformed.via().is_err());
+  assert_eq!(Some("1.1 hop extra"), malformed.header("Via"));
+
+  let via_error: Result<HttpVia, HttpViaParseError> = HttpVia::parse("1.1");
+  assert!(via_error.is_err());
+}
+
+#[test]
+fn request_via_rejects_malformed_and_oversized_chains() {
+  let excessive = (0..257)
+    .map(|index| format!("1.1 hop{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = HttpRequest::parse(
+    format!("GET / HTTP/1.1\r\nHost: example.test\r\nVia: {excessive}\r\n\r\n").as_bytes(),
+  )
+  .expect("oversized Via should not reject raw request parsing");
+  assert!(request.via().is_err());
+  assert_eq!(Some(excessive.as_str()), request.header("Via"));
+}
+
+#[test]
+fn response_via_helper_validates_replaces_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Via", "1.0 legacy")
+    .with_via("1.1 edge-a (TLS terminator), HTTP/2 upstream")
+    .expect("valid Via should be accepted");
+  let via: HttpVia = response
+    .via()
+    .expect("attached Via should parse")
+    .expect("Via should be present");
+  assert_eq!(2, via.len());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!("upstream", via.members()[1].received_by());
+
+  assert!(HttpResponse::ok("body").with_via("1.1").is_err());
+  let raw = HttpResponse::ok("body").header("Via", "1.1 hop extra");
+  assert!(raw.via().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nVia: 1.1 hop extra\r\n"));
 }
 
 #[test]

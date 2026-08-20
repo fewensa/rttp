@@ -356,6 +356,20 @@ These helpers expose Proxy-Status as metadata only. They do not interpret
 proxy health, retry requests, promote trailers, or generate origin
 `Proxy-Status` values.
 
+## Via response metadata
+
+`HttpResponse::with_via(value)` validates HTTP `Via` as a bounded hop chain
+and replaces any existing `Via` fields with one normalized caller-supplied
+value. It does not append a local hop. `HttpResponse::via()` parses attached
+raw fields into `HttpVia` metadata, returning parser errors without changing
+those raw fields. Absent fields return `Ok(None)`. Empty members, malformed
+syntax, control bytes, oversized values, and too many members return a parser
+error while `HttpResponse` raw headers continue to expose the original
+fields.
+
+These helpers expose Via as metadata only. They do not append or remove hops
+or change HTTP/1.1 or HTTP/2 proxy policy.
+
 ## Accept-Ranges response metadata
 
 `HttpResponse::with_accept_ranges(units)` declares supported range units with
@@ -724,6 +738,19 @@ response metadata for inspection. Unusual values can still be attached with
 These helpers parse and emit metadata only. They do not create, refresh,
 release, persist, compare ownership of, or enforce WebDAV locks.
 
+## WebDAV DAV response metadata
+
+Handlers can call `HttpResponse::with_dav(value)` to validate and replace
+attached `DAV` response metadata, and `HttpResponse::dav()` to parse attached
+raw `DAV` fields into `HttpDav`. The shared protocol parser preserves wire
+order across fields, accepts standard classes `1`, `2`, and `3`, extension
+tokens, and `<absolute-URI>` Coded-URLs, and rejects malformed, duplicate,
+oversized, aggregate-oversized, or over-32-member values while raw response
+headers remain available on parse failures.
+
+These helpers declare and parse response metadata only. They do not infer,
+negotiate, or enforce WebDAV feature support from the header.
+
 ## WebDAV Destination request metadata
 
 Handlers can call `Request::destination()` and `HttpRequest::destination()`
@@ -753,6 +780,20 @@ original raw field.
 
 These helpers parse request metadata only. They do not create locks, refresh
 locks, or select an application timeout.
+
+## WebDAV Overwrite request metadata
+
+Handlers can call `Request::overwrite()` and `HttpRequest::overwrite()` to
+observe bounded typed WebDAV `Overwrite` request metadata through the shared
+protocol `HttpOverwrite` type. Absent fields return `Ok(None)`. Recognized
+values are the singleton tokens `T` and `F`, with optional surrounding SP or
+HTAB and case-sensitive matching. Malformed, oversized, duplicate, or
+control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not overwrite destination
+resources, apply the RFC 4918 default `T` when the field is absent, or
+enforce WebDAV policy.
 
 ## Idempotency-Key request metadata
 
@@ -915,6 +956,23 @@ wire order, and repeated CDN identifiers are valid loop-visible metadata.
 These helpers expose loop metadata only; they do not detect or break loops,
 reject requests because an identifier is already present, or forward the
 field automatically.
+
+## Via request metadata
+
+Handlers can call `Request::via()` and the matching `HttpRequest` helper to
+observe bounded HTTP `Via` request metadata through the shared protocol
+`HttpVia` type. Absent fields return `Ok(None)`. Malformed, oversized, empty
+member, or over-limit values return parser errors while `Request::header()`
+and `HttpRequest::header()` continue to expose the original raw fields.
+
+`HttpVia` preserves ordered hops with optional protocol name, protocol
+version, received-by, and optional comments. Each field value, the combined
+raw field set including `", "` separator overhead, and the combined
+serialized value are bounded to 64 KiB, and the combined member count is
+bounded to 256. Comment nesting depth is bounded to 128. Repeated `Via`
+fields are combined in wire order, and duplicate received-by values are valid
+chain metadata. These helpers expose hop metadata only; they do not append or
+remove hops or apply proxy policy.
 
 ## X-Forwarded compatibility metadata
 

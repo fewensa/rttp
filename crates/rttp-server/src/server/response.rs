@@ -90,6 +90,9 @@ pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
   CrossOriginResourcePolicyParseError as HttpCrossOriginResourcePolicyParseError,
 };
+pub use rttp_protocol::dav::{
+  Dav as HttpDav, DavClass as HttpDavClass, DavParseError as HttpDavParseError,
+};
 pub use rttp_protocol::deprecation::{
   Deprecation as HttpDeprecation, DeprecationParseError as HttpDeprecationParseError,
 };
@@ -199,6 +202,7 @@ pub use rttp_protocol::supports_loading_mode::{
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
 };
+pub use rttp_protocol::via::{Via as HttpVia, ViaParseError as HttpViaParseError};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
@@ -1136,6 +1140,21 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Replaces `DAV` response metadata with bounded WebDAV compliance classes.
+  ///
+  /// This declares metadata only; it does not infer or enforce WebDAV feature
+  /// support.
+  pub fn with_dav(mut self, value: impl AsRef<str>) -> Result<Self, HttpDavParseError> {
+    let dav = HttpDav::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("DAV"));
+    self
+      .headers
+      .push(HttpHeader::new("DAV", dav.header_value()));
+    Ok(self)
+  }
+
   pub fn with_content_language<I, L>(
     mut self,
     languages: I,
@@ -1670,6 +1689,19 @@ impl HttpResponse {
       "Signature-Input",
       signature_input.header_value(),
     ));
+    Ok(self)
+  }
+
+  /// Validates and replaces HTTP `Via` response metadata with the
+  /// caller-supplied hop chain without appending a local hop.
+  pub fn with_via(mut self, value: impl AsRef<str>) -> Result<Self, HttpViaParseError> {
+    let via = HttpVia::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Via"));
+    self
+      .headers
+      .push(HttpHeader::new("Via", via.header_value()));
     Ok(self)
   }
 
@@ -2244,6 +2276,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAllowedMethods::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `DAV` response metadata without inferring or enforcing
+  /// WebDAV feature support.
+  pub fn dav(&self) -> Result<Option<HttpDav>, HttpDavParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("DAV"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDav::parse_values(values).map(Some)
   }
 
   /// Parses attached HTTP/1 `Connection` header metadata without changing
@@ -2836,6 +2883,21 @@ impl HttpResponse {
         "multiple {name} headers"
       ))),
     }
+  }
+
+  /// Parses attached `Via` metadata without changing raw headers or
+  /// appending or removing hops.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Via"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
   }
 
   /// Parses attached `Proxy-Status` metadata without changing raw headers

@@ -76,6 +76,9 @@ pub use rttp_protocol::lock_token::{
 pub use rttp_protocol::max_forwards::{
   MaxForwards as HttpMaxForwards, MaxForwardsParseError as HttpMaxForwardsParseError,
 };
+pub use rttp_protocol::overwrite::{
+  Overwrite as HttpOverwrite, OverwriteParseError as HttpOverwriteParseError,
+};
 pub use rttp_protocol::pragma::{
   Pragma as HttpPragma, PragmaDirective as HttpPragmaDirective,
   PragmaParseError as HttpPragmaParseError,
@@ -144,6 +147,9 @@ pub use rttp_protocol::upgrade::{
 pub use rttp_protocol::upgrade_insecure_requests::{
   UpgradeInsecureRequests as HttpUpgradeInsecureRequests,
   UpgradeInsecureRequestsParseError as HttpUpgradeInsecureRequestsParseError,
+};
+pub use rttp_protocol::via::{
+  Via as HttpVia, ViaMember as HttpViaMember, ViaParseError as HttpViaParseError,
 };
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
@@ -590,6 +596,16 @@ impl Request {
     HttpTimeout::parse_values(values).map(Some)
   }
 
+  /// Parses received WebDAV `Overwrite` request metadata without overwriting
+  /// destination resources or applying the RFC 4918 default `T`.
+  pub fn overwrite(&self) -> Result<Option<HttpOverwrite>, HttpOverwriteParseError> {
+    let values: Vec<&str> = self.headers_named("Overwrite").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpOverwrite::parse_values(values).map(Some)
+  }
+
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
   /// accessor does not retry requests, store keys, or apply idempotency
@@ -889,6 +905,16 @@ impl Request {
       return Ok(None);
     }
     HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded HTTP `Via` request metadata without appending or removing
+  /// hops or applying proxy policy.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self.headers_named("Via").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
   }
 
   /// Parses bounded `X-Forwarded-For` request metadata without applying a
@@ -2440,6 +2466,21 @@ impl HttpRequest {
     HttpTimeout::parse_values(values).map(Some)
   }
 
+  /// Parses received WebDAV `Overwrite` request metadata without overwriting
+  /// destination resources or applying the RFC 4918 default `T`.
+  pub fn overwrite(&self) -> Result<Option<HttpOverwrite>, HttpOverwriteParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Overwrite"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpOverwrite::parse_values(values).map(Some)
+  }
+
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
   /// accessor does not retry requests, store keys, or apply idempotency
@@ -2994,6 +3035,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded HTTP `Via` request metadata without appending or removing
+  /// hops or applying proxy policy.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Via"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
   }
 
   /// Parses bounded `X-Forwarded-For` request metadata without applying a

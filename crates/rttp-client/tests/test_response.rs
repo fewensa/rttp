@@ -9,9 +9,10 @@ use rttp_client::response::{
   ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter,
   SecWebSocketAccept, SecWebSocketProtocol, SecWebSocketVersion, ServerTiming,
   ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
-  SupportsLoadingMode, Warning, XContentTypeOptions, XFrameOptions,
+  SupportsLoadingMode, Via, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
+use rttp_client::DavClass;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use std::io::Write;
 use std::time::{Duration, UNIX_EPOCH};
@@ -3202,6 +3203,75 @@ fn test_proxy_authentication_info_response_helper_parses_bounded_auth_params() {
 }
 
 #[test]
+fn test_via_response_helper_parses_repeated_hops() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Via: 1.1 edge-a (TLS terminator)\r\n",
+    "Via: HTTP/2 upstream\r\n",
+    "Content-Length: 2\r\n\r\nok"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let via = response
+    .via()
+    .expect("valid Via should parse")
+    .expect("Via should be present");
+
+  assert_eq!(2, via.len());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("TLS terminator"), via.members()[0].comment());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+  assert_eq!("2", via.members()[1].protocol_version());
+  assert_eq!("upstream", via.members()[1].received_by());
+  assert_eq!(
+    response.header_values("Via"),
+    [
+      &"1.1 edge-a (TLS terminator)".to_string(),
+      &"HTTP/2 upstream".to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_via_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Via should parse");
+  assert_eq!(None, absent.via().expect("absent Via should parse"));
+}
+
+#[test]
+fn test_via_rejects_malformed_and_oversized_values_without_hiding_headers() {
+  for value in ["", "1.1", "1.1 hop extra", "1.1 hop("] {
+    let raw = format!("HTTP/1.1 200 OK\r\nVia: {value}\r\nContent-Length: 2\r\n\r\nok");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.via().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("Via"));
+    assert_eq!("ok", response.body().string().unwrap());
+  }
+
+  let oversized = format!("1.1 {}", "a".repeat(64 * 1024));
+  let oversized_raw = format!("HTTP/1.1 200 OK\r\nVia: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.via().is_err());
+  assert_eq!(Some(&oversized), oversized_response.header_value("Via"));
+  assert!(Via::parse(
+    (0..257)
+      .map(|index| format!("1.1 hop{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
+}
+
+#[test]
 fn test_proxy_status_response_helper_parses_rfc9209_and_combined_fields() {
   let raw = concat!(
     "HTTP/1.1 504 Gateway Timeout\r\n",
@@ -5927,6 +5997,70 @@ fn test_parse_allow_rejects_duplicate_oversized_and_too_many_methods() {
     "allow helper should reject too many methods"
   );
   assert_eq!(Some(&too_many), response.header_value("Allow"));
+}
+
+#[test]
+fn test_parse_dav_response_helper_preserves_metadata_only() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "DAV: 1, 2\r\n",
+    "dav: extended-mkcol, <https://dav.example.test/ns>\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with DAV metadata remains usable");
+  let dav = response
+    .dav()
+    .expect("valid DAV metadata should parse")
+    .expect("DAV metadata should be present");
+
+  assert_eq!(
+    &[
+      DavClass::One,
+      DavClass::Two,
+      DavClass::ExtensionToken("extended-mkcol".to_string()),
+      DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  assert_eq!(
+    vec![
+      &"1, 2".to_string(),
+      &"extended-mkcol, <https://dav.example.test/ns>".to_string()
+    ],
+    response.header_values("DAV")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response without DAV metadata remains usable");
+  assert_eq!(None, absent.dav().expect("absent DAV should parse"));
+}
+
+#[test]
+fn test_parse_dav_rejects_invalid_duplicate_and_oversized_metadata() {
+  for value in ["", "1,", "1, 1", "<relative/path>"] {
+    let raw = format!("HTTP/1.1 200 OK\r\nDAV: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response with invalid DAV metadata remains usable");
+
+    assert!(
+      response.dav().is_err(),
+      "DAV helper should reject {value:?}"
+    );
+    assert_eq!(Some(&value.to_string()), response.header_value("DAV"));
+  }
+
+  let oversized = format!("x{}", "a".repeat(64 * 1024));
+  let raw = format!("HTTP/1.1 200 OK\r\nDAV: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized DAV metadata remains usable");
+
+  assert!(response.dav().is_err());
+  assert_eq!(Some(&oversized), response.header_value("DAV"));
 }
 
 #[test]

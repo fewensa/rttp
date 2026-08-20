@@ -8,6 +8,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
+use rttp_client::DavClass;
 use rttp_client::HttpClient;
 use rttp_server::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
@@ -21,6 +22,49 @@ type ObservedIfRangeHandle = thread::JoinHandle<ObservedIfRangeHeaders>;
 
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+fn spawn_dav_metadata_response_server() -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind DAV facade server");
+  let addr = server.local_addr().expect("DAV facade addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_dav("1, 2, extended-mkcol, <https://dav.example.test/ns>")
+          .expect("DAV metadata should be accepted")
+      })
+      .expect("serve DAV facade request");
+  });
+
+  (addr, handle)
+}
+
+#[test]
+fn http11_client_and_server_exchange_dav_metadata_without_policy() {
+  let (addr, handle) = spawn_dav_metadata_response_server();
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/collection"))
+    .emit()
+    .expect("request should complete");
+  let dav = response
+    .dav()
+    .expect("DAV response metadata should parse")
+    .expect("DAV response metadata should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    &[
+      DavClass::One,
+      DavClass::Two,
+      DavClass::ExtensionToken("extended-mkcol".to_string()),
+      DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  handle.join().expect("DAV server thread");
 }
 
 #[derive(Debug, PartialEq)]
@@ -3281,6 +3325,46 @@ fn sync_client_and_server_exchange_bounded_destination_metadata_without_policy()
   );
   assert_eq!(201, response.code());
   handle.join().expect("Destination server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_overwrite_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Overwrite server");
+  let addr = server.local_addr().expect("Overwrite server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .overwrite()
+            .expect("Overwrite should parse")
+            .map(|overwrite| overwrite.header_value().to_string()),
+          request.header("Overwrite").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Overwrite metadata");
+        HttpResponse::new(204, "No Content")
+      })
+      .expect("serve Overwrite request");
+  });
+
+  let response = client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .overwrite("F")
+    .expect("Overwrite should be accepted")
+    .emit()
+    .expect("Overwrite response should parse");
+
+  let (typed, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe Overwrite metadata");
+  assert_eq!(Some("F".to_string()), typed);
+  assert_eq!(Some("F".to_string()), raw);
+  assert_eq!(204, response.code());
+  handle.join().expect("Overwrite server thread");
 }
 
 #[test]

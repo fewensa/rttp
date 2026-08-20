@@ -11,7 +11,7 @@ use rttp::server::{
   HttpDestinationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
   HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpLockToken,
   HttpLockTokenParseError, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
+  HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
   HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
   HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
@@ -23,8 +23,8 @@ use rttp::server::{
   HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
   HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout,
   HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -69,6 +69,20 @@ fn spawn_representation_metadata_response_server(
 #[test]
 #[cfg(feature = "client")]
 fn compatibility_facade_exports_client_metadata_types() {
+  let dav: rttp::Dav =
+    rttp_client::response::Dav::parse("1, 2, extended-mkcol, <https://dav.example.test/ns>")
+      .expect("DAV should parse");
+  assert_eq!(
+    &[
+      rttp::DavClass::One,
+      rttp::DavClass::Two,
+      rttp::DavClass::ExtensionToken("extended-mkcol".to_string()),
+      rttp::DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  let _: rttp::DavParseError =
+    rttp_client::response::Dav::parse("1, 1").expect_err("duplicate DAV should fail");
   let accept_ch: rttp::AcceptCh =
     rttp_client::response::AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let allow_credentials: rttp::AccessControlAllowCredentials =
@@ -152,6 +166,9 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp::Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let _: rttp::TimeoutParseError =
     rttp::Timeout::parse("Second-60, second-60").expect_err("duplicate Timeout should be rejected");
+  let overwrite: rttp::Overwrite = rttp::Overwrite::parse("F").expect("Overwrite should parse");
+  let _: rttp::OverwriteParseError =
+    rttp::Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
   let x_forwarded_for: rttp::XForwardedFor =
     rttp::XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
   let _: rttp::XForwardedForParseError =
@@ -164,6 +181,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp::XForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
   let _: rttp::XForwardedProtoParseError =
     rttp::XForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
+  let via: rttp::Via =
+    rttp::Via::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: rttp::ViaParseError =
+    rttp::Via::parse("1.1").expect_err("incomplete Via hop should be rejected");
   let memento_datetime: rttp::MementoDatetime =
     rttp_client::response::MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("Memento-Datetime should parse");
@@ -390,11 +411,15 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
   assert_eq!(
     &[rttp::TimeoutType::Second(60), rttp::TimeoutType::Infinite],
     timeout.members()
   );
   assert_eq!("second-60, infinite", timeout.header_value());
+  assert_eq!(rttp::Overwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -1165,6 +1190,56 @@ fn compatibility_facade_roundtrips_lock_token_metadata_without_policy() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_overwrite_request_metadata_without_policy() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  let response = rttp::Http::client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .overwrite(" F ")
+    .expect("Overwrite should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle.join().expect("Overwrite capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(Some("F"), header_value(&captured_request_text, "Overwrite"));
+  assert_eq!(204, response.code());
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let overwrite: HttpOverwrite = server_request
+    .overwrite()
+    .expect("server Overwrite should parse")
+    .expect("server Overwrite should be present");
+
+  assert_eq!(HttpOverwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: true\r\n\r\n",
+  )
+  .expect("malformed Overwrite request should still parse");
+  assert!(malformed.overwrite().is_err());
+  assert_eq!(Some("true"), malformed.header("Overwrite"));
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: T\r\noverwrite: F\r\n\r\n",
+  )
+  .expect("duplicate Overwrite request should still parse");
+  assert!(duplicate.overwrite().is_err());
+  assert_eq!(Some("T"), duplicate.header("Overwrite"));
+
+  assert!(
+    rttp::Overwrite::parse("T".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Overwrite values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn client_accept_encoding_helpers_parse_through_shared_server_type() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
@@ -1316,6 +1391,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpXForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
   let _: HttpXForwardedProtoParseError =
     HttpXForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
+  let via: HttpVia =
+    HttpVia::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: HttpViaParseError =
+    HttpVia::parse("1.1").expect_err("incomplete Via hop should be rejected");
   let _: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
     HttpIdempotencyKey::parse("key with space");
   let _: Result<HttpSecWebSocketKey, HttpSecWebSocketKeyParseError> =
@@ -1476,6 +1555,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -1659,4 +1740,26 @@ fn compatibility_facade_exposes_content_dpr_response_metadata() {
     .header("Content-DPR", "2")
     .content_dpr()
     .is_err());
+}
+
+#[test]
+fn via_facade_exports_shared_request_and_response_type() {
+  let via: HttpVia =
+    HttpVia::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: HttpViaParseError =
+    HttpVia::parse("1.1").expect_err("incomplete Via hop should be rejected");
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+}
+
+#[cfg(feature = "client")]
+#[test]
+fn via_compatibility_facade_exports_client_type() {
+  let via: rttp::Via =
+    rttp::Via::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: rttp::ViaParseError =
+    rttp::Via::parse("1.1").expect_err("incomplete Via hop should be rejected");
+  assert_eq!("edge-a", via.members()[0].received_by());
+  let member: rttp::ViaMember = via.members()[1].clone();
+  assert_eq!(Some("HTTP"), member.protocol_name());
 }

@@ -27,6 +27,7 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPolicyReportOnly;
+use rttp_protocol::dav::{Dav, DavClass, DavParseError};
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -54,6 +55,7 @@ use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::origin_trial::OriginTrials;
+use rttp_protocol::overwrite::{Overwrite, OverwriteParseError};
 use rttp_protocol::permissions_policy::PermissionsPolicy;
 use rttp_protocol::pragma::{Pragma, PragmaParseError};
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
@@ -80,6 +82,7 @@ use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::transfer_encoding::TransferEncoding;
 use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
+use rttp_protocol::via::{Via, ViaParseError};
 use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
 use rttp_protocol::warning::Warning;
@@ -88,6 +91,22 @@ use rttp_protocol::x_forwarded_for::{XForwardedFor, XForwardedForParseError};
 use rttp_protocol::x_forwarded_host::{XForwardedHost, XForwardedHostParseError};
 use rttp_protocol::x_forwarded_proto::{XForwardedProto, XForwardedProtoParseError};
 use rttp_protocol::x_frame_options::XFrameOptions;
+
+#[test]
+fn protocol_exports_dav_response_metadata() {
+  let dav =
+    Dav::parse("1, 2, extended-mkcol, <https://dav.example.test/ns>").expect("DAV should parse");
+  assert_eq!(
+    &[
+      DavClass::One,
+      DavClass::Two,
+      DavClass::ExtensionToken("extended-mkcol".to_string()),
+      DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  let _: DavParseError = Dav::parse("1, 1").expect_err("duplicate DAV class should be rejected");
+}
 
 #[test]
 fn protocol_exports_representative_bounded_metadata_types() {
@@ -128,6 +147,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let lock_token = LockToken::parse("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
     .expect("Lock-Token metadata should parse");
   let timeout = Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
+  let overwrite = Overwrite::parse("F").expect("Overwrite should parse");
+  let _: OverwriteParseError =
+    Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
   let idempotency_key = IdempotencyKey::parse("charge-2026-08-19-9f3c")
     .expect("Idempotency-Key request metadata should parse");
   let sec_websocket_key = SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
@@ -244,6 +266,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let x_forwarded_proto = XForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
   let _: XForwardedProtoParseError =
     XForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
+  let via = Via::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream")
+    .expect("Via request metadata should parse");
+  let _: ViaParseError = Via::parse("1.1").expect_err("incomplete Via hop should be rejected");
   let accept_charset =
     AcceptCharset::parse("utf-8, iso-8859-1;q=0.5, *;q=0").expect("Accept-Charset should parse");
   let accept_encoding =
@@ -370,6 +395,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     timeout.members()
   );
   assert_eq!("second-60, infinite", timeout.header_value());
+  assert_eq!(Overwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
   assert_eq!(idempotency_key.as_str(), "charge-2026-08-19-9f3c");
   assert_eq!(idempotency_key.header_value(), "charge-2026-08-19-9f3c");
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
@@ -513,6 +540,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(Some("443"), x_forwarded_host.hosts()[0].port());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
   assert_eq!(accept_charset.charsets()[0].charset(), "utf-8");
   assert_eq!(accept_charset.charsets()[0].quality(), 1000);
   assert_eq!(accept_charset.charsets()[1].charset(), "iso-8859-1");

@@ -149,6 +149,18 @@ returns the stored coded URL and `header_value()` emits it unchanged. This
 parser reports declared metadata only; it does not create, refresh, release,
 persist, compare ownership of, or enforce WebDAV locks.
 
+## DAV
+
+`dav` parses one or more WebDAV `DAV` response fields into an ordered list of
+compliance classes. Recognized standard classes are `1`, `2`, and `3`;
+well-formed HTTP tokens are retained as extension classes, and `<absolute-URI>`
+Coded-URLs are retained without URI normalization. Each field value and the
+aggregate input are bounded to 64 KiB, and the combined list is bounded to 32
+members. Empty members, malformed tokens, malformed or relative Coded-URLs,
+duplicates, oversized input, too many members, and forbidden ASCII control
+bytes are errors. This parser reports declared response metadata only; it does
+not infer, negotiate, or enforce WebDAV feature support.
+
 ## Destination
 
 `destination` parses a singleton WebDAV `Destination` request field as one
@@ -176,6 +188,18 @@ case-insensitively and emitted in lowercase. Empty members, overflow,
 duplicates, too many members, oversized input, and forbidden ASCII control
 bytes are errors. This parser reports declared request metadata only; it does
 not create locks, refresh locks, or select an application timeout.
+
+## Overwrite
+
+`overwrite` parses a singleton WebDAV `Overwrite` request field as the token
+`T` or `F`. Each field value is bounded to 64 KiB. A second field is rejected
+after every supplied field is bound-checked. Surrounding SP and HTAB are
+trimmed as optional whitespace; the tokens are matched case-sensitively.
+Empty values, lowercase or other tokens, comma-lists, oversized values, and
+forbidden ASCII control bytes are errors. `header_value()` emits the accepted
+token unchanged. This parser reports declared request metadata only; it does
+not overwrite destination resources, apply the RFC 4918 default `T` when the
+field is absent, or enforce WebDAV policy.
 
 ## Idempotency-Key
 
@@ -620,6 +644,27 @@ The parser only reports bounded loop metadata. It does not detect or break
 loops, reject requests because an identifier is already present, insert a
 local CDN identifier, forward the field automatically, or treat
 `CDN-Loop` as hop-by-hop.
+
+## Via
+
+`via` parses one or more HTTP `Via` field values into an ordered hop chain.
+Each member preserves an optional protocol name, a protocol version,
+received-by, and an optional comment. Repeated fields are combined in wire
+order. Duplicate received-by values are valid chain metadata and are not
+rejected.
+
+Each field value is bounded to 64 KiB, combined field values are bounded to
+64 KiB including `", "` separator overhead, the combined serialized value is
+bounded to 64 KiB, the combined member count is bounded to 256, and comment
+nesting depth is bounded to 128. Empty members, invalid received-protocol,
+invalid received-by, malformed comments, control bytes other than HTAB, and
+bound violations are rejected. Formatting normalizes optional whitespace to
+`protocol received-by` plus ` (comment)` when a comment is present, while
+preserving accepted token spelling and comment content.
+
+The parser only reports bounded hop metadata. It does not append or remove
+hops, infer trusted proxies, rewrite identity, or change HTTP/1.1 or HTTP/2
+proxy policy.
 
 ## X-Forwarded compatibility metadata
 
