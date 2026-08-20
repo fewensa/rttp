@@ -1488,6 +1488,52 @@ fn request_idempotency_key_is_optional_and_rejects_invalid_metadata() {
 }
 
 #[test]
+fn request_sec_websocket_version_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_version()
+      .expect("missing Sec-WebSocket-Version should be valid")
+  );
+
+  for value in ["13", "13, 8, 7"] {
+    let valid = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Version: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .sec_websocket_version()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Version should be present");
+    assert_eq!(value, parsed.header_value());
+    assert!(parsed.contains("13"));
+  }
+
+  for value in ["", "v13", "013", "8, 13", "13, 13", "300"] {
+    let request = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Version: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.sec_websocket_version().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Version"));
+  }
+
+  assert!(rttp::server::HttpSecWebSocketVersion::parse("1".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /chat HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-WebSocket-Version: 13\r\n",
+    "sec-websocket-version: 13\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.sec_websocket_version().is_err());
+  assert_eq!(Some("13"), duplicate.header("Sec-WebSocket-Version"));
+}
+
+#[test]
 fn request_sec_websocket_key_is_optional_and_rejects_invalid_metadata() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(

@@ -2555,6 +2555,140 @@ fn sec_websocket_key_helper_rejects_oversized_values_before_connecting() {
 }
 
 #[test]
+fn sec_websocket_version_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("13", "13"),
+    (" \t13\t ", "13"),
+    ("13, 8, 7", "13, 8, 7"),
+    (" \t13\t , 8 , 7\t ", "13, 8, 7"),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_version(value)
+        .expect("sec websocket version should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(
+      Some(expected),
+      header_value(&request, "Sec-WebSocket-Version")
+    );
+    assert_eq!(None, header_value(&request, "Upgrade"));
+    assert_ne!(
+      Some("Upgrade"),
+      header_value(&request, "Connection"),
+      "typed Sec-WebSocket-Version must not emit Connection: Upgrade"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_version_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Version", "12"))
+      .sec_websocket_version("13")
+      .expect("sec websocket version should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("13"), header_value(&request, "Sec-WebSocket-Version"));
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("sec-websocket-version:"))
+      .count(),
+    "the typed helper must replace an existing same-name field"
+  );
+  assert_eq!(None, header_value(&request, "Upgrade"));
+  assert_ne!(
+    Some("Upgrade"),
+    header_value(&request, "Connection"),
+    "typed Sec-WebSocket-Version must not emit Connection: Upgrade"
+  );
+}
+
+#[test]
+fn sec_websocket_version_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "13,",
+    "13,,8",
+    "v13",
+    "013",
+    "8, 13",
+    "13, 13",
+    "300",
+    "13\r\nX-Injected: 1",
+    "13\0value",
+    "13\u{7f}value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_version(value)
+        .expect_err("invalid sec websocket version should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid sec websocket version must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_version_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/chat", base_url))
+      .sec_websocket_version(oversized.as_str())
+      .expect_err("oversized sec websocket version should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized sec websocket version must not open a socket"
+  );
+}
+
+#[test]
+fn raw_sec_websocket_version_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Version", "opaque custom value"))
+      .emit()
+      .expect("manual Sec-WebSocket-Version header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Sec-WebSocket-Version")
+  );
+}
+
+#[test]
 fn raw_sec_websocket_key_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

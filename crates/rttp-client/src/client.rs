@@ -32,6 +32,7 @@ use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
@@ -854,6 +855,23 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-WebSocket-Key",
       sec_websocket_key.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-WebSocket-Version` request metadata.
+  ///
+  /// This validates version tokens, duplicates, member count, canonical
+  /// descending order, and size bounds before connecting and replaces any
+  /// existing `Sec-WebSocket-Version` field. It does not perform a WebSocket
+  /// handshake, emit `Connection: Upgrade`, compute `Sec-WebSocket-Accept`,
+  /// negotiate versions, or switch protocols. Use `header` directly for
+  /// unusual values.
+  pub fn sec_websocket_version<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_version = SecWebSocketVersion::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Version",
+      sec_websocket_version.header_value(),
     )))
   }
 

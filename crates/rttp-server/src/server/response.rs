@@ -160,6 +160,10 @@ pub use rttp_protocol::sec_websocket_accept::{
   SecWebSocketAccept as HttpSecWebSocketAccept,
   SecWebSocketAcceptParseError as HttpSecWebSocketAcceptParseError,
 };
+pub use rttp_protocol::sec_websocket_version::{
+  SecWebSocketVersion as HttpSecWebSocketVersion,
+  SecWebSocketVersionParseError as HttpSecWebSocketVersionParseError,
+};
 pub use rttp_protocol::server_timing::{
   ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
   ServerTimingParameter as HttpServerTimingParameter,
@@ -1462,6 +1466,28 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Sec-WebSocket-Version` response metadata without
+  /// negotiating versions, emitting `Connection` or `Upgrade`, or switching
+  /// protocols. Intended for application-owned rejection responses.
+  pub fn with_sec_websocket_version<I, V>(
+    mut self,
+    versions: I,
+  ) -> Result<Self, HttpSecWebSocketVersionParseError>
+  where
+    I: IntoIterator<Item = V>,
+    V: AsRef<str>,
+  {
+    let versions = HttpSecWebSocketVersion::from_versions(versions)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sec-WebSocket-Version"));
+    self.headers.push(HttpHeader::new(
+      "Sec-WebSocket-Version",
+      versions.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Supports-Loading-Mode` response metadata without
   /// applying prerender or fenced-frame loading policy.
   pub fn with_supports_loading_mode<I, H>(
@@ -2544,6 +2570,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpPermissionsPolicy::parse_values(values).map(Some)
+  }
+
+  /// Returns attached `Sec-WebSocket-Version` response metadata without
+  /// negotiating versions or switching protocols.
+  pub fn sec_websocket_version(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketVersion>, HttpSecWebSocketVersionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Version"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketVersion::parse_values(values).map(Some)
   }
 
   /// Returns attached `Supports-Loading-Mode` response metadata without

@@ -149,6 +149,9 @@ pub use rttp_protocol::referrer_policy::{
 };
 pub use rttp_protocol::reporting_endpoints::{ReportingEndpoints, ReportingEndpointsParseError};
 pub use rttp_protocol::sec_websocket_accept::{SecWebSocketAccept, SecWebSocketAcceptParseError};
+pub use rttp_protocol::sec_websocket_version::{
+  SecWebSocketVersion, SecWebSocketVersionParseError,
+};
 pub use rttp_protocol::server_timing::{
   ServerTiming, ServerTimingMetric, ServerTimingParameter, ServerTimingParseError,
 };
