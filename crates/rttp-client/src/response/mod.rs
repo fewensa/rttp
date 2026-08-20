@@ -158,6 +158,7 @@ pub use rttp_protocol::signature_input::{
 pub use rttp_protocol::signature_input::{
   SignatureInputBareItem, SignatureInputComponent, SignatureInputEntry, SignatureInputParameter,
 };
+pub use rttp_protocol::speculation_rules::{SpeculationRules, SpeculationRulesParseError};
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity, StrictTransportSecurityParseError,
 };

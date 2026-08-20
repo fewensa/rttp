@@ -957,6 +957,15 @@ parameterized items, non-token members, and oversized values are rejected.
 The parser reports declared metadata only: it does not prerender documents,
 admit fenced frames, change navigation, or alter resource loading.
 
+## Speculation-Rules
+
+`speculation_rules` preserves one bounded `Speculation-Rules` response field
+value as opaque metadata. The value is limited to 64 KiB, duplicate fields are
+rejected, and control bytes that could inject response fields are rejected.
+Typed `Debug` reports only the byte length, and parse errors do not echo the
+field value. The parser does not fetch, parse, validate, or execute
+speculation rule resources.
+
 ## Pragma
 
 `pragma` parses RFC 9111 `Pragma` fields as a comma-separated list of

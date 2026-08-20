@@ -4444,6 +4444,43 @@ hello\r\n\
   }
 
   #[test]
+  fn speculation_rules_helpers_declare_parse_and_redact_response_metadata() {
+    let value = "https://example.test/speculation-rules.json";
+    let response = HttpResponse::ok([])
+      .header("Speculation-Rules", "https://example.test/stale.json")
+      .with_speculation_rules(value)
+      .expect("Speculation-Rules should be accepted");
+    let rules = response
+      .speculation_rules()
+      .expect("response Speculation-Rules should parse")
+      .expect("response Speculation-Rules should be present");
+
+    assert_eq!(rules.as_str(), value);
+    assert_eq!(rules.header_value(), value);
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(1, serialized.matches("\r\nSpeculation-Rules: ").count());
+    assert!(serialized.contains(&format!("\r\nSpeculation-Rules: {value}\r\n")));
+    assert!(!serialized.contains("stale.json"));
+
+    let response_debug = format!("{response:?}");
+    assert!(response_debug.contains("Speculation-Rules"));
+    assert!(response_debug.contains("[REDACTED]"));
+    assert!(!response_debug.contains(value));
+    assert!(!format!("{rules:?}").contains(value));
+
+    let duplicate = HttpResponse::ok([])
+      .header("Speculation-Rules", "https://example.test/one.json")
+      .header("speculation-rules", "https://example.test/two.json");
+    assert!(duplicate.speculation_rules().is_err());
+
+    let malformed = HttpResponse::ok([]).header("Speculation-Rules", "");
+    assert!(malformed.speculation_rules().is_err());
+    assert!(HttpResponse::ok([])
+      .with_speculation_rules("https://example.test/rules.json\r\nX-Injected: 1")
+      .is_err());
+  }
+
+  #[test]
   fn nel_helpers_reject_raw_crlf_and_serialize_a_single_header_line() {
     assert!(
       HttpResponse::ok([])
