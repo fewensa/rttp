@@ -3,8 +3,8 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAccessControlAllowHeaders,
   HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
-  HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAltUsed, HttpAuthorization,
-  HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
+  HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAltUsed, HttpAlternates,
+  HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
   HttpContentDisposition, HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy,
   HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeprecation, HttpDepth,
   HttpDocumentPolicy, HttpDocumentPolicyReportOnly, HttpEntityTag, HttpExpectations, HttpHost,
@@ -928,6 +928,57 @@ fn response_alt_used_helper_rejects_invalid_duplicates_and_bounds_without_hiding
   assert!(String::from_utf8(raw.to_bytes())
     .expect("response should serialize")
     .contains(&format!("\r\nAlt-Used: {oversized}\r\n")));
+}
+
+#[test]
+fn response_alternates_helper_declares_replaces_and_parses_variant_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("Alternates", r#"{ "/stale" 1 }"#)
+    .header("alternates", r#"{ "/older" 0.1 }"#)
+    .with_alternates(
+      r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }, { "/resource.fr.html" 0.8 {language fr} }"#,
+    )
+    .expect("valid Alternates metadata should be accepted");
+  let alternates: HttpAlternates = response
+    .alternates()
+    .expect("attached Alternates should parse")
+    .expect("Alternates should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(2, alternates.len());
+  assert_eq!("/resource.en.html", alternates.variants()[0].uri());
+  assert_eq!(
+    Some("text/html"),
+    alternates.variants()[0].attribute("type")
+  );
+  assert_eq!(Some("fr"), alternates.variants()[1].attribute("language"));
+  assert_eq!(1, serialized.matches("\r\nAlternates: ").count());
+  assert!(serialized.contains("\r\nAlternates: { \"/resource.en.html\" 1.0"));
+  assert!(!serialized.contains("/stale"));
+  assert!(!serialized.contains("/older"));
+}
+
+#[test]
+fn response_alternates_helper_rejects_invalid_duplicates_and_bounds_without_hiding_headers() {
+  assert!(HttpResponse::ok("body")
+    .with_alternates(r#"{ "/broken" 1.001 }"#)
+    .is_err());
+  assert!(HttpResponse::ok("body")
+    .with_alternates(r#"{ "/a" 1 }, { "/a" 1 }"#)
+    .is_err());
+
+  let malformed = HttpResponse::ok("body").header("Alternates", r#"{ "/broken" 1.001 }"#);
+  assert!(malformed.alternates().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nAlternates: { \"/broken\" 1.001 }\r\n"));
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let raw = HttpResponse::ok("body").header("Alternates", &oversized);
+  assert!(raw.alternates().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nAlternates: {oversized}\r\n")));
 }
 
 #[test]

@@ -10,6 +10,7 @@ use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
 use crate::response::AltUsed;
+use crate::response::Alternates;
 use crate::response::AuthenticationInfo;
 use crate::response::Connection;
 use crate::response::ContentDigest;
@@ -1163,6 +1164,19 @@ impl Response {
       return Ok(None);
     }
     KeepAlive::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Alternates` fields as bounded transparent-negotiation
+  /// metadata. This does not select a variant, fetch a variant URI, or
+  /// change request handling.
+  pub fn alternates(&self) -> error::Result<Option<Alternates>> {
+    let values = self.header_values("alternates");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Alternates::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

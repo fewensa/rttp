@@ -808,6 +808,22 @@ These helpers are metadata-only. RTTP does not select alternative services,
 rewrite origins, migrate sockets, retry, or change connection policy from
 `Alt-Used`.
 
+### Bounded Alternates response metadata
+
+`Response::alternates()` and server `HttpResponse::with_alternates()` /
+`HttpResponse::alternates()` parse or declare bounded RFC 2295-style
+`Alternates` variant metadata through the shared protocol `Alternates` type.
+Valid metadata preserves ordered variant URI-references, source quality text,
+standard attributes such as `type`, `language`, and `length`, quoted attribute
+values, and extension attributes. Malformed entries, invalid URIs, invalid
+quality values, duplicate variants or attributes, oversized values, and excess
+variant or attribute counts are rejected while raw headers remain available on
+parse failures; typed server declaration replaces existing raw `Alternates`
+fields.
+
+These helpers are metadata-only. RTTP does not select, rank, fetch, replay,
+redirect to, or cache variants from `Alternates`.
+
 ### Bounded Origin-Trial response metadata
 
 `Response::origin_trials()` and server `HttpResponse::with_origin_trials()` /
@@ -1564,6 +1580,7 @@ gain additional HTTP/2 header-block handling.
 | Proxy-Status | Client `Response::proxy_status` and server `HttpProxyStatus`, `HttpResponse::with_proxy_status`, and `HttpResponse::proxy_status` parse or declare bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Alt-Used | Client `Response::alt_used` and server `HttpAltUsed`, `HttpResponse::with_alt_used`, and `HttpResponse::alt_used` parse or declare bounded singleton response authority metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No alternative service selection, origin rewriting, socket migration, retry, or connection-policy behavior |
+| Alternates | Client `Response::alternates` and server `HttpAlternates`, `HttpResponse::with_alternates`, and `HttpResponse::alternates` parse or declare bounded RFC 2295-style response variant metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No variant selection, ranking, fetching, request replay, redirect, cache storage, or transparent negotiation behavior |
 | Origin-Trial | Client `Response::origin_trials` and server `HttpOriginTrials`, `HttpResponse::with_origin_trials`, and `HttpResponse::origin_trials` parse or declare bounded opaque `Origin-Trial` tokens in wire order, preserve duplicates, redact token material from debug output, and replace raw response fields on typed declaration | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Speculation-Rules | Client `Response::speculation_rules` and server `HttpSpeculationRules`, `HttpResponse::with_speculation_rules`, and `HttpResponse::speculation_rules` preserve one bounded opaque `Speculation-Rules` response field, reject duplicates and response-field injection bytes, redact debug output, and replace raw response fields on typed declaration | No speculation rule fetching, parsing, validation, prefetching, prerendering, execution, navigation changes, cache behavior, retry, or redirect behavior |
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
@@ -2750,6 +2767,7 @@ TLS or async accept loops.
 | Cross-Origin-Opener-Policy-Report-Only | `HttpCrossOriginOpenerPolicyReportOnly`, `HttpResponse::with_cross_origin_opener_policy_report_only`, and `HttpResponse::cross_origin_opener_policy_report_only` declare or parse bounded singleton COOP Report-Only metadata, reuse the canonical COOP directives, retain reporting parameters including `report-to`, and preserve raw headers on parse failures | No browsing-context isolation, report scheduling, sending, persistence, retry, routing, or `Reporting-Endpoints` validation |
 | Server-Timing | `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` declare or parse bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Alt-Used | `HttpAltUsed`, `HttpResponse::with_alt_used`, and `HttpResponse::alt_used` declare or parse bounded singleton response authority metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No alternative service selection, origin rewriting, socket migration, retry, or connection-policy behavior |
+| Alternates | `HttpAlternates`, `HttpResponse::with_alternates`, and `HttpResponse::alternates` declare or parse bounded RFC 2295-style response variant metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No variant selection, ranking, fetching, request replay, redirect, cache storage, or transparent negotiation behavior |
 | Origin-Trial | `HttpOriginTrials`, `HttpResponse::with_origin_trials`, and `HttpResponse::origin_trials` declare or parse bounded opaque `Origin-Trial` tokens in wire order, preserve duplicates, redact token material from debug output, and replace raw response fields on typed declaration | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Speculation-Rules | `HttpSpeculationRules`, `HttpResponse::with_speculation_rules`, and `HttpResponse::speculation_rules` preserve one bounded opaque `Speculation-Rules` response field, reject duplicates and response-field injection bytes, redact debug output, and replace raw response fields on typed declaration | No speculation rule fetching, parsing, validation, prefetching, prerendering, execution, navigation changes, cache behavior, retry, or redirect behavior |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpHandoff::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |

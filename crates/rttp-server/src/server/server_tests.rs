@@ -5532,6 +5532,58 @@ hello\r\n\
   }
 
   #[test]
+  fn alternates_helpers_validate_replace_and_parse_response_metadata() {
+    let response = HttpResponse::ok([])
+      .header("Alternates", r#"{ "/stale" 1 }"#)
+      .header("alternates", r#"{ "/older" 0.1 }"#)
+      .with_alternates(
+        r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }, { "/resource.fr.html" 0.8 {type "text/html; charset=utf-8"} {language fr} }"#,
+      )
+      .expect("Alternates should be accepted");
+    let alternates = response
+      .alternates()
+      .expect("response Alternates should parse")
+      .expect("response Alternates should be present");
+
+    assert_eq!(2, alternates.len());
+    assert_eq!("/resource.en.html", alternates.variants()[0].uri());
+    assert_eq!("1.0", alternates.variants()[0].quality());
+    assert_eq!(Some("text/html"), alternates.variants()[0].attribute("type"));
+    assert_eq!(Some("fr"), alternates.variants()[1].attribute("language"));
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(1, serialized.matches("\r\nAlternates: ").count());
+    assert!(serialized.contains("\r\nAlternates: { \"/resource.en.html\" 1.0"));
+    assert!(!serialized.contains("/stale"));
+    assert!(!serialized.contains("/older"));
+
+    let malformed = HttpResponse::ok([]).header("Alternates", r#"{ "/broken" 1.001 }"#);
+    assert!(malformed.alternates().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nAlternates: { \"/broken\" 1.001 }\r\n"));
+
+    let absent = HttpResponse::ok([]);
+    assert_eq!(None, absent.alternates().expect("absent Alternates is Ok(None)"));
+  }
+
+  #[test]
+  fn alternates_builder_rejects_normalized_values_over_field_limit() {
+    let tight_value = (0..256)
+      .map(|index| {
+        let padding = "a".repeat(234 + usize::from(index < 113));
+        format!(r#"{{ "/v{index}" 1 {{note {padding}}}}}"#)
+      })
+      .collect::<Vec<_>>()
+      .join(",");
+
+    assert!(tight_value.len() <= 64 * 1024);
+    assert!(HttpAlternates::parse(&tight_value).is_ok());
+    assert!(HttpResponse::ok([])
+      .with_alternates(&tight_value)
+      .is_err());
+  }
+
+  #[test]
   fn origin_trial_helpers_declare_parse_and_redact_response_metadata() {
     let response = HttpResponse::ok([])
       .header("Origin-Trial", "stale-token")

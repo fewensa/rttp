@@ -1270,6 +1270,24 @@ The helper is metadata-only. `rttp_client` does not select an alternative
 service, rewrite origins, migrate sockets, retry, or change connection policy
 based on `Alt-Used`.
 
+## Bounded Alternates response metadata
+
+`Response::alternates()` parses retained `Alternates` fields as bounded
+variant metadata through the shared protocol `Alternates` type. It returns
+`Ok(None)` when the header is absent. Valid metadata preserves variant
+URI-references, the original accepted source-quality text, and attributes
+such as `type`, `language`, `encoding`, and `length`. Each field value is
+limited to 64 KiB, the combined field bytes are limited to 64 KiB, the
+variant count is limited to 256, and each variant holds at most 256
+attributes. Malformed members, invalid URIs, invalid qvalues, duplicate
+attributes or variants, and oversized values return an error while the raw
+response headers remain available through `Response::header_value()` and
+`Response::header_values()`.
+
+The helper is metadata-only. `rttp_client` does not select a variant, fetch
+a variant URI, replay requests, resolve URIs against the response URL, apply
+`Vary` matching, or change representation policy from `Alternates`.
+
 ## Bounded Origin-Trial response metadata
 
 `Response::origin_trials()` parses retained `Origin-Trial` fields as an
@@ -1476,6 +1494,7 @@ header-block model.
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, Cache-Status, Date, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw responses on parse errors; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, retry, redirect, scheduling, or status policy |
 | Alt-Used | `Response::alt_used` parses bounded singleton response authority metadata through the shared protocol `AltUsed` type while preserving raw headers on parse failures | No alternative service selection, origin rewriting, socket migration, retry, or connection-policy behavior |
+| Alternates | `Response::alternates` parses bounded RFC 2295-style variant metadata through the shared protocol `Alternates` type, validating URIs, qvalues, attributes, duplicates, member counts, and size bounds while preserving raw headers on parse failures | No transparent content negotiation, variant selection, automatic fetch, request replay, URI resolution, cache storage, `Vary` matching, or quality ranking |
 | Origin-Trial | `Response::origin_trials` parses bounded opaque `Origin-Trial` tokens in wire order through the shared protocol `OriginTrials` type, preserves duplicates, redacts token material from debug output, and preserves raw headers on parse failures | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Speculation-Rules | `Response::speculation_rules` preserves one bounded opaque `Speculation-Rules` response field through the shared protocol `SpeculationRules` type, rejects duplicates and response-field injection bytes, redacts debug output, and preserves raw headers on parse failures | No speculation rule fetching, parsing, validation, prefetching, prerendering, execution, navigation changes, cache behavior, retry, or redirect behavior |
 | Memento-Datetime | `Response::memento_datetime` parses bounded singleton `Memento-Datetime` IMF-fixdate metadata through the protocol `MementoDatetime` type while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |

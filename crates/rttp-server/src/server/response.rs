@@ -29,6 +29,10 @@ pub use rttp_protocol::alt_svc::{
 pub use rttp_protocol::alt_used::{
   AltUsed as HttpAltUsed, AltUsedParseError as HttpAltUsedParseError,
 };
+pub use rttp_protocol::alternates::{
+  AlternateAttribute as HttpAlternateAttribute, AlternateVariant as HttpAlternateVariant,
+  Alternates as HttpAlternates, AlternatesParseError as HttpAlternatesParseError,
+};
 pub use rttp_protocol::authentication_info::{
   AuthenticationInfo as HttpAuthenticationInfo,
   AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
@@ -1787,6 +1791,24 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Alternates` response metadata without selecting
+  /// or fetching a variant.
+  pub fn with_alternates(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAlternatesParseError> {
+    let alternates = HttpAlternates::parse(value)?;
+    let header_value = alternates.header_value();
+    HttpAlternates::parse(&header_value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Alternates"));
+    self
+      .headers
+      .push(HttpHeader::new("Alternates", header_value));
+    Ok(self)
+  }
+
   /// Validates and replaces `Alt-Used` response metadata without selecting an
   /// alternative service or changing connection policy.
   pub fn with_alt_used(mut self, value: impl AsRef<str>) -> Result<Self, HttpAltUsedParseError> {
@@ -3011,6 +3033,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAltSvc::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Alternates` metadata without changing raw headers,
+  /// selecting a variant, or fetching a variant URI.
+  pub fn alternates(&self) -> Result<Option<HttpAlternates>, HttpAlternatesParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Alternates"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAlternates::parse_values(values).map(Some)
   }
 
   /// Parses attached `Alt-Used` metadata without changing raw headers,
