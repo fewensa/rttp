@@ -83,6 +83,7 @@ use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
+use rttp_protocol::surrogate_control::SurrogateControl;
 use rttp_protocol::tcn::{Tcn, TcnDirective, TcnParseError};
 use rttp_protocol::te::Te;
 use rttp_protocol::timeout::{Timeout, TimeoutType};
@@ -278,6 +279,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let cdn_cache_control =
     CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
+  let surrogate_control = SurrogateControl::parse("max-age=600, content=\"ESI/1.0\"")
+    .expect("Surrogate-Control should parse");
   let cdn_loop = CdnLoop::parse(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
     .expect("CDN-Loop request metadata should parse");
   let _: CdnLoopParseError =
@@ -598,6 +601,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(surrogate_control.directives()[1].name(), "content");
+  assert_eq!(surrogate_control.directives()[1].value(), Some("ESI/1.0"));
   assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
   assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());

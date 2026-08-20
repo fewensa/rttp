@@ -186,6 +186,7 @@ pub use rttp_protocol::strict_transport_security::{
 pub use rttp_protocol::supports_loading_mode::{
   SupportsLoadingMode, SupportsLoadingModeParseError,
 };
+pub use rttp_protocol::surrogate_control::{SurrogateControl, SurrogateControlParseError};
 pub use rttp_protocol::tcn::{Tcn, TcnDirective, TcnParseError};
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
