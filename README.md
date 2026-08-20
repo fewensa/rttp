@@ -1002,6 +1002,22 @@ while raw request headers remain available when the typed parser reports an
 error. RTTP does not create locks, refresh locks, or select an application
 timeout.
 
+`HttpClient::if_schedule_tag_match()` validates and emits one
+`If-Schedule-Tag-Match` request field through the shared protocol
+`IfScheduleTagMatch` type, which reuses the shared `EntityTag`
+representation, replacing any existing same-name field before a socket is
+opened. `Request::if_schedule_tag_match()` and
+`HttpRequest::if_schedule_tag_match()` parse received fields into the same
+representation, returning `Ok(None)` when absent. A recognized value is one
+entity-tag-shaped schedule validator such as `"sched-17"` or `W/"sched-17"`,
+bounded to 64 KiB with optional surrounding SP or HTAB and weak syntax
+preserved; malformed, wildcard, comma-list, duplicate, oversized, and
+control-byte values are rejected while raw request headers remain available
+when the typed parser reports an error. These helpers declare and observe
+request metadata only: RTTP does not compare the validator to stored calendar
+state, inspect calendars, select scheduling behavior, or apply 412 or
+scheduling policy.
+
 `HttpClient::overwrite()` validates and emits one WebDAV `Overwrite` request
 field through the shared protocol `Overwrite` type, replacing any existing
 same-name field before a socket is opened. `Request::overwrite()` and
@@ -1505,6 +1521,7 @@ gain additional HTTP/2 header-block handling.
 | Destination | Client `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::destination()` and `HttpRequest::destination()` parse typed received values while preserving raw headers on errors | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Lock-Token | Client `lock_token` emits bounded singleton WebDAV `Lock-Token` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::lock_token()` and `HttpRequest::lock_token()` parse typed request values, server responses can declare or parse `Lock-Token`, and client `Response::lock_token()` parses typed response values while preserving raw headers on errors and redacting tokens from typed debug output | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
 | Timeout | Client `timeout` emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::timeout()` and `HttpRequest::timeout()` parse typed received values while preserving raw headers on errors | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
+| If-Schedule-Tag-Match | Client `if_schedule_tag_match` emits bounded singleton `If-Schedule-Tag-Match` request metadata through the shared protocol type, reusing the shared `EntityTag` representation for strong and weak validators and replacing an existing same-name field; server `Request::if_schedule_tag_match()` and `HttpRequest::if_schedule_tag_match()` parse typed received values while preserving raw headers on errors | No schedule-tag comparison, calendar inspection, scheduling policy, retry, or 412/status-policy behavior |
 | Overwrite | Client `overwrite` emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F` and replacing an existing same-name field; server `Request::overwrite()` and `HttpRequest::overwrite()` parse typed received values while preserving raw headers on errors | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
 | Idempotency-Key | Client `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::idempotency_key()` and `HttpRequest::idempotency_key()` parse typed received values while preserving raw headers on errors, and the key is redacted from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | Client `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::sec_websocket_key()` and `HttpRequest::sec_websocket_key()` parse typed received values while preserving raw headers on errors; server responses can derive `Sec-WebSocket-Accept` with the RFC GUID plus SHA-1/base64 transform; client responses can parse and verify it against a validated key; key and accept material is redacted from typed debug output | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |

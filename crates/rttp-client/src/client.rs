@@ -25,6 +25,7 @@ use rttp_protocol::fetch_metadata::{
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::idempotency_key::IdempotencyKey;
 use rttp_protocol::if_modified_since::IfModifiedSince;
+use rttp_protocol::if_schedule_tag_match::IfScheduleTagMatch;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
@@ -874,6 +875,22 @@ impl HttpClient {
     let timeout = Timeout::parse(value.as_ref())
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Timeout", timeout.header_value())))
+  }
+
+  /// Set bounded `If-Schedule-Tag-Match` request metadata.
+  ///
+  /// The value must be one entity-tag-shaped schedule validator such as
+  /// `"sched-17"` or `W/"sched-17"`, with optional surrounding SP or HTAB
+  /// trimmed. This only validates and emits the canonical entity tag; it does
+  /// not compare the tag to stored calendar state, inspect calendars, or
+  /// apply scheduling policy. Use `header` directly for unusual values.
+  pub fn if_schedule_tag_match<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let validator = IfScheduleTagMatch::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "If-Schedule-Tag-Match",
+      validator.header_value(),
+    )))
   }
 
   /// Set bounded WebDAV `Overwrite` request metadata.

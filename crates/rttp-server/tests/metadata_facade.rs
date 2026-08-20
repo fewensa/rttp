@@ -20,17 +20,17 @@ use rttp_server::server::{
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
   HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
-  HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
-  HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
-  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite,
-  HttpOverwriteParseError, HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist,
-  HttpPermissionsPolicyAllowlistMember, HttpPermissionsPolicyDirective,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
-  HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
-  HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
-  HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpIfModifiedSinceParseError, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError,
+  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpLockToken,
+  HttpLockTokenParseError, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
+  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
+  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
+  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
   HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
@@ -183,6 +183,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("If-Modified-Since should parse");
   let if_modified_since_error: Result<HttpIfModifiedSince, HttpIfModifiedSinceParseError> =
     HttpIfModifiedSince::parse("not-a-date");
+  let if_schedule_tag_match: HttpIfScheduleTagMatch =
+    HttpIfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
+  let if_schedule_tag_match_weak: HttpIfScheduleTagMatch =
+    HttpIfScheduleTagMatch::parse("W/\"sched-17\"")
+      .expect("weak If-Schedule-Tag-Match should parse");
+  let if_schedule_tag_match_error: Result<
+    HttpIfScheduleTagMatch,
+    HttpIfScheduleTagMatchParseError,
+  > = HttpIfScheduleTagMatch::parse("*");
   let if_unmodified_since: HttpIfUnmodifiedSince =
     HttpIfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("If-Unmodified-Since should parse");
@@ -432,6 +441,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert!(if_modified_since_error.is_err());
+  assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
+  assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
+  assert!(!if_schedule_tag_match.is_weak());
+  assert!(if_schedule_tag_match_weak.is_weak());
+  assert_eq!(if_schedule_tag_match_weak.header_value(), "W/\"sched-17\"");
+  assert!(if_schedule_tag_match_error.is_err());
   assert_eq!(
     if_unmodified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -1236,6 +1251,70 @@ fn request_facade_parses_timeout_metadata_without_policy() {
   assert!(
     HttpTimeout::parse(format!("{}Second-1", " ".repeat(64 * 1024 + 1))).is_err(),
     "oversized Timeout values must fail closed"
+  );
+}
+
+#[test]
+fn request_facade_parses_if_schedule_tag_match_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: \"sched-17\"\r\n\r\n",
+  )
+  .expect("request should parse");
+  let validator: HttpIfScheduleTagMatch = request
+    .if_schedule_tag_match()
+    .expect("If-Schedule-Tag-Match should parse")
+    .expect("If-Schedule-Tag-Match should be present");
+
+  assert_eq!("\"sched-17\"", validator.header_value());
+  assert_eq!("sched-17", validator.opaque_tag());
+  assert!(!validator.is_weak());
+  assert_eq!(
+    Some("\"sched-17\""),
+    request.header("If-Schedule-Tag-Match")
+  );
+
+  let weak = HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: W/\"sched-17\"\r\n\r\n",
+  )
+  .expect("request should parse");
+  let weak_validator: HttpIfScheduleTagMatch = weak
+    .if_schedule_tag_match()
+    .expect("weak If-Schedule-Tag-Match should parse")
+    .expect("weak If-Schedule-Tag-Match should be present");
+  assert!(weak_validator.is_weak());
+  assert_eq!("sched-17", weak_validator.opaque_tag());
+
+  let absent = HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .if_schedule_tag_match()
+      .expect("missing If-Schedule-Tag-Match should be accepted")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: *\r\n\r\n",
+  )
+  .expect("malformed If-Schedule-Tag-Match request should still parse");
+  assert!(malformed.if_schedule_tag_match().is_err());
+  assert_eq!(Some("*"), malformed.header("If-Schedule-Tag-Match"));
+
+  let duplicate = HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: \"sched-16\"\r\nif-schedule-tag-match: \"sched-17\"\r\n\r\n",
+  )
+  .expect("duplicate If-Schedule-Tag-Match request should still parse");
+  assert!(duplicate.if_schedule_tag_match().is_err());
+  assert_eq!(
+    Some("\"sched-16\""),
+    duplicate.header("If-Schedule-Tag-Match")
+  );
+
+  assert!(
+    HttpIfScheduleTagMatch::parse(format!("\"{}\"", "a".repeat(64 * 1024 - 1))).is_err(),
+    "oversized If-Schedule-Tag-Match values must fail closed"
   );
 }
 

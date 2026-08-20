@@ -66,6 +66,10 @@ pub use rttp_protocol::if_modified_since::{
   IfModifiedSince as HttpIfModifiedSince,
   IfModifiedSinceParseError as HttpIfModifiedSinceParseError,
 };
+pub use rttp_protocol::if_schedule_tag_match::{
+  IfScheduleTagMatch as HttpIfScheduleTagMatch,
+  IfScheduleTagMatchParseError as HttpIfScheduleTagMatchParseError,
+};
 pub use rttp_protocol::if_unmodified_since::{
   IfUnmodifiedSince as HttpIfUnmodifiedSince,
   IfUnmodifiedSinceParseError as HttpIfUnmodifiedSinceParseError,
@@ -372,6 +376,18 @@ impl Request {
       return Ok(None);
     }
     HttpIfModifiedSince::parse_values(values).map(Some)
+  }
+
+  /// Parses one entity-tag-shaped `If-Schedule-Tag-Match` validator without
+  /// comparing it to stored calendar state or applying scheduling policy.
+  pub fn if_schedule_tag_match(
+    &self,
+  ) -> Result<Option<HttpIfScheduleTagMatch>, HttpIfScheduleTagMatchParseError> {
+    let values: Vec<&str> = self.headers_named("If-Schedule-Tag-Match").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfScheduleTagMatch::parse_values(values).map(Some)
   }
 
   /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
@@ -2306,6 +2322,23 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpIfModifiedSince::parse_values(values).map(Some)
+  }
+
+  /// Parses one entity-tag-shaped `If-Schedule-Tag-Match` validator without
+  /// comparing it to stored calendar state or applying scheduling policy.
+  pub fn if_schedule_tag_match(
+    &self,
+  ) -> Result<Option<HttpIfScheduleTagMatch>, HttpIfScheduleTagMatchParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("If-Schedule-Tag-Match"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfScheduleTagMatch::parse_values(values).map(Some)
   }
 
   /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.

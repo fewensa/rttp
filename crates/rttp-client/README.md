@@ -97,6 +97,19 @@ canonical metadata value: RTTP does not create locks, refresh locks, or select
 an application timeout. Callers needing an unusual value can retain full
 raw-header control with `header(("Timeout", "..."))`.
 
+## Bounded If-Schedule-Tag-Match metadata
+
+`HttpClient::if_schedule_tag_match(value)` sets an `If-Schedule-Tag-Match`
+request header through the shared protocol `IfScheduleTagMatch` type, which
+reuses the shared `EntityTag` representation. The helper accepts one
+entity-tag-shaped schedule validator such as `"sched-17"` or `W/"sched-17"`,
+trims HTTP OWS, and rejects empty, malformed, wildcard, comma-list, duplicate,
+injection, control-byte, and oversized (over 64 KiB) values before a socket is
+opened. It only validates and emits the canonical entity tag: RTTP does not
+compare the validator to stored calendar state, inspect calendars, or apply
+scheduling policy. Callers needing an unusual value can retain full raw-header
+control with `header(("If-Schedule-Tag-Match", "..."))`.
+
 ## Bounded WebDAV Overwrite metadata
 
 `HttpClient::overwrite(value)` sets a WebDAV `Overwrite` request header
@@ -1407,6 +1420,7 @@ header-block model.
 | Lock-Token | `lock_token` emits bounded singleton WebDAV `Lock-Token` request metadata through the shared protocol type, replacing an existing same-name field and redacting the token from typed debug output; `Response::lock_token` parses bounded singleton response metadata | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
 | Destination | `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, preserving one absolute URI and replacing an existing same-name field | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Timeout | `timeout` emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, normalizing `Second-n`/`Infinite` alternatives to lowercase and replacing an existing same-name field | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
+| If-Schedule-Tag-Match | `if_schedule_tag_match` emits bounded singleton `If-Schedule-Tag-Match` request metadata through the shared protocol type, reusing the shared `EntityTag` representation for strong and weak validators and replacing an existing same-name field | No schedule-tag comparison, calendar inspection, scheduling policy, retry, or status-policy behavior |
 | Overwrite | `overwrite` emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F` and replacing an existing same-name field | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
