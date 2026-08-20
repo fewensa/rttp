@@ -831,6 +831,21 @@ These helpers parse request metadata only. They do not select a
 representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy.
 
+## DNT request metadata
+
+Handlers can call `Request::dnt()` and `HttpRequest::dnt()` to observe bounded
+typed `DNT` tracking-preference request metadata as `HttpDnt` (the server
+alias for the shared protocol `Dnt` type). Absent fields return `Ok(None)`.
+The recognized values are the W3C Tracking Preference Expression preference
+tokens `0` (allow tracking) and `1` (do not track), matched case-sensitively
+with optional surrounding SP or HTAB. Malformed, oversized, duplicate, or
+control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not disable cookies, strip
+`Referer`, change analytics or advertising behavior, synthesize a `Tk`
+response field, or enforce tracking policy.
+
 ## Expect request metadata
 
 Handlers can call `Request::expectations()` and `HttpRequest::expectations()`
@@ -1285,6 +1300,25 @@ These helpers parse request metadata only. They do not compare
 representation, or apply cache policy. `Request::evaluate_conditional()` and
 `evaluate_conditional_request()` keep their existing RFC 9110 precedence and
 second-level date comparison behavior.
+
+## Accept-Datetime request metadata
+
+Handlers can call `Request::accept_datetime()` and
+`HttpRequest::accept_datetime()` to observe bounded typed Memento datetime
+preferences through the shared protocol `HttpAcceptDatetime` type. Absent
+fields return `Ok(None)`. A recognized value is one HTTP-date instant in
+IMF-fixdate, obsolete RFC 850, or asctime form with optional surrounding SP or
+HTAB; `datetime()` exposes the instant and `header_value()` formats it as
+IMF-fixdate. Malformed, oversized, duplicate, or control-byte values return
+`HttpAcceptDatetimeParseError` while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not select an archived
+representation, implement TimeGate behavior, add `Vary`, alter cache policy,
+or feed `evaluate_conditional_request()`. A parsed `Accept-Datetime` instant
+matches `HttpMementoDatetime` for the same HTTP-date, so handlers can attach
+`HttpResponse::with_memento_datetime(datetime)` to a representation they
+already chose; the two helpers still do not negotiate with each other.
 
 ## HTTP message signature metadata
 

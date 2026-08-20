@@ -430,6 +430,177 @@ fn h2c_oversized_upgrade_insecure_requests_reaches_server_accessor() {
   handle.join().expect("h2c server thread");
 }
 
+#[test]
+fn h2c_dnt_helper_reaches_server_accessor() {
+  for value in ["0", "1"] {
+    let server = HttpServer::bind("127.0.0.1:0")
+      .expect("bind h2c DNT server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("h2c server address");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((
+            request.target().to_string(),
+            request.header("DNT").map(str::to_string),
+            request
+              .dnt()
+              .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+              .map_err(|error| error.to_string()),
+          ))
+          .expect("record DNT");
+          HttpResponse::ok("ok")
+        })
+        .expect("serve h2c DNT request");
+    });
+
+    let response = HttpClient::new()
+      .get()
+      .url(format!("http://{addr}/catalog"))
+      .dnt(value)
+      .expect("DNT should be accepted")
+      .emit_http2_prior_knowledge()
+      .expect("receive h2c response");
+
+    assert_eq!("ok", response.body().string().expect("h2c response body"));
+    assert_eq!(
+      (
+        "/catalog".to_string(),
+        Some(value.to_string()),
+        Ok(Some(value.to_string()))
+      ),
+      rx.recv_timeout(Duration::from_secs(2))
+        .expect("recorded DNT")
+    );
+    handle.join().expect("h2c server thread");
+  }
+}
+
+#[test]
+fn h2c_malformed_dnt_reaches_server_accessor() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c malformed DNT server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("DNT").map(str::to_string),
+          request.dnt().is_err(),
+        ))
+        .expect("record malformed DNT");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve malformed h2c DNT request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/catalog"))
+    .header(("DNT", "?1"))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some("?1".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded malformed DNT")
+  );
+  handle.join().expect("h2c server thread");
+}
+
+#[test]
+fn h2c_duplicate_dnt_reaches_server_accessor() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c duplicate DNT server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("DNT").map(str::to_string),
+          request.dnt().is_err(),
+        ))
+        .expect("record duplicate DNT");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve duplicate h2c DNT request");
+  });
+
+  let _stream = send_h2c_prior_knowledge_headers(
+    addr,
+    &[
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", "/catalog"),
+      (":authority", &addr.to_string()),
+      ("dnt", "1"),
+      ("dnt", "0"),
+    ],
+  );
+
+  assert_eq!(
+    (Some("1".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded duplicate DNT")
+  );
+  handle.join().expect("h2c server thread");
+}
+
+#[test]
+fn h2c_oversized_dnt_reaches_server_accessor() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c oversized DNT server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)))
+    .with_http2_policy(Http2ServerPolicy::new().with_max_header_list_size(256 * 1024));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let raw = request.header("DNT").map(str::to_string);
+        tx.send((
+          raw.as_ref().map(String::len),
+          request.dnt().is_err(),
+          raw.is_some(),
+        ))
+        .expect("record oversized DNT");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve oversized h2c DNT request");
+  });
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/catalog"))
+    .header(("DNT", oversized.as_str()))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some(64 * 1024 + 1), true, true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded oversized DNT")
+  );
+  handle.join().expect("h2c server thread");
+}
+
 const WEBDAV_LOCK_TOKEN: &str = "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>";
 const WEBDAV_LOCK_TOKEN_MATERIAL: &str = "550e8400-e29b-41d4-a716-446655440000";
 const WEBDAV_IF: &str = "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)";

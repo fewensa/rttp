@@ -9,6 +9,7 @@ use crate::{error, Config, H2cClientPolicy};
 use futures::io::AsyncRead;
 use rttp_protocol::a_im::AIm;
 use rttp_protocol::accept_charset::AcceptCharset;
+use rttp_protocol::accept_datetime::AcceptDatetime;
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_BYTES};
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
@@ -19,6 +20,7 @@ use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
+use rttp_protocol::dnt::Dnt;
 use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
@@ -449,6 +451,18 @@ impl HttpClient {
     let save_data =
       SaveData::parse("on").map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Save-Data", save_data.header_value())))
+  }
+
+  /// Set `DNT` request metadata from the declared tracking preference.
+  ///
+  /// The value must be the W3C Tracking Preference Expression token `0`
+  /// (allow tracking) or `1` (do not track). This declares request metadata
+  /// only; it does not disable cookies, strip `Referer`, change analytics, or
+  /// apply tracking policy.
+  pub fn dnt<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let dnt = Dnt::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("DNT", dnt.header_value())))
   }
 
   /// Set `Sec-GPC: 1` request metadata.
@@ -1312,6 +1326,22 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "If-Modified-Since",
       if_modified_since.header_value(),
+    )))
+  }
+
+  /// Set one HTTP-date Memento preference, `Accept-Datetime: <http-date>`.
+  ///
+  /// Validates the supplied value as one HTTP-date through the protocol
+  /// `AcceptDatetime` type and emits the canonical IMF-fixdate form. Obsolete
+  /// RFC 850 and asctime dates are accepted and canonicalized. The helper
+  /// declares metadata only; it does not select an archived representation,
+  /// negotiate a Memento time gate, or alter cache policy.
+  pub fn accept_datetime<S: AsRef<str>>(&mut self, http_date: S) -> error::Result<&mut Self> {
+    let accept_datetime = AcceptDatetime::parse(http_date.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Accept-Datetime",
+      accept_datetime.header_value(),
     )))
   }
 

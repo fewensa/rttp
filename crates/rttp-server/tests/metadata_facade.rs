@@ -1,8 +1,9 @@
 use rttp_server::server::{
   HttpAIm, HttpAImMember, HttpAImParameter, HttpAImParseError, HttpAcceptCh, HttpAcceptCharset,
-  HttpAcceptCharsetParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
-  HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
-  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
+  HttpAcceptCharsetParseError, HttpAcceptDatetime, HttpAcceptDatetimeParseError,
+  HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAccessControlAllowCredentials,
+  HttpAccessControlAllowCredentialsParseError, HttpAccessControlAllowHeaders,
+  HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpAltUsed, HttpAltUsedParseError,
@@ -16,7 +17,7 @@ use rttp_server::server::{
   HttpCookieParseError, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeltaBase,
   HttpDeltaBaseParseError, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
-  HttpDepthParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
+  HttpDepthParseError, HttpDnt, HttpDntParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
   HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
   HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations,
@@ -188,6 +189,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   > = HttpAccessControlRequestPrivateNetwork::parse("false");
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
   let save_data_error: Result<HttpSaveData, HttpSaveDataParseError> = HttpSaveData::parse("?1");
+  let dnt: HttpDnt = HttpDnt::parse("1").expect("DNT should parse");
+  let dnt_error: Result<HttpDnt, HttpDntParseError> = HttpDnt::parse("on");
   let sec_gpc: HttpSecGpc = HttpSecGpc::parse("1").expect("Sec-GPC should parse");
   let sec_gpc_error: Result<HttpSecGpc, HttpSecGpcParseError> = HttpSecGpc::parse("0");
   let upgrade_insecure_requests: HttpUpgradeInsecureRequests =
@@ -480,6 +483,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_private_network_error.is_err());
   assert_eq!(save_data.header_value(), "on");
   assert!(save_data_error.is_err());
+  assert_eq!(dnt.header_value(), "1");
+  assert!(dnt_error.is_err());
   assert_eq!(sec_gpc.header_value(), "1");
   assert!(sec_gpc_error.is_err());
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
@@ -2216,6 +2221,60 @@ fn request_facade_parses_conditional_http_date_metadata() {
   let oversized = "0".repeat(64 * 1024 + 1);
   assert!(HttpIfModifiedSince::parse(oversized.as_str()).is_err());
   assert!(HttpIfUnmodifiedSince::parse(oversized.as_str()).is_err());
+}
+
+#[test]
+fn request_facade_parses_accept_datetime_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: Sunday, 06-Nov-94 08:49:37 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let accept_datetime: HttpAcceptDatetime = request
+    .accept_datetime()
+    .expect("Accept-Datetime should parse")
+    .expect("Accept-Datetime should be present");
+  assert_eq!(
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    accept_datetime.header_value(),
+    "obsolete HTTP-date forms must canonicalize to IMF-fixdate"
+  );
+  assert_eq!(
+    Some("Sunday, 06-Nov-94 08:49:37 GMT"),
+    request.header("Accept-Datetime"),
+    "the raw field must remain available"
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .accept_datetime()
+      .expect("absent value should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: not-a-date\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(malformed.accept_datetime().is_err());
+  assert_eq!(
+    Some("not-a-date"),
+    malformed.header("Accept-Datetime"),
+    "raw headers must remain inspectable after a parse error"
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: Sun, 06 Nov 1994 08:49:37 GMT\r\nAccept-Datetime: Sun, 06 Nov 1994 08:49:38 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.accept_datetime().is_err());
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  assert!(HttpAcceptDatetime::parse(oversized.as_str()).is_err());
+  let _: HttpAcceptDatetimeParseError =
+    HttpAcceptDatetime::parse("").expect_err("empty Accept-Datetime should be rejected");
 }
 
 #[test]

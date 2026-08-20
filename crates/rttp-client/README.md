@@ -659,7 +659,25 @@ Malformed helper values do not reject the raw response. The original
 `Memento-Datetime` field remains available through `header_value` and
 `header_values`. This helper exposes metadata only; `rttp_client` does not
 select an archival representation, negotiate `Accept-Datetime`, implement
-TimeGate behavior, retry, or change transport handling.
+TimeGate behavior, retry, or change transport handling. The matching request
+metadata helper is `accept_datetime`, which parses the same HTTP-date
+instants; the two helpers still do not negotiate with each other.
+
+## Bounded Accept-Datetime request metadata
+
+`HttpClient::accept_datetime(http_date)` sets an `Accept-Datetime` request
+header through the shared protocol `AcceptDatetime` type. The helper accepts
+one HTTP-date in IMF-fixdate, obsolete RFC 850, or asctime form, trims HTTP
+OWS, and emits the canonical IMF-fixdate form. It rejects empty, malformed,
+oversized (over 64 KiB), control-byte, and comma-joined values before a socket
+is opened, and a second `accept_datetime` call replaces the existing field.
+The parsed instant matches `Response::memento_datetime()` for the same
+HTTP-date.
+
+This helper declares metadata only; `rttp_client` does not select an archived
+representation, implement TimeGate behavior, add `Vary`, alter cache policy,
+or change conditional-request handling. Callers needing an unusual value can
+retain full raw-header control with `header(("Accept-Datetime", "..."))`.
 
 ## Bounded HTTP/1.1 Retry-After behavior
 
@@ -1165,6 +1183,19 @@ representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy. Callers that need values outside the helper can retain
 raw-header control with `header(("Save-Data", "..."))`.
 
+## Bounded DNT request metadata
+
+`HttpClient::dnt(value)` emits one `DNT` field from the user's declared
+tracking preference. The value must be the W3C Tracking Preference Expression
+token `0` (allow tracking) or `1` (do not track), validated through the shared
+protocol `Dnt` type; malformed, oversized, duplicate, or control-byte input is
+rejected before a socket is opened.
+
+This helper only declares request metadata. RTTP does not disable cookies,
+strip `Referer`, change analytics or advertising behavior, or enforce tracking
+policy. Callers that need values outside the helper can retain raw-header
+control with `header(("DNT", "..."))`.
+
 ## Bounded Sec-GPC request metadata
 
 `HttpClient::sec_gpc()` emits `Sec-GPC: 1` through the shared protocol
@@ -1587,6 +1618,7 @@ header-block model.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata through the shared protocol type | Expect metadata does not gate body transmission; raw `header(("Expect", value))` remains an escape hatch; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, request blocking, prefetch execution, or cache behavior |
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| DNT | `dnt` emits bounded `DNT: 0`/`DNT: 1` request metadata through the shared protocol `Dnt` type and rejects malformed or oversized input before connecting | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` emission, retries, or privacy-preference policy |
 | Sec-GPC | `sec_gpc` emits bounded `Sec-GPC: 1` request metadata through the shared protocol type | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
@@ -1632,6 +1664,7 @@ header-block model.
 | Origin-Trial | `Response::origin_trials` parses bounded opaque `Origin-Trial` tokens in wire order through the shared protocol `OriginTrials` type, preserves duplicates, redacts token material from debug output, and preserves raw headers on parse failures | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Speculation-Rules | `Response::speculation_rules` preserves one bounded opaque `Speculation-Rules` response field through the shared protocol `SpeculationRules` type, rejects duplicates and response-field injection bytes, redacts debug output, and preserves raw headers on parse failures | No speculation rule fetching, parsing, validation, prefetching, prerendering, execution, navigation changes, cache behavior, retry, or redirect behavior |
 | Memento-Datetime | `Response::memento_datetime` parses bounded singleton `Memento-Datetime` IMF-fixdate metadata through the protocol `MementoDatetime` type while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
+| Accept-Datetime | `accept_datetime` validates and emits bounded singleton `Accept-Datetime` request metadata through the protocol `AcceptDatetime` type, accepting obsolete HTTP-date forms and replacing an existing same-name field | No archival selection, TimeGate behavior, `Vary` injection, cache-policy changes, or conditional-request handling |
 | Allow | `Response::allow` parses bounded response `Allow` fields into an ordered HTTP method-token list | No fallback method selection, automatic retry/replay, or status-code policy behavior for `405` or `OPTIONS` |
 | Client Hints | `Response::accept_ch` and `Response::critical_ch` parse bounded, ordered Client Hints opt-in metadata while preserving raw headers on parse failures | No browser opt-in state, request-header generation, retry, persistence, or Client Hints policy |
 | Content-Security-Policy-Report-Only | `Response::content_security_policy_report_only` parses bounded `Content-Security-Policy-Report-Only` response metadata through the protocol type, preserving repeated fields in wire order and leaving raw headers observable on parse failures | No CSP enforcement, directive evaluation, report delivery, browser policy state, retry, redirect, cache behavior, or status-policy behavior |

@@ -385,7 +385,25 @@ Malformed helper values do not reject the raw response. The original
 `Memento-Datetime` field remains available through `header_value` and
 `header_values`. This helper exposes metadata only; RTTP does not select an
 archival representation, negotiate `Accept-Datetime`, implement TimeGate
-behavior, retry, or change transport handling.
+behavior, retry, or change transport handling. The matching request metadata
+helper is `accept_datetime`, which parses the same HTTP-date instants; the two
+helpers still do not negotiate with each other.
+
+### Bounded Accept-Datetime behavior
+
+`HttpClient::accept_datetime(http_date)` sets an `Accept-Datetime` request
+header through the protocol `AcceptDatetime` type as one singleton
+HTTP-date. The helper accepts IMF-fixdate, obsolete RFC 850, and asctime
+forms, trims surrounding SP and HTAB, and emits the canonical IMF-fixdate
+form. It returns a builder error for empty, malformed, control-byte,
+oversized (over 64 KiB), and comma-joined values before a socket is opened,
+and a second `accept_datetime` call replaces the existing field.
+
+This helper exposes metadata only; RTTP does not select an archived
+representation, implement TimeGate behavior, add `Vary`, alter cache policy,
+or change conditional-request handling. A parsed `Accept-Datetime` instant
+matches `Response::memento_datetime()` for the same HTTP-date, but the two
+helpers do not negotiate with each other.
 
 ### Bounded HTTP/1.1 Retry-After behavior
 
@@ -1445,6 +1463,25 @@ These helpers only declare or parse request metadata. RTTP does not select a
 representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy.
 
+### Bounded DNT request metadata
+
+`HttpClient::dnt(value)` emits one `DNT` field from the user's declared
+tracking preference. The value must be the W3C Tracking Preference Expression
+token `0` (allow tracking) or `1` (do not track), validated through the shared
+protocol `Dnt` type; malformed, oversized, or control-byte input is rejected
+before a socket is opened. On the server, `Request::dnt()` and
+`HttpRequest::dnt()` parse the same bounded singleton preference as `HttpDnt`,
+returning `Ok(None)` when the field is absent and a parser error for
+malformed, oversized, duplicate, or control-byte values while leaving the raw
+`DNT` field available.
+
+DNT is the first shared privacy-preference primitive. These helpers only
+declare or parse request metadata: RTTP does not disable cookies, strip
+`Referer`, change analytics or advertising behavior, synthesize a `Tk`
+response field, or enforce tracking policy. Related privacy-preference headers
+should reuse this same bounded singleton contract rather than inventing policy
+behavior.
+
 ### Bounded Sec-GPC request metadata
 
 `HttpClient::sec_gpc()` emits `Sec-GPC: 1`. On the server,
@@ -1660,6 +1697,7 @@ gain additional HTTP/2 header-block handling.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata through the shared protocol type | Expect metadata does not gate body transmission; raw `header(("Expect", value))` remains an escape hatch; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | Client `save_data` emits bounded `Save-Data: on` request metadata; server `Request::save_data()` and `HttpRequest::save_data()` parse typed received values while preserving raw headers on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| DNT | Client `dnt` emits bounded `DNT: 0`/`DNT: 1` request metadata through the shared protocol `Dnt` type and rejects invalid input before connecting | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` emission, retries, or privacy-preference policy |
 | Accept-Charset | Client `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type; server `Request::accept_charset()` and `HttpRequest::accept_charset()` parse received fields into `HttpRequestAcceptCharsets` | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Negotiate | Client `negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared `rttp-protocol` type, replacing an existing same-name field; server `Request::negotiate()` and `HttpRequest::negotiate()` parse received fields into `HttpNegotiate` while preserving raw headers on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN`/`Vary` synthesis, or automatic cache selection |
 | TCN | Client `Response::tcn()` and server `HttpResponse::with_tcn()`/`tcn()` share bounded RFC 2295 `TCN` response metadata through the protocol `Tcn` type while preserving raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
@@ -1698,6 +1736,7 @@ gain additional HTTP/2 header-block handling.
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers; server `HttpResponse::early_hints`/`early_hints_with_headers` construct validated bodyless `103` metadata | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, Surrogate-Control, Cache-Status, Date, Age, Expires, Last-Modified, Retry-After, and Allow | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::surrogate_control` parses bounded `Surrogate-Control` directives with duplicate rejection and aggregate-size validation while preserving raw responses on parse errors; `Response::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw responses on parse errors; `Response::date`, `Response::expires`, and `Response::last_modified_date` parse bounded singleton HTTP-date metadata through shared protocol primitives; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::retry_after` parses bounded delta-seconds or HTTP-date metadata; `Response::allow` parses bounded ordered method metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, `Surrogate-Control` to `Cache-Control` translation, automatic conditional requests, automatic sleep, retry, replay, redirect, backoff, scheduler integration, fallback method selection, or status-code policy engine |
 | Memento-Datetime | `Response::memento_datetime` parses bounded singleton `Memento-Datetime` IMF-fixdate metadata through the protocol `MementoDatetime` type while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
+| Accept-Datetime | `accept_datetime` validates and emits bounded singleton `Accept-Datetime` request metadata through the protocol `AcceptDatetime` type, accepting obsolete HTTP-date forms and replacing an existing same-name field | No archival selection, TimeGate behavior, `Vary` injection, cache-policy changes, or conditional-request handling |
 | Content-Security-Policy-Report-Only | `Response::content_security_policy_report_only`, `ContentSecurityPolicyReportOnly`, `HttpContentSecurityPolicyReportOnly`, and `HttpResponse::with_content_security_policy_report_only` share bounded opaque CSP field validation while keeping the report-only header identity distinct, preserving repeated fields in wire order and raw headers on parse failures | No CSP enforcement, directive evaluation, report delivery, browser policy state, retry, redirect, cache behavior, or status-policy behavior |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
@@ -2194,6 +2233,17 @@ values return `HttpMementoDatetimeParseError`. Raw
 These helpers do not select an archival representation, negotiate
 `Accept-Datetime`, implement TimeGate behavior, retry, or change transport
 handling.
+
+Server `Accept-Datetime` helpers expose the matching request metadata without
+adding time negotiation. `Request::accept_datetime()` and
+`HttpRequest::accept_datetime()` parse a singleton `Accept-Datetime` field
+into `HttpAcceptDatetime`; absent fields return `Ok(None)`, and malformed,
+control-byte, duplicate, and oversize values return
+`HttpAcceptDatetimeParseError` while raw request headers remain preserved.
+These helpers do not select an archived representation, implement TimeGate
+behavior, add `Vary`, alter cache policy, or feed conditional evaluation. A
+parsed `Accept-Datetime` instant matches `HttpMementoDatetime` for the same
+HTTP-date, but the two helpers do not negotiate with each other.
 
 ### Bounded HTTP/1.1 Allow behavior
 
@@ -2860,8 +2910,10 @@ TLS or async accept loops.
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, Surrogate-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::with_surrogate_control`/`surrogate_control` and client `Response::surrogate_control` parse or declare bounded `Surrogate-Control` directives through the shared protocol type, rejecting duplicates and oversized aggregate values while preserving raw headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_date`/`date`, `with_age`/`age`, `with_expires`/`expires`, `with_last_modified`/`last_modified_date`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Date`, `Age`, `Expires`, `Last-Modified`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, `Surrogate-Control` to `Cache-Control` translation, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
 | Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
+| Accept-Datetime | `Request::accept_datetime`/`HttpRequest::accept_datetime` parse bounded singleton `Accept-Datetime` request metadata into `HttpAcceptDatetime`, accepting obsolete HTTP-date forms and preserving raw headers on parse errors | No archival selection, TimeGate behavior, `Vary` injection, cache-policy changes, or conditional evaluation |
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` parse bounded typed `Sec-Fetch-*`/`Sec-Purpose` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | `Request::save_data` and `HttpRequest::save_data` parse bounded singleton `Save-Data` `on`-token metadata and preserve raw values on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| DNT | `Request::dnt` and `HttpRequest::dnt` parse bounded singleton `DNT` `0`/`1` preference metadata through `HttpDnt` and preserve raw values on errors | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` synthesis, retries, or privacy-preference policy |
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Negotiate | `Request::negotiate` and `HttpRequest::negotiate` parse bounded RFC 2295 `Negotiate` request metadata into `HttpNegotiate` through the shared `rttp-protocol` type and preserve raw values on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN`/`Vary` synthesis, or automatic cache selection |
 | TCN | `HttpResponse::with_tcn` and `HttpResponse::tcn` declare or parse bounded RFC 2295 `TCN` response metadata through `HttpTcn` and preserve raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |

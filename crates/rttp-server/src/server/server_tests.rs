@@ -351,6 +351,65 @@ fn request_save_data_parses_request_metadata_without_policy() {
 }
 
 #[test]
+fn request_dnt_parses_tracking_preference_metadata_without_policy() {
+  let absent_raw = "GET /catalog HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent.dnt().expect("missing DNT should be accepted")
+  );
+  assert_eq!(None, absent.header("DNT"));
+
+  for (value, expected) in [("0", "0"), ("1", "1")] {
+    let valid_raw = format!(
+      "GET /catalog HTTP/1.1\r\nHost: example.test\r\nDNT: {value}\r\n\r\n"
+    );
+    let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+    let valid = Request::read_next_from(&mut valid_reader)
+      .expect("valid request should parse")
+      .expect("valid request should be present");
+    assert_eq!(
+      expected,
+      valid
+        .dnt()
+        .expect("DNT should parse")
+        .expect("DNT should be present")
+        .header_value()
+    );
+  }
+
+  let malformed_raw = concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "DNT: ?1\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.dnt().is_err());
+  assert_eq!(Some("?1"), malformed.header("DNT"));
+
+  let duplicate_raw = concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "DNT: 1\r\n",
+    "dnt: 0\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.dnt().is_err());
+  assert_eq!(Some("1"), duplicate.header("DNT"));
+}
+
+#[test]
 fn request_sec_gpc_parses_request_metadata_without_policy() {
   let absent_raw = "GET /privacy HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
@@ -4835,6 +4894,80 @@ fn request_conditional_http_date_metadata_is_optional_bounded_and_rejects_invali
   )
   .expect("request should parse");
   assert!(duplicate.if_unmodified_since().is_err());
+  assert_eq!(
+    None,
+    duplicate.if_modified_since().expect("absent should be valid")
+  );
+}
+
+#[test]
+fn request_accept_datetime_metadata_is_optional_bounded_and_rejects_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.accept_datetime().expect("absent should be valid")
+  );
+
+  for value in [
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT",
+    "Sun Nov  6 08:49:37 1994",
+  ] {
+    let request = Request::from_raw_frame(
+      format!("GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: {value}\r\n\r\n")
+        .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = request
+      .accept_datetime()
+      .expect("Accept-Datetime should parse")
+      .expect("Accept-Datetime should be present");
+    assert_eq!("Sun, 06 Nov 1994 08:49:37 GMT", parsed.header_value());
+    assert_eq!(
+      Some(value),
+      request.header("Accept-Datetime"),
+      "the raw field must remain available"
+    );
+  }
+
+  for value in ["not-a-date", "", "08:49:37 06 Nov 1994"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    assert!(request.accept_datetime().is_err());
+    assert_eq!(Some(value), request.header("Accept-Datetime"));
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Accept-Datetime".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.accept_datetime().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Accept-Datetime")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: Sun, 06 Nov 1994 08:49:37 GMT\r\naccept-datetime: Sun, 06 Nov 1994 08:49:38 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.accept_datetime().is_err());
   assert_eq!(
     None,
     duplicate.if_modified_since().expect("absent should be valid")

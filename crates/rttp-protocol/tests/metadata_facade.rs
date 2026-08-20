@@ -1,5 +1,6 @@
 use rttp_protocol::a_im::AIm;
 use rttp_protocol::accept_charset::AcceptCharset;
+use rttp_protocol::accept_datetime::{AcceptDatetime, AcceptDatetimeParseError};
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::AcceptLanguage;
 use rttp_protocol::accept_ranges::AcceptRanges;
@@ -35,6 +36,7 @@ use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
+use rttp_protocol::dnt::Dnt;
 use rttp_protocol::document_policy::{DocumentPolicy, DocumentPolicyParseError};
 use rttp_protocol::document_policy_report_only::{
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError,
@@ -139,6 +141,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
     .expect("Access-Control-Request-Private-Network should parse");
   let save_data = SaveData::parse("on").expect("Save-Data should parse");
+  let dnt = Dnt::parse("1").expect("DNT should parse");
   let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
   let upgrade_insecure_requests =
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
@@ -194,6 +197,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
       .expect_err("multi-extension Sec-WebSocket-Extensions selection should be rejected");
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
+  let accept_datetime =
+    AcceptDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Accept-Datetime should parse");
+  let _: AcceptDatetimeParseError =
+    AcceptDatetime::parse("").expect_err("empty Accept-Datetime should be rejected");
   let if_schedule_tag_match =
     IfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
   let if_schedule_tag_match_weak =
@@ -382,6 +389,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(save_data.header_value(), "on");
+  assert_eq!(dnt.header_value(), "1");
   assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
@@ -505,6 +513,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert!(!format!("{sec_websocket_accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
   assert_eq!(
     if_modified_since.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    accept_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(

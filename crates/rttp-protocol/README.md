@@ -448,6 +448,20 @@ errors describe validation categories without echoing supplied values. These
 parsers report declared request metadata only; they do not create identifiers,
 decide sampling, select a tracing backend, or propagate context automatically.
 
+## Accept-Datetime
+
+`accept_datetime` parses a singleton HTTP `Accept-Datetime` request field as
+one HTTP-date instant through `httpdate`. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, malformed dates, forbidden ASCII control bytes, and oversized
+values are errors. `header_value()` formats the accepted instant as
+IMF-fixdate. The accepted instant matches what `memento_datetime` parses for
+the same HTTP-date, so the request helper and the response helper interoperate
+without negotiating with each other. This parser reports declared request
+metadata only; it does not select an archived representation, implement
+TimeGate behavior, or alter cache policy.
+
 ## If-Modified-Since
 
 `if_modified_since` parses a singleton HTTP `If-Modified-Since` request field
@@ -491,9 +505,12 @@ IMF-fixdate through `httpdate`. Each field value is bounded to 64 KiB. A
 second field is rejected after every supplied field is bound-checked.
 Surrounding SP and HTAB are trimmed as optional whitespace. Empty values,
 malformed dates, forbidden ASCII control bytes, and oversized values are
-errors. `header_value()` formats the accepted instant as IMF-fixdate. This
-parser reports declared metadata only; it does not select an archival
-representation, negotiate `Accept-Datetime`, or implement TimeGate behavior.
+errors. `header_value()` formats the accepted instant as IMF-fixdate. The
+matching request metadata helper is `Accept-Datetime`, which parses the same
+HTTP-date instants and formats the same IMF-fixdate; the two helpers still do
+not negotiate with each other. This parser reports declared metadata only; it
+does not select an archival representation, negotiate `Accept-Datetime`, or
+implement TimeGate behavior.
 
 ## Deprecation
 
@@ -1159,6 +1176,22 @@ lists, parameterized values, empty values, control bytes, and other
 unparsable input are errors.
 This parser does not apply reduced-data serving, content adaptation, or
 browser data-saver policy.
+
+## DNT
+
+`dnt` parses a singleton `DNT` request field as the first shared
+privacy-preference primitive. Each field value is bounded to 64 KiB. A second
+field is rejected after every supplied field is bound-checked. The field value
+must be exactly one of the W3C Tracking Preference Expression preference
+tokens `0` (allow tracking) or `1` (do not track), matched case-sensitively
+and returned in canonical wire form. Surrounding SP and HTAB are trimmed as
+optional whitespace. Unknown tokens, aliases (`on`, `off`, `true`, `false`,
+`?1`), lists, parameterized values, `DNT-extension` suffixes, quoted values,
+empty values, control bytes, and other unparsable input are errors.
+This parser exposes declared metadata only: it does not disable cookies, strip
+`Referer`, change analytics or advertising behavior, or enforce tracking
+policy. Related privacy-preference headers should reuse this same bounded
+singleton contract rather than inventing policy behavior.
 
 ## Sec-GPC
 
