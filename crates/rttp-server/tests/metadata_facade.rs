@@ -14,40 +14,43 @@ use rttp_server::server::{
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpContentSecurityPolicyReportOnly, HttpContentSecurityPolicyReportOnlyParseError,
   HttpCookieParseError, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDocumentPolicy,
-  HttpDocumentPolicyDirective, HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
+  HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeltaBase,
+  HttpDeltaBaseParseError, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
+  HttpDepthParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
+  HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
   HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
-  HttpIfModifiedSinceParseError, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError,
-  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpLockToken,
-  HttpLockTokenParseError, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError,
-  HttpNoVarySearch, HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials,
-  HttpOverwrite, HttpOverwriteParseError, HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist,
-  HttpPermissionsPolicyAllowlistMember, HttpPermissionsPolicyDirective,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
-  HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSameSite,
-  HttpSaveData, HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
-  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
-  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
-  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
-  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
-  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaMember,
-  HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
-  HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecPurpose,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList,
+  HttpIfModifiedSince, HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate,
+  HttpIfResourceTag, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
+  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter,
+  HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
+  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
+  HttpNegotiateDirective, HttpNegotiateParseError, HttpNoVarySearch, HttpNoVarySearchParams,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
+  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
+  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
+  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpResponse, HttpSameSite, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc,
+  HttpSecGpcParseError, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
+  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
+  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
+  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
+  HttpVariantVaryParseError, HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest,
+  HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
+  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -94,6 +97,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
   let _: &[HttpAImMember] = a_im.members();
   let _: Option<&HttpAImParameter> = a_im.members()[1].parameters().first();
+  let im: HttpIm = HttpIm::parse("diffe, gzip;profile=compact").expect("IM should parse");
+  let _: HttpImParseError =
+    HttpIm::parse("diffe, DIFFE").expect_err("duplicate IM should be rejected");
+  let _: &[HttpImMember] = im.members();
+  let _: Option<&HttpImParameter> = im.members()[1].parameters().first();
   let negotiate: HttpNegotiate =
     HttpNegotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
   let _: HttpNegotiateParseError =
@@ -111,6 +119,17 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Set-Cookie collection should parse");
   let _: HttpCookieParseError = HttpSetCookie::parse("session=abc; Path=/; path=/other")
     .expect_err("duplicate Set-Cookie attributes should be rejected");
+  let variant_vary: HttpVariantVary =
+    HttpVariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: HttpVariantVaryParseError = HttpVariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
+  let _: HttpVariantVaryParseError = HttpVariantVary::parse("a".repeat(64 * 1024 + 1))
+    .expect_err("oversized Variant-Vary should be rejected");
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5, *;q=0")
       .expect("Accept-Charset should parse");
@@ -304,8 +323,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let deprecation = HttpDeprecation::parse("?1").expect("Deprecation should parse");
   let _: HttpDeprecationParseError =
     HttpDeprecation::parse("true").expect_err("historical Deprecation token should be rejected");
+  let delta_base = HttpDeltaBase::parse("\"revision-42\"").expect("Delta-Base should parse");
+  let _: HttpDeltaBaseParseError =
+    HttpDeltaBase::parse("\"one\", \"two\"").expect_err("Delta-Base list should be rejected");
   let response = HttpResponse::ok("")
     .with_etag(HttpEntityTag::weak("revision-42"))
+    .with_delta_base(delta_base)
     .with_schedule_tag(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse"))
     .with_deprecation(HttpDeprecation::Boolean(true))
     .with_accept_ch(["Sec-CH-UA"])
@@ -573,6 +596,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     response.etag().expect("ETag should parse"),
     Some(HttpEntityTag::weak("revision-42"))
+  );
+  assert_eq!(
+    response
+      .delta_base()
+      .expect("Delta-Base should parse")
+      .expect("Delta-Base should be present")
+      .entity_tag(),
+    &HttpEntityTag::strong("revision-42")
   );
   assert_eq!(
     response.schedule_tag().expect("Schedule-Tag should parse"),
@@ -1317,6 +1348,91 @@ fn response_facade_builds_and_parses_lock_token_metadata() {
 }
 
 #[test]
+fn response_facade_builds_and_parses_im_metadata() {
+  let response = HttpResponse::ok("")
+    .header("IM", "legacy")
+    .with_im(["diffe", "gzip;profile=compact"])
+    .expect("IM metadata should be accepted");
+
+  let im = response
+    .im()
+    .expect("IM metadata should parse")
+    .expect("IM metadata should be present");
+
+  assert_eq!(im.len(), 2);
+  assert_eq!("diffe", im.members()[0].token());
+  assert_eq!("gzip", im.members()[1].token());
+  assert_eq!(Some("compact"), im.members()[1].parameters()[0].value());
+  assert_eq!("diffe, gzip;profile=compact", im.header_value());
+
+  let with_q = HttpResponse::ok("")
+    .with_im(["gzip;q=0.3"])
+    .expect("q-named IM parameters should be accepted");
+  let q_im = with_q
+    .im()
+    .expect("q-named IM metadata should parse")
+    .expect("q-named IM metadata should be present");
+  assert_eq!("gzip", q_im.members()[0].token());
+  assert_eq!("q", q_im.members()[0].parameters()[0].name());
+  assert_eq!(Some("0.3"), q_im.members()[0].parameters()[0].value());
+  assert_eq!("gzip;q=0.3", q_im.header_value());
+
+  let mut serialized = Vec::new();
+  response.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains("\r\nIM: diffe, gzip;profile=compact\r\n"));
+  assert!(!serialized.contains("\r\nIM: legacy\r\n"));
+
+  let absent = HttpResponse::ok("");
+  assert_eq!(
+    absent.im().expect("absent IM metadata should not error"),
+    None
+  );
+
+  let multi_field = HttpResponse::ok("")
+    .header("IM", "diffe")
+    .header("IM", "gzip;profile=compact, identity");
+  let multi = multi_field
+    .im()
+    .expect("multi-field IM metadata should parse")
+    .expect("multi-field IM metadata should be present");
+  assert_eq!(
+    multi.header_value(),
+    "diffe, gzip;profile=compact, identity"
+  );
+
+  let unchanged = HttpResponse::ok("").header("IM", "diffe");
+  assert!(unchanged.clone().with_im(["diffe", "DIFFE"]).is_err());
+  assert_eq!(
+    "diffe",
+    unchanged
+      .im()
+      .expect("original IM should still parse")
+      .expect("original IM should be present")
+      .header_value()
+  );
+
+  let duplicate = HttpResponse::ok("").header("IM", "diffe, DIFFE");
+  assert!(duplicate.im().is_err());
+  let duplicate_rendered =
+    String::from_utf8(duplicate.to_bytes()).expect("response should serialize");
+  assert!(duplicate_rendered.contains("\r\nIM: diffe, DIFFE\r\n"));
+
+  let oversized = format!("x{}", "a".repeat(64 * 1024));
+  let invalid = HttpResponse::ok("").header("IM", oversized);
+  assert!(invalid.im().is_err());
+  let invalid_rendered = String::from_utf8(invalid.to_bytes()).expect("response should serialize");
+  assert!(invalid_rendered.contains("\r\nIM: "));
+
+  let too_many = (0..=32)
+    .map(|index| format!("c{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let over_limit = HttpResponse::ok("").header("IM", too_many);
+  assert!(over_limit.im().is_err());
+}
+
+#[test]
 fn request_facade_parses_host_authority() {
   let request = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test:8443\r\n\r\n")
     .expect("request should parse");
@@ -1433,6 +1549,72 @@ fn request_facade_parses_lock_token_metadata_without_policy() {
     Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
     duplicate.header("Lock-Token")
   );
+}
+
+#[test]
+fn request_facade_parses_if_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: <http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [\"etag-one\"])\r\n\r\n",
+  )
+  .expect("request should parse");
+  let if_header: HttpIf = request
+    .if_header()
+    .expect("WebDAV If should parse")
+    .expect("WebDAV If should be present");
+
+  assert!(if_header.is_tagged());
+  assert_eq!(2, if_header.lists().len());
+  let list: HttpIfList = if_header.lists()[0].clone();
+  let tag: HttpIfResourceTag = list.resource_tag().expect("tagged list").clone();
+  assert_eq!("<http://example.test/src>", tag.as_str());
+  let condition: HttpIfCondition = list.conditions()[0].clone();
+  let predicate: HttpIfPredicate = condition.predicate().clone();
+  let token: HttpIfStateToken = match predicate {
+    HttpIfPredicate::StateToken(token) => token,
+    HttpIfPredicate::EntityTag(_) => panic!("expected a state token"),
+  };
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    token.as_str()
+  );
+  assert_eq!(
+    if_header.header_value(),
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+     <http://example.test/src> (Not [\"etag-one\"])"
+  );
+  assert!(!format!("{if_header:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+  assert_eq!(
+    Some(
+      "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+       (Not [\"etag-one\"])"
+    ),
+    request.header("If")
+  );
+  let _: HttpIfParseError = HttpIf::parse("(junk)").expect_err("malformed WebDAV If should fail");
+  let _: HttpIfParseError = HttpIf::parse("(Not<DAV:no-lock>)")
+    .expect_err("Not without required whitespace should be rejected");
+
+  let absent = HttpRequest::parse(b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .if_header()
+      .expect("missing WebDAV If should be accepted")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (junk)\r\n\r\n")
+      .expect("request should parse");
+  assert!(malformed.if_header().is_err());
+  assert_eq!(Some("(junk)"), malformed.header("If"));
+
+  let duplicate = HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<a:b>)\r\nIf: (<b:c>)\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.if_header().is_err());
+  assert_eq!(Some("(<a:b>)"), duplicate.header("If"));
 }
 
 #[test]
@@ -2476,7 +2658,6 @@ fn server_set_cookie_response_metadata_uses_protocol_representation() {
   assert!(String::from_utf8(malformed.to_bytes())
     .expect("response should serialize")
     .contains("\r\nSet-Cookie: session=super-secret; Path=/; path=/other\r\n"));
-
   let absent = HttpResponse::ok("body");
   assert_eq!(
     None,
@@ -2484,4 +2665,64 @@ fn server_set_cookie_response_metadata_uses_protocol_representation() {
       .set_cookies()
       .expect("missing Set-Cookie should be accepted")
   );
+}
+
+#[test]
+fn response_facade_builds_and_parses_variant_vary_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("Variant-Vary", "Accept-Encoding")
+    .with_variant_vary("Accept-Language, Sec-CH-DPR")
+    .expect("valid Variant-Vary should be accepted");
+  let variant_vary: HttpVariantVary = response
+    .variant_vary()
+    .expect("attached Variant-Vary should parse")
+    .expect("Variant-Vary should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
+  assert_eq!(1, serialized.matches("\r\nVariant-Vary: ").count());
+  assert!(serialized.contains("\r\nVariant-Vary: accept-language, sec-ch-dpr\r\n"));
+  assert!(!serialized.contains("\r\nVariant-Vary: Accept-Encoding\r\n"));
+
+  let unchanged = HttpResponse::ok("body").header("Variant-Vary", "Accept-Language");
+  assert!(unchanged
+    .clone()
+    .with_variant_vary("Accept-Language, accept-language")
+    .is_err());
+  assert_eq!(
+    "accept-language",
+    unchanged
+      .variant_vary()
+      .expect("original Variant-Vary should still parse")
+      .expect("original Variant-Vary should be present")
+      .header_value()
+  );
+
+  let absent = HttpResponse::ok("body");
+  assert_eq!(
+    None,
+    absent
+      .variant_vary()
+      .expect("missing Variant-Vary should be accepted")
+  );
+
+  let malformed = HttpResponse::ok("body").header("Variant-Vary", "Accept Language");
+  assert!(malformed.variant_vary().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nVariant-Vary: Accept Language\r\n"));
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let raw = HttpResponse::ok("body").header("Variant-Vary", &oversized);
+  assert!(raw.variant_vary().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nVariant-Vary: {oversized}\r\n")));
+  assert!(HttpResponse::ok("body")
+    .with_variant_vary(&oversized)
+    .is_err());
 }

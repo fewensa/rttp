@@ -4,6 +4,7 @@ use std::time::SystemTime;
 
 use httpdate::parse_http_date;
 use rttp_protocol::content_length::HttpContentLength;
+use rttp_protocol::delta_base::DeltaBaseParseError;
 use url::Url;
 
 use crate::error;
@@ -15,6 +16,7 @@ use crate::response::AuthenticationInfo;
 use crate::response::Connection;
 use crate::response::ContentDigest;
 use crate::response::Dav;
+use crate::response::DeltaBase;
 use crate::response::Digest;
 use crate::response::KeepAlive;
 use crate::response::Nel;
@@ -65,6 +67,7 @@ use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::document_policy::DocumentPolicy;
 use rttp_protocol::document_policy_report_only::DocumentPolicyReportOnly;
 use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
+use rttp_protocol::im::Im;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
 use rttp_protocol::lock_token::LockToken;
@@ -87,6 +90,7 @@ use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
 use rttp_protocol::surrogate_control::SurrogateControl;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
+use rttp_protocol::variant_vary::VariantVary;
 use rttp_protocol::vary::Vary;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
 use rttp_protocol::x_frame_options::XFrameOptions;
@@ -369,6 +373,18 @@ impl Response {
     }
   }
 
+  pub fn delta_base_value(&self) -> Option<&String> {
+    self.header_value("delta-base")
+  }
+
+  pub fn delta_base(&self) -> Result<Option<DeltaBase>, DeltaBaseParseError> {
+    let values = self.header_values("delta-base");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    DeltaBase::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
   pub fn schedule_tag_value(&self) -> Option<&String> {
     self.header_value("schedule-tag")
   }
@@ -513,6 +529,18 @@ impl Response {
       return Ok(None);
     }
     AcceptRanges::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `IM` response metadata without decoding or applying
+  /// instance manipulations.
+  pub fn im(&self) -> error::Result<Option<Im>> {
+    let values = self.header_values("im");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Im::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -1377,6 +1405,19 @@ impl Response {
       return Ok(None);
     }
     Vary::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `Variant-Vary` as bounded RFC 2295 variant-list metadata. This
+  /// does not construct a cache key, select a variant, or change cache
+  /// behavior.
+  pub fn variant_vary(&self) -> error::Result<Option<VariantVary>> {
+    let values = self.header_values("variant-vary");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    VariantVary::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

@@ -132,10 +132,14 @@ pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingRespon
 pub use rttp_protocol::a_im::{AIm, AImMember, AImParameter, AImParseError};
 pub use rttp_protocol::baggage::{Baggage, BaggageMember, BaggageParseError, BaggageProperty};
 pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
+pub use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};
 pub use rttp_protocol::depth::{Depth, DepthParseError};
 pub use rttp_protocol::destination::{Destination, DestinationParseError};
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+};
+pub use rttp_protocol::if_header::{
+  If, IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag, IfStateToken,
 };
 pub use rttp_protocol::if_schedule_tag_match::{IfScheduleTagMatch, IfScheduleTagMatchParseError};
 pub use rttp_protocol::lock_token::{LockToken, LockTokenParseError};
@@ -161,6 +165,7 @@ pub use rttp_protocol::trace_context::{
 pub use rttp_protocol::upgrade_insecure_requests::{
   UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
+pub use rttp_protocol::variant_vary::{VariantVary, VariantVaryParseError};
 pub use rttp_protocol::via::{Via, ViaMember, ViaParseError};
 pub use rttp_protocol::x_forwarded_for::{
   XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError,

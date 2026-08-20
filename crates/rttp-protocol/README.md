@@ -45,9 +45,46 @@ oversized values, oversized combined input, too many members or parameters,
 and a present header set that yields no member are errors. `header_value()`
 joins members with `", "`, omits quality when no `q` parameter was present,
 and otherwise emits the original q-text and accepted parameter spelling. This
-type is the shared authority for token, q-value, parameter, duplicate,
-member-count, and size validation. It reports declared request metadata only;
-it does not select a preferred instance manipulation or apply delta encodings.
+type owns `A-IM` q-value policy and reuses the canonical
+instance-manipulation token, parameter, ordering, duplicate, member-count,
+and size validator shared with `IM`. It reports declared request metadata
+only; it does not select a preferred instance manipulation or apply delta
+encodings.
+
+## IM
+
+`im` parses one or more RFC 3229 `IM` field values into an ordered list of
+instance-manipulation tokens with optional extension parameters. Each field
+value is bounded to 64 KiB, the combined raw field set is bounded to 64 KiB,
+the combined member count is bounded to 32, and each member is bounded to 16
+parameters. Tokens are RFC 9110 tokens and are retained with their accepted
+spelling. Duplicate tokens are rejected case-insensitively across one or more
+fields while the first-seen spelling is retained. Each member may carry
+parameters whose names are tokens and whose values are tokens or
+quoted-strings. Duplicate parameter names on one member are rejected
+case-insensitively. Empty members, invalid tokens, invalid parameter names or
+values, forbidden ASCII control bytes other than HTAB, oversized values,
+oversized combined input, too many members or parameters, and a present
+header set that yields no member are errors. `header_value()` joins members
+with `", "` and emits the accepted token and parameter spelling, preserving
+original quoted-string quoting. Token, parameter, ordering, duplicate,
+member-count, and size validation reuse the canonical instance-manipulation
+rules also used by `A-IM`. `q` remains an ordinary extension parameter name
+on `IM`. It reports declared response metadata only; it does not select,
+invert, decode, or apply instance manipulations and does not impose a
+`226 IM Used` status policy.
+
+## Delta-Base
+
+`delta_base` parses a singleton RFC 3229 `Delta-Base` response field into one
+entity-tag base validator. It reuses the shared `EntityTag` representation and
+therefore accepts strong and weak entity tags, trims optional OWS, serializes
+canonically through `header_value()`, and exposes the validator through
+`entity_tag()`. Missing values, duplicate fields, wildcard values, comma-lists,
+malformed entity tags, forbidden control bytes, and values over 64 KiB are
+errors. This type reports response metadata only; it does not locate cached
+entities, compare validators, apply deltas, decode instance manipulations, or
+impose a `226 IM Used` status policy.
 
 ## Negotiate
 
@@ -106,6 +143,22 @@ quoted-value, duplicate, count, and size validation. It reports response
 metadata only; it does not implement a cookie jar, persistence, domain/path
 matching, expiry enforcement, SameSite or partitioning policy, or automatic
 request `Cookie` emission.
+
+## Variant-Vary
+
+`variant_vary` parses one or more RFC 2295 `Variant-Vary` response fields into
+either the exclusive `*` wildcard or an ordered list of HTTP field-name
+tokens. Each field value is bounded to 64 KiB, the canonical serialized form
+is bounded to 64 KiB, and the named-field list is bounded to 256 entries.
+Field names match case-insensitively, reject duplicates, and emit lowercase
+in first-seen order. Wildcard values cannot be mixed with named fields or
+repeated. Empty members, non-token members, forbidden ASCII control bytes
+other than HTAB, oversized values, and a present header set that yields no
+member are errors. `header_value()` emits `*` or joins names with `", "`.
+This type is the shared authority for Variant-Vary token, wildcard,
+duplicate, member-count, ordering, and size validation. It reports response
+metadata only; it does not construct cache keys, select variants, synthesize
+`Alternates`, `TCN`, or `Vary`, or change cache selection.
 
 ## Accept-Encoding
 
@@ -280,6 +333,33 @@ forbidden ASCII control bytes are errors. `header_value()` emits the accepted
 token unchanged. This parser reports declared request metadata only; it does
 not overwrite destination resources, apply the RFC 4918 default `T` when the
 field is absent, or enforce WebDAV policy.
+
+## If
+
+`if_header` parses RFC 4918 section 10.4 WebDAV `If` request fields as typed,
+bounded condition lists. A value is either entirely untagged
+(`(<opaquelocktoken:...>) (Not <DAV:no-lock>)`) or entirely tagged
+(`<http://example.test/src> (<opaquelocktoken:...>) </dst> (Not <DAV:no-lock>)`);
+mixed productions are rejected. Each field value and the aggregate input are
+bounded to 64 KiB, the combined value is bounded to 32 lists, and the
+combined value is bounded to 256 conditions. Resource tags accept an RFC 3986
+`Simple-ref`: an absolute-URI or a path-absolute with optional query, wrapped
+in `<` and `>`. State tokens are absolute coded URLs, including
+`<DAV:no-lock>`. Conditions accept the case-sensitive `Not` token only when it
+is followed by SP or HTAB and then a state token or a bracketed entity tag
+(`[W/"etag"]`). Surrounding SP and
+HTAB are trimmed as optional whitespace; list order, repeated lists, and
+resource tags are preserved, and `header_value()` re-emits the canonical
+field text with single SP separators and the tag repeated before each of its
+lists. Empty values, empty or unterminated lists, a resource tag with no
+list, invalid state tokens or resource tags, malformed entity tags, relative
+or fragment-bearing URIs, duplicates across fields, oversized input, too many
+lists or conditions, and forbidden ASCII control bytes (including CR, LF,
+NUL, and obs-text) are errors. State tokens are redacted from typed `Debug`,
+and parse errors describe only the header and validation category. This
+parser reports declared request metadata only; it does not evaluate locks,
+entity tags, or other resource state, and it does not generate precondition
+outcomes such as 412 Precondition Failed.
 
 ## Idempotency-Key
 

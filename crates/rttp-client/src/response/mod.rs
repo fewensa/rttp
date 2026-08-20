@@ -107,6 +107,7 @@ pub use rttp_protocol::authentication_info::{
 pub use rttp_protocol::connection::{Connection, ConnectionParseError};
 pub use rttp_protocol::content_location::{ContentLocation, ContentLocationParseError};
 pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
+pub use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};
 pub use rttp_protocol::deprecation::{Deprecation, DeprecationParseError};
 pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
@@ -120,6 +121,7 @@ pub use rttp_protocol::document_policy_report_only::{
   DocumentPolicyReportOnlyValue,
 };
 pub use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
+pub use rttp_protocol::im::{Im, ImMember, ImParameter, ImParseError};
 pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::link::{LinkParameter, LinkParseError, LinkValue, LinkValues};
 pub use rttp_protocol::location::{Location, LocationParseError};
@@ -194,6 +196,7 @@ pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOrigi
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
 pub use rttp_protocol::transfer_encoding::{TransferEncoding, TransferEncodingParseError};
 pub use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
+pub use rttp_protocol::variant_vary::{VariantVary, VariantVaryParseError};
 pub use rttp_protocol::vary::{Vary, VaryParseError};
 pub use rttp_protocol::via::{Via, ViaMember, ViaParseError};
 pub use rttp_protocol::want_content_digest::{

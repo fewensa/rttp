@@ -154,6 +154,39 @@ continue to expose the original request.
 These helpers parse request metadata only. They do not select a preferred
 instance manipulation or apply delta encodings.
 
+## IM response metadata
+
+`HttpResponse::with_im(members)` validates an ordered list of
+instance-manipulation tokens, replaces any existing raw `IM` fields with one
+validated `IM` header, and returns a parse error for invalid, duplicate,
+empty, oversized, or over-limit members. `HttpResponse::im()` parses attached
+raw `IM` fields in wire order into `HttpIm`, the shared protocol parser also
+used by the client facade, and returns `Ok(None)` when the header is absent.
+Each entry exposes `token()` and ordered `parameters()`. Each field value and
+the combined raw field set are limited to 64 KiB, the combined list is
+limited to 32 members, and each member is limited to 16 parameters. Malformed,
+duplicate, or over-limit values return `HttpImParseError` while `HttpResponse`
+raw headers continue to expose the original fields.
+
+These helpers only declare and inspect response metadata. They do not decode
+or apply instance manipulations and do not change the response status.
+
+## Delta-Base response metadata
+
+`HttpResponse::with_delta_base(value)` validates and replaces attached
+`Delta-Base` response metadata with one bounded field. `HttpResponse::delta_base()`
+parses attached raw `Delta-Base` metadata into `HttpDeltaBase`, the shared
+protocol type also used by the client facade, and returns `Ok(None)` when the
+header is absent. The value is one strong or weak entity-tag base validator,
+reusing the shared `HttpEntityTag` primitive and the 64 KiB entity-tag field
+bound. Malformed values, comma-lists, duplicate fields, wildcard values,
+forbidden control bytes, and oversized values return `HttpDeltaBaseParseError`
+while raw response headers continue to expose the original fields.
+
+These helpers only declare and inspect response metadata. They do not locate
+cached entities, compare validators, apply deltas, decode instance
+manipulations, or impose a `226 IM Used` status policy.
+
 ## Negotiate request metadata
 
 Handlers can call `Request::negotiate()` and `HttpRequest::negotiate()` to
@@ -200,6 +233,22 @@ headers remain available. Typed debug output redacts cookie values.
 These helpers expose response metadata only. They do not implement a cookie
 jar, persistence, domain/path matching, expiry enforcement, SameSite or
 partitioning policy, or automatic request `Cookie` emission.
+
+## Variant-Vary response metadata
+
+`HttpResponse::with_variant_vary(value)` validates and replaces one bounded
+RFC 2295 `Variant-Vary` response field through the shared `rttp-protocol`
+primitive. `HttpResponse::variant_vary()` parses attached raw `Variant-Vary`
+metadata without changing the response. Valid metadata is either the
+exclusive `*` wildcard or an ordered list of HTTP field-name tokens,
+normalized to lowercase in first-seen order. Duplicate names, duplicate or
+mixed wildcards, malformed or empty members, oversized values, and
+control-byte injection return `HttpVariantVaryParseError` while raw response
+headers remain available.
+
+These helpers expose response metadata only. They do not construct cache
+keys, select variants, synthesize `Alternates`, update `TCN` or `Vary`, or
+change cache behavior.
 
 ## Accept-Encoding request metadata
 
@@ -928,6 +977,39 @@ control-byte values return a parser error while `Request::header()` and
 These helpers parse request metadata only. They do not overwrite destination
 resources, apply the RFC 4918 default `T` when the field is absent, or
 enforce WebDAV policy.
+
+## WebDAV If request metadata
+
+Handlers can call `Request::if_header()` and `HttpRequest::if_header()` to
+observe bounded typed RFC 4918 section 10.4 WebDAV `If` request metadata
+through the shared protocol `HttpIf` type. Absent fields return `Ok(None)`.
+A recognized value is either entirely untagged
+(`(<opaquelocktoken:...>) (Not <DAV:no-lock>)`) or entirely tagged
+(`<http://example.test/src> (<opaquelocktoken:...>) </dst> (Not <DAV:no-lock>)`);
+mixed productions are rejected. Each field value and the aggregate input are
+bounded to 64 KiB, the combined value is bounded to 32 lists and 256
+conditions. Resource tags accept an RFC 3986 `Simple-ref` (absolute-URI or
+path-absolute with optional query); state tokens are absolute coded URLs,
+including `<DAV:no-lock>`; conditions accept the case-sensitive `Not` token
+only when it is followed by SP or HTAB and then a state token or a bracketed
+entity tag (`[W/"etag"]`). List
+order, repeated lists, and resource tags are preserved, and
+`header_value()` re-emits the canonical field text. Malformed, empty,
+unterminated, mixed, duplicate, oversized, too-many-list, too-many-condition,
+or control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field. State
+tokens are redacted from typed `Debug` and from raw-header debug output.
+
+These helpers parse request metadata only. They do not evaluate locks,
+entity tags, or other resource state, and they do not generate precondition
+outcomes such as 412 Precondition Failed.
+
+Workspace HTTP/1.1 and h2c integration tests cover a metadata-only WebDAV
+matrix for `Depth`, `Destination`, `Overwrite`, `Timeout`, `Lock-Token`,
+`If`, `DAV`, `If-Schedule-Tag-Match`, and `Schedule-Tag`, including valid
+roundtrips, malformed and duplicate rejection, bounds, raw-header
+observability, and `Lock-Token`/`If` redaction. Those helpers still do not
+store resources, create locks, or enforce WebDAV method policy.
 
 ## Idempotency-Key request metadata
 

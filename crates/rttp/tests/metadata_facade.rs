@@ -8,9 +8,10 @@ use rttp::server::{
   HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCookieParseError, HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
-  HttpDepthParseError, HttpDestination, HttpDestinationParseError, HttpEntityTag, HttpExpectations,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfScheduleTagMatch,
+  HttpCrossOriginResourcePolicy, HttpDeltaBase, HttpDeltaBaseParseError, HttpDeprecation,
+  HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDestination,
+  HttpDestinationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIf, HttpIfModifiedSince, HttpIfScheduleTagMatch,
   HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError,
   HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
   HttpNegotiateDirective, HttpNegotiateParseError, HttpNel, HttpOriginTrialParseError,
@@ -28,8 +29,9 @@ use rttp::server::{
   HttpSpeculationRulesParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
   HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
   HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaParseError,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
+  HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -400,6 +402,17 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::HttpCookieParseError =
     rttp::HttpSetCookie::parse("session=abc; Path=/; path=/other")
       .expect_err("duplicate Set-Cookie attributes should be rejected");
+  let variant_vary: rttp::VariantVary =
+    rttp::VariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: rttp::VariantVaryParseError = rttp::VariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
+  let _: rttp::VariantVaryParseError = rttp::VariantVary::parse("a".repeat(64 * 1024 + 1))
+    .expect_err("oversized Variant-Vary should be rejected");
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   let baggage: rttp::Baggage =
     rttp_client::Baggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
   let _: rttp::BaggageParseError = rttp_client::Baggage::parse("tenant=1,tenant=2")
@@ -408,6 +421,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   let baggage_property: &rttp::BaggageProperty = &baggage_member.properties()[0];
   let etag: rttp::EntityTag =
     rttp_client::response::EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
+  let delta_base: rttp::DeltaBase =
+    rttp_client::response::DeltaBase::parse("\"asset-v7\"").expect("Delta-Base should parse");
+  let _: rttp::DeltaBaseParseError = rttp_client::response::DeltaBase::parse("\"one\", \"two\"")
+    .expect_err("Delta-Base list should fail");
   let schedule_tag: rttp::ScheduleTag =
     rttp_client::response::ScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
   let location: rttp::Location =
@@ -626,6 +643,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
   assert_eq!(etag, rttp::EntityTag::strong("asset-v7"));
+  assert_eq!(etag, *delta_base.entity_tag());
   assert_eq!(location.as_str(), "/next");
   assert_eq!(content_length.len(), 123);
 }
@@ -1344,6 +1362,74 @@ fn compatibility_facade_roundtrips_lock_token_metadata_without_policy() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_if_metadata_without_policy() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  let response = rttp::Http::client()
+    .method("UNLOCK")
+    .url(format!("http://{addr}/resource"))
+    .if_header(
+      "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [\"etag-one\"])",
+    )
+    .expect("WebDAV If should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle.join().expect("If capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some(
+      "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+       <http://example.test/src> (Not [\"etag-one\"])"
+    ),
+    header_value(&captured_request_text, "If")
+  );
+  assert_eq!(204, response.code());
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let if_header: HttpIf = server_request
+    .if_header()
+    .expect("server WebDAV If should parse")
+    .expect("server WebDAV If should be present");
+
+  assert!(if_header.is_tagged());
+  assert_eq!(2, if_header.lists().len());
+  assert_eq!(
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+     <http://example.test/src> (Not [\"etag-one\"])",
+    if_header.header_value()
+  );
+  assert!(!format!("{if_header:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (junk)\r\n\r\n",
+  )
+  .expect("malformed WebDAV If request should still parse");
+  assert!(malformed.if_header().is_err());
+  assert_eq!(Some("(junk)"), malformed.header("If"));
+  assert!(
+    rttp::If::parse("(Not<DAV:no-lock>)").is_err(),
+    "Not without required whitespace should be rejected"
+  );
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<a:b>)\r\nIf: (<b:c>)\r\n\r\n",
+  )
+  .expect("duplicate WebDAV If request should still parse");
+  assert!(duplicate.if_header().is_err());
+  assert_eq!(Some("(<a:b>)"), duplicate.header("If"));
+
+  assert!(
+    rttp::If::parse("x".repeat(64 * 1024 + 1)).is_err(),
+    "oversized WebDAV If values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn compatibility_facade_roundtrips_overwrite_request_metadata_without_policy() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".to_vec(),
@@ -1458,6 +1544,65 @@ fn client_a_im_helpers_parse_through_shared_server_type() {
   assert!(
     rttp::server::HttpAIm::parse(too_many).is_err(),
     "more than 32 A-IM members must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_im_response_metadata() {
+  let server_response = HttpResponse::ok(r#"{"ok":true}"#)
+    .header("IM", "legacy")
+    .with_im(["diffe", "gzip;profile=compact"])
+    .expect("IM should be accepted");
+
+  assert_eq!(
+    server_response
+      .im()
+      .expect("server IM should parse")
+      .expect("server IM should be present")
+      .header_value(),
+    "diffe, gzip;profile=compact"
+  );
+
+  let mut serialized_response = Vec::new();
+  server_response
+    .write_to(&mut serialized_response)
+    .expect("server response should serialize");
+  let response_text =
+    String::from_utf8(serialized_response.clone()).expect("server response should be utf-8");
+  assert_eq!(
+    Some("diffe, gzip;profile=compact"),
+    header_value(&response_text, "IM")
+  );
+  assert!(!response_text.contains("\r\nIM: legacy\r\n"));
+  assert_eq!(1, response_text.matches("\r\nIM: ").count());
+
+  let (addr, handle) = spawn_representation_metadata_response_server(serialized_response);
+  let client_response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .emit()
+    .expect("client request should complete");
+  handle.join().expect("IM capture server should join");
+
+  let im: rttp::Im = client_response
+    .im()
+    .expect("client IM should parse")
+    .expect("client IM should be present");
+  assert_eq!(im.len(), 2);
+  assert_eq!(im.members()[0].token(), "diffe");
+  assert_eq!(im.members()[1].token(), "gzip");
+  assert_eq!(Some("compact"), im.members()[1].parameters()[0].value());
+  assert_eq!(im.header_value(), "diffe, gzip;profile=compact");
+  assert_eq!(r#"{"ok":true}"#, client_response.body().string().unwrap());
+
+  let _: rttp::ImParseError =
+    rttp::Im::parse("diffe, DIFFE").expect_err("duplicate IM members must fail closed");
+  let q_named = rttp::Im::parse("gzip;q=0.3").expect("q-named IM parameters should parse");
+  assert_eq!(Some("0.3"), q_named.members()[0].parameters()[0].value());
+  assert!(
+    rttp::Im::parse("x".repeat(64 * 1024 + 1)).is_err(),
+    "oversized IM values must fail closed"
   );
 }
 
@@ -1621,6 +1766,17 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     .expect("Set-Cookie collection should parse");
   let _: HttpCookieParseError = HttpSetCookie::parse("session=abc; Path=/; path=/other")
     .expect_err("duplicate Set-Cookie attributes should be rejected");
+  let variant_vary: HttpVariantVary =
+    HttpVariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: HttpVariantVaryParseError = HttpVariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
+  let _: HttpVariantVaryParseError = HttpVariantVary::parse("a".repeat(64 * 1024 + 1))
+    .expect_err("oversized Variant-Vary should be rejected");
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5")
       .expect("Accept-Charset should parse");
@@ -1631,8 +1787,12 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let _: HttpAcceptLanguageParseError = HttpAcceptLanguages::parse("en; q=1.001")
     .expect_err("malformed Accept-Language should be rejected");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let delta_base = HttpDeltaBase::parse("\"revision-42\"").expect("Delta-Base should parse");
+  let _: HttpDeltaBaseParseError =
+    HttpDeltaBase::parse("\"one\", \"two\"").expect_err("Delta-Base list should be rejected");
   let response = HttpResponse::ok("")
     .with_etag(HttpEntityTag::weak("revision-42"))
+    .with_delta_base(delta_base)
     .with_schedule_tag(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse"));
   let request_method: HttpAccessControlRequestMethod =
     HttpAccessControlRequestMethod::parse("patch")
@@ -1979,6 +2139,14 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(
     response.etag().expect("ETag should parse"),
     Some(HttpEntityTag::weak("revision-42"))
+  );
+  assert_eq!(
+    response
+      .delta_base()
+      .expect("Delta-Base should parse")
+      .expect("Delta-Base should be present")
+      .entity_tag(),
+    &HttpEntityTag::strong("revision-42")
   );
   assert_eq!(
     response.schedule_tag().expect("Schedule-Tag should parse"),

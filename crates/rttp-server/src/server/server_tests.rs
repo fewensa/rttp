@@ -1345,6 +1345,83 @@ fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() 
 }
 
 #[test]
+fn delta_base_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .delta_base()
+      .expect("absent Delta-Base should parse")
+  );
+
+  let response = HttpResponse::ok([])
+    .header("Delta-Base", "\"old\"")
+    .header("delta-base", "W/\"older\"")
+    .with_delta_base(HttpDeltaBase::new(HttpEntityTag::weak("asset-v7")));
+  assert_eq!(
+    Some(HttpDeltaBase::new(HttpEntityTag::weak("asset-v7"))),
+    response.delta_base().expect("Delta-Base should parse")
+  );
+  assert_eq!(
+    vec![("Delta-Base", "W/\"asset-v7\"")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let strong = HttpResponse::ok([]).header("Delta-Base", "\"asset-v7\"");
+  assert_eq!(
+    Some(HttpDeltaBase::new(HttpEntityTag::strong("asset-v7"))),
+    strong.delta_base().expect("strong Delta-Base should parse")
+  );
+}
+
+#[test]
+fn delta_base_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"one\", \"two\""] {
+    let response = HttpResponse::ok([]).header("Delta-Base", value);
+    assert!(
+      response.delta_base().is_err(),
+      "Delta-Base should reject {value:?}"
+    );
+    assert_eq!(
+      vec![("Delta-Base", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Delta-Base", "\"one\"")
+    .header("delta-base", "W/\"two\"");
+  assert!(duplicate.delta_base().is_err());
+  assert_eq!(
+    vec![("Delta-Base", "\"one\""), ("delta-base", "W/\"two\"")],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok([]).header("Delta-Base", &oversized);
+  assert!(response.delta_base().is_err());
+  assert_eq!(
+    vec![("Delta-Base", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn schedule_tag_response_helpers_validate_replace_and_parse_singleton_metadata() {
   assert_eq!(
     None,
@@ -3729,6 +3806,123 @@ fn request_lock_token_is_optional_bounded_and_preserves_invalid_headers() {
   assert_eq!(
     Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
     duplicate.header("Lock-Token")
+  );
+}
+
+#[test]
+fn request_if_header_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"UNLOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.if_header().expect("missing value should be valid")
+  );
+
+  for (value, expected) in [
+    (
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+    ),
+    (
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+    ),
+    (
+      " \t(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \t(Not  [W/\"etag-one\"])",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [W/\"etag-one\"])",
+    ),
+  ] {
+    let valid = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .if_header()
+      .expect("value should parse")
+      .expect("If should be present");
+    assert_eq!(expected, parsed.header_value());
+  }
+  let redacted = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)\r\n\r\n",
+  )
+  .expect("request should parse")
+  .if_header()
+  .expect("value should parse")
+  .expect("If should be present");
+  assert!(!format!("{redacted:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  for value in ["", "()", "(junk)", "(</relative>)", "<relative> (<a:b>)"] {
+    let request = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.if_header().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("If"));
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("If".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.if_header().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("If")
+  );
+
+  let injected_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      (
+        "If".to_string(),
+        "(<a:b>)\r\nX-Injected: 1".to_string(),
+      ),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(injected_request.if_header().is_err());
+  assert_eq!(
+    Some("(<a:b>)\r\nX-Injected: 1"),
+    injected_request.header("If")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<a:b>)\r\nif: (<b:c>)\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.if_header().is_err());
+  assert_eq!(Some("(<a:b>)"), duplicate.header("If"));
+}
+
+#[test]
+fn request_if_metadata_does_not_drive_conditional_evaluation() {
+  let request = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(request.if_header().expect("If should parse").is_some());
+  assert_eq!(
+    HttpConditionalRequestOutcome::Proceed,
+    request.evaluate_conditional(&HttpConditionalMetadata::default()),
+    "the WebDAV If header must not drive HTTP conditional evaluation"
   );
 }
 

@@ -6,14 +6,15 @@ use rttp::server::{
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAltUsed, HttpAlternates,
   HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
   HttpContentDisposition, HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy,
-  HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeprecation, HttpDepth,
-  HttpDocumentPolicy, HttpDocumentPolicyReportOnly, HttpEntityTag, HttpExpectations, HttpHost,
-  HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime,
-  HttpNel, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpProxyStatus,
-  HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
-  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
-  HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
-  HttpScheduleTag, HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
+  HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeltaBase,
+  HttpDeprecation, HttpDepth, HttpDocumentPolicy, HttpDocumentPolicyReportOnly, HttpEntityTag,
+  HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome,
+  HttpLinkValues, HttpMementoDatetime, HttpNel, HttpOriginTrials, HttpOverwrite,
+  HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
+  HttpResponseContentEncodings, HttpRetryAfter, HttpScheduleTag, HttpServerTiming, HttpTcn,
+  HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
 };
 
 #[test]
@@ -3471,6 +3472,43 @@ fn response_etag_helper_rejects_malformed_duplicate_and_oversized_values_without
   assert!(
     serialized.contains(&format!("\r\nETag: {oversized}\r\n")),
     "raw oversized ETag header should be preserved"
+  );
+}
+
+#[test]
+fn response_delta_base_helper_declares_and_parses_metadata_without_delta_application() {
+  let absent = HttpResponse::ok("body");
+  assert_eq!(
+    None,
+    absent.delta_base().expect("absent Delta-Base should parse")
+  );
+
+  let response = HttpResponse::ok("body")
+    .header("Delta-Base", "\"old\"")
+    .with_delta_base(HttpDeltaBase::new(HttpEntityTag::weak("asset-v7")));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nDelta-Base: W/\"asset-v7\"\r\n"));
+  assert_eq!(1, serialized.matches("\r\nDelta-Base: ").count());
+  assert_eq!(
+    Some(HttpDeltaBase::new(HttpEntityTag::weak("asset-v7"))),
+    response.delta_base().expect("Delta-Base should parse")
+  );
+  assert!(serialized.ends_with("\r\n\r\nbody"));
+
+  let duplicate = HttpResponse::ok("body")
+    .header("Delta-Base", "\"one\"")
+    .header("delta-base", "W/\"two\"");
+  assert!(
+    duplicate.delta_base().is_err(),
+    "Delta-Base helper should reject duplicate singleton headers"
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok("body").header("Delta-Base", &oversized);
+  assert!(
+    response.delta_base().is_err(),
+    "Delta-Base helper should reject oversized values"
   );
 }
 

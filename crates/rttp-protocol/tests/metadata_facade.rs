@@ -31,6 +31,7 @@ use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedder
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPolicyReportOnly;
 use rttp_protocol::dav::{Dav, DavClass, DavParseError};
+use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -46,9 +47,11 @@ use rttp_protocol::fetch_metadata::{
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
 use rttp_protocol::idempotency_key::IdempotencyKey;
+use rttp_protocol::if_header::{If, IfParseError, IfPredicate};
 use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_schedule_tag_match::IfScheduleTagMatch;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
+use rttp_protocol::im::{Im, ImMember, ImParameter, ImParseError};
 use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
@@ -93,6 +96,7 @@ use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::transfer_encoding::TransferEncoding;
 use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
+use rttp_protocol::variant_vary::{VariantVary, VariantVaryParseError};
 use rttp_protocol::via::{Via, ViaParseError};
 use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
@@ -139,6 +143,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let entity_tag = EntityTag::parse("\"revision-42\"").expect("entity tag should parse");
+  let delta_base = DeltaBase::parse("\"revision-42\"").expect("Delta-Base should parse");
+  let _: DeltaBaseParseError =
+    DeltaBase::parse("\"one\", \"two\"").expect_err("Delta-Base list should fail");
   let expect = Expect::parse("100-continue, preview").expect("Expect should parse");
   let if_match = IfMatch::parse("\"revision-42\"").expect("If-Match should parse");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
@@ -192,6 +199,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     IfScheduleTagMatch::parse("W/\"sched-17\"").expect("weak If-Schedule-Tag-Match should parse");
   let if_unmodified_since = IfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Unmodified-Since should parse");
+  let if_header = If::parse(
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [\"etag-one\"])",
+  )
+  .expect("WebDAV If request metadata should parse");
   let memento_datetime =
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
@@ -309,6 +320,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
   let a_im = AIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
+  let im = Im::parse("diffe, gzip;profile=compact").expect("IM should parse");
+  let _: ImParseError = Im::parse("diffe, DIFFE").expect_err("duplicate IM should be rejected");
   let negotiate =
     Negotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
   let tcn = Tcn::parse("list, choice").expect("TCN should parse");
@@ -321,6 +334,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let _: rttp_protocol::cookie::HttpCookieParseError =
     HttpSetCookie::parse("session=abc; Path=/; path=/other")
       .expect_err("duplicate Set-Cookie attributes should be rejected");
+  let variant_vary =
+    VariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: VariantVaryParseError = VariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
   let baggage =
     Baggage::parse("tenant=acme;source=gateway,release=2026-08-19").expect("baggage should parse");
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
@@ -362,6 +379,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(entity_tag.opaque_tag(), "revision-42");
+  assert_eq!(entity_tag, *delta_base.entity_tag());
   assert!(expect.expects_continue());
   assert_eq!(["preview"], expect.unsupported());
   assert_eq!(expect.header_value(), "100-continue, preview");
@@ -496,6 +514,27 @@ fn protocol_exports_representative_bounded_metadata_types() {
     if_unmodified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
+  assert!(if_header.is_tagged());
+  assert_eq!(2, if_header.lists().len());
+  assert_eq!(
+    if_header.header_value(),
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+     <http://example.test/src> (Not [\"etag-one\"])"
+  );
+  assert!(if_header.lists()[1].conditions()[0].is_negated());
+  assert!(if_header.lists()[1].conditions()[0]
+    .predicate()
+    .is_entity_tag());
+  let _request_if_predicate: IfPredicate = if_header.lists()[0].conditions()[0].predicate().clone();
+  let _: IfParseError = If::parse(
+    "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) <http://example.test/src> (Not <DAV:no-lock>)",
+  )
+  .expect_err("mixed tagged and untagged If should be rejected");
+  let _: IfParseError = If::parse("(Not<DAV:no-lock>)")
+    .expect_err("Not without required whitespace should be rejected");
+  let _: IfParseError =
+    If::parse(r#"(Not["etag"])"#).expect_err("Not without required whitespace should be rejected");
+  assert!(!format!("{if_header:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -653,12 +692,22 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(a_im.members()[0].token(), "diffe");
   assert_eq!(a_im.members()[1].quality(), 300);
   assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
+  let _: &[ImMember] = im.members();
+  let _: Option<&ImParameter> = im.members()[1].parameters().first();
+  assert_eq!(im.members()[0].token(), "diffe");
+  assert_eq!(im.members()[1].parameters()[0].name(), "profile");
+  assert_eq!(im.header_value(), "diffe, gzip;profile=compact");
   assert_eq!(negotiate.members()[0], NegotiateDirective::Trans);
   assert_eq!(negotiate.members()[3], NegotiateDirective::Any);
   assert_eq!("trans, 1.0, feature-x=preview, *", negotiate.header_value());
   assert_eq!(tcn.members()[0], TcnDirective::List);
   assert_eq!(tcn.members()[1], TcnDirective::Choice);
   assert_eq!("list, choice", tcn.header_value());
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   assert_eq!(2, baggage.members().len());
   assert_eq!("tenant", baggage.members()[0].key());
   assert_eq!("acme", baggage.members()[0].value());

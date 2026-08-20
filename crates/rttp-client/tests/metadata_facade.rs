@@ -9,10 +9,11 @@ use rttp_client::response::{
   ContentSecurityPolicy, ContentSecurityPolicyParseError, ContentSecurityPolicyReportOnly,
   ContentSecurityPolicyReportOnlyParseError, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginOpenerPolicyReportOnly,
-  CrossOriginResourcePolicy, Digest, DocumentPolicy, DocumentPolicyParseError,
-  DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError, DocumentPolicyReportOnlyValue,
-  DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpContentLength, HttpCookieParseError,
-  HttpSameSite, HttpSetCookie, HttpSetCookies, KeepAlive, LinkValues, Location, LocationParseError,
+  CrossOriginResourcePolicy, DeltaBase, DeltaBaseParseError, Digest, DocumentPolicy,
+  DocumentPolicyParseError, DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError,
+  DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag, HttpClearSiteData,
+  HttpContentLength, HttpCookieParseError, HttpSameSite, HttpSetCookie, HttpSetCookies, Im,
+  ImMember, ImParameter, ImParseError, KeepAlive, LinkValues, Location, LocationParseError,
   LockToken, LockTokenParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
   NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
   PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
@@ -24,10 +25,10 @@ use rttp_client::response::{
   Signature, SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
   SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
   SupportsLoadingMode, SupportsLoadingModeParseError, SurrogateControl, SurrogateControlParseError,
-  Trailer, TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary,
-  VaryParseError, Via, ViaParseError, WantContentDigest, WantReprDigest, Warning, WwwAuthenticate,
-  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
-  XFrameOptionsParseError,
+  Trailer, TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary,
+  VariantVaryParseError, Vary, VaryParseError, Via, ViaParseError, WantContentDigest,
+  WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -36,11 +37,12 @@ use rttp_client::response::{
 };
 use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, Baggage, BaggageMember, BaggageParseError,
-  BaggageProperty, Depth, DepthParseError, Destination, DestinationParseError, HttpClient,
-  IfScheduleTagMatch, IfScheduleTagMatchParseError, Negotiate, NegotiateDirective,
-  NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Tcn, TcnDirective, TcnParseError, Timeout,
-  TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  BaggageProperty, Depth, DepthParseError, Destination, DestinationParseError, HttpClient, If,
+  IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag, IfScheduleTagMatch,
+  IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective, NegotiateParseError,
+  Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc,
+  SecGpcParseError, SecPurpose, Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError,
+  TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
   TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
   Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError,
   XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
@@ -124,6 +126,26 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     IfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
   let _: IfScheduleTagMatchParseError =
     IfScheduleTagMatch::parse("*").expect_err("wildcard If-Schedule-Tag-Match should be rejected");
+  let if_header = If::parse(
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [\"etag-one\"])",
+  )
+  .expect("WebDAV If should parse");
+  let _: IfParseError = If::parse("(junk)").expect_err("malformed WebDAV If should be rejected");
+  let _: IfParseError = If::parse("(Not<DAV:no-lock>)")
+    .expect_err("Not without required whitespace should be rejected");
+  let _request_if: If = if_header.clone();
+  let _request_if_list: IfList = if_header.lists()[0].clone();
+  let _request_if_condition: IfCondition = if_header.lists()[0].conditions()[0].clone();
+  let _request_if_predicate: IfPredicate = if_header.lists()[0].conditions()[0].predicate().clone();
+  let _request_if_state_token: IfStateToken = match if_header.lists()[0].conditions()[0].predicate()
+  {
+    IfPredicate::StateToken(token) => token.clone(),
+    IfPredicate::EntityTag(_) => panic!("expected a state token"),
+  };
+  let _request_if_resource_tag: IfResourceTag = if_header.lists()[0]
+    .resource_tag()
+    .expect("tagged list")
+    .clone();
   let overwrite = Overwrite::parse("F").expect("Overwrite should parse");
   let _: OverwriteParseError =
     Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
@@ -157,6 +179,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect_err("empty Content-Security-Policy-Report-Only should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
   let etag = EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
+  let delta_base = DeltaBase::parse("\"asset-v7\"").expect("Delta-Base should parse");
+  let _: DeltaBaseParseError =
+    DeltaBase::parse("\"one\", \"two\"").expect_err("Delta-Base list should fail");
   let schedule_tag = ScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
   let location = Location::parse("/next").expect("Location should parse");
   let _: LocationParseError = Location::parse("").expect_err("empty Location should be rejected");
@@ -178,6 +203,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: AImParseError = AIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
   let _: &[AImMember] = a_im.members();
   let _: Option<&AImParameter> = a_im.members()[1].parameters().first();
+  let im: Im = Im::parse("diffe, gzip;profile=compact").expect("IM should parse");
+  let _: ImParseError = Im::parse("diffe, DIFFE").expect_err("duplicate IM should be rejected");
+  let _: &[ImMember] = im.members();
+  let _: Option<&ImParameter> = im.members()[1].parameters().first();
   let negotiate: Negotiate =
     Negotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
   let _: NegotiateParseError =
@@ -194,6 +223,17 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: HttpCookieParseError = HttpSetCookie::parse("session=abc; Path=/; path=/other")
     .expect_err("duplicate Set-Cookie attributes should be rejected");
   let _: &[TcnDirective] = tcn.members();
+  let variant_vary: VariantVary =
+    VariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: VariantVaryParseError = VariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
+  let _: VariantVaryParseError = VariantVary::parse("a".repeat(64 * 1024 + 1))
+    .expect_err("oversized Variant-Vary should be rejected");
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10").expect("Want-Repr-Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
@@ -427,6 +467,18 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
   assert!(!if_schedule_tag_match.is_weak());
   assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
+  assert!(if_header.is_tagged());
+  assert_eq!(2, if_header.lists().len());
+  assert_eq!(
+    if_header.header_value(),
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+     <http://example.test/src> (Not [\"etag-one\"])"
+  );
+  assert!(if_header.lists()[1].conditions()[0].is_negated());
+  assert!(if_header.lists()[1].conditions()[0]
+    .predicate()
+    .is_entity_tag());
+  assert!(!format!("{if_header:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
@@ -437,6 +489,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(digest.entries().len(), 1);
   assert_eq!(etag, EntityTag::strong("asset-v7"));
+  assert_eq!(etag, *delta_base.entity_tag());
   assert_eq!(schedule_tag.header_value(), "\"sched-17\"");
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
@@ -455,6 +508,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(a_im.members()[0].token(), "diffe");
   assert_eq!(a_im.members()[1].quality(), 300);
   assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
+  assert_eq!(im.members()[0].token(), "diffe");
+  assert_eq!(im.members()[1].parameters()[0].name(), "profile");
+  assert_eq!(im.header_value(), "diffe, gzip;profile=compact");
   assert_eq!(negotiate.members()[0], NegotiateDirective::Trans);
   assert_eq!(negotiate.members()[3], NegotiateDirective::Any);
   assert_eq!("trans, 1.0, feature-x=preview, *", negotiate.header_value());
@@ -1406,5 +1462,57 @@ fn response_facade_parses_shared_set_cookie_metadata() {
   assert_eq!(
     Some(&"session=super-secret; Path=/; path=/other".to_string()),
     malformed.header_value("Set-Cookie")
+  );
+}
+
+#[test]
+fn response_facade_parses_variant_vary_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nVariant-Vary: Accept-Language\r\nVariant-Vary: Sec-CH-DPR\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  let variant_vary = response
+    .variant_vary()
+    .expect("Variant-Vary should parse")
+    .expect("Variant-Vary should be present");
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
+
+  let absent = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  assert!(absent
+    .variant_vary()
+    .expect("missing Variant-Vary should be accepted")
+    .is_none());
+
+  let malformed = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nVariant-Vary: Accept-Language, accept-language\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(malformed.variant_vary().is_err());
+  assert_eq!(
+    Some(&"Accept-Language, accept-language".to_string()),
+    malformed.header_value("Variant-Vary")
+  );
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let oversized_response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    format!("HTTP/1.1 200 OK\r\nVariant-Vary: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("oversized Variant-Vary should remain on the raw response");
+  assert!(oversized_response.variant_vary().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Variant-Vary")
   );
 }

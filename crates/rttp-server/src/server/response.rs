@@ -100,6 +100,9 @@ pub use rttp_protocol::cross_origin_resource_policy::{
 pub use rttp_protocol::dav::{
   Dav as HttpDav, DavClass as HttpDavClass, DavParseError as HttpDavParseError,
 };
+pub use rttp_protocol::delta_base::{
+  DeltaBase as HttpDeltaBase, DeltaBaseParseError as HttpDeltaBaseParseError,
+};
 pub use rttp_protocol::deprecation::{
   Deprecation as HttpDeprecation, DeprecationParseError as HttpDeprecationParseError,
 };
@@ -117,6 +120,10 @@ pub use rttp_protocol::document_policy_report_only::{
   DocumentPolicyReportOnlyDirective as HttpDocumentPolicyReportOnlyDirective,
   DocumentPolicyReportOnlyParseError as HttpDocumentPolicyReportOnlyParseError,
   DocumentPolicyReportOnlyValue as HttpDocumentPolicyReportOnlyValue,
+};
+pub use rttp_protocol::im::{
+  Im as HttpIm, ImMember as HttpImMember, ImParameter as HttpImParameter,
+  ImParseError as HttpImParseError,
 };
 pub use rttp_protocol::keep_alive::{
   KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
@@ -222,6 +229,9 @@ pub use rttp_protocol::tcn::{
 };
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
+};
+pub use rttp_protocol::variant_vary::{
+  VariantVary as HttpVariantVary, VariantVaryParseError as HttpVariantVaryParseError,
 };
 pub use rttp_protocol::via::{Via as HttpVia, ViaParseError as HttpViaParseError};
 pub use rttp_protocol::www_authenticate::{
@@ -1841,6 +1851,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Variant-Vary` response metadata without
+  /// constructing a cache key or selecting a variant.
+  pub fn with_variant_vary(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpVariantVaryParseError> {
+    let variant_vary = HttpVariantVary::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Variant-Vary"));
+    self
+      .headers
+      .push(HttpHeader::new("Variant-Vary", variant_vary.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Alt-Used` response metadata without selecting an
   /// alternative service or changing connection policy.
   pub fn with_alt_used(mut self, value: impl AsRef<str>) -> Result<Self, HttpAltUsedParseError> {
@@ -1985,6 +2011,16 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("ETag", entity_tag.header_value()));
+    self
+  }
+
+  pub fn with_delta_base(mut self, delta_base: HttpDeltaBase) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Delta-Base"));
+    self
+      .headers
+      .push(HttpHeader::new("Delta-Base", delta_base.header_value()));
     self
   }
 
@@ -2147,6 +2183,23 @@ impl HttpResponse {
       HttpAcceptRanges::none().header_value(),
     ));
     self
+  }
+
+  /// Validates and replaces `IM` response metadata.
+  ///
+  /// This helper only declares metadata: it does not decode or apply instance
+  /// manipulations and does not change the response status.
+  pub fn with_im<I, M>(mut self, members: I) -> Result<Self, HttpImParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    let im = HttpIm::from_members(members)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("IM"));
+    self.headers.push(HttpHeader::new("IM", im.header_value()));
+    Ok(self)
   }
 
   pub fn with_age(mut self, delta_seconds: u64) -> Self {
@@ -3146,6 +3199,21 @@ impl HttpResponse {
     HttpTcn::parse_values(values).map(Some)
   }
 
+  /// Parses attached `Variant-Vary` metadata without changing raw headers,
+  /// constructing a cache key, or selecting a variant.
+  pub fn variant_vary(&self) -> Result<Option<HttpVariantVary>, HttpVariantVaryParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Variant-Vary"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVariantVary::parse_values(values).map(Some)
+  }
+
   /// Parses attached `Alt-Used` metadata without changing raw headers,
   /// alternative service selection, origins, or connections.
   pub fn alt_used(&self) -> Result<Option<HttpAltUsed>, HttpAltUsedParseError> {
@@ -3289,6 +3357,19 @@ impl HttpResponse {
     HttpEntityTag::parse(value).map(Some)
   }
 
+  pub fn delta_base(&self) -> Result<Option<HttpDeltaBase>, HttpDeltaBaseParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Delta-Base"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDeltaBase::parse_values(values).map(Some)
+  }
+
   pub fn schedule_tag(&self) -> Result<Option<HttpScheduleTag>, HttpScheduleTagParseError> {
     let values: Vec<&str> = self
       .headers
@@ -3393,6 +3474,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAcceptRanges::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `IM` response metadata without changing raw headers.
+  ///
+  /// This helper only exposes metadata: it does not decode or apply instance
+  /// manipulations and does not change the response status.
+  pub fn im(&self) -> Result<Option<HttpIm>, HttpImParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("IM"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIm::parse_values(values).map(Some)
   }
 
   pub fn content_range(&self) -> Result<Option<HttpContentRange>, HttpContentRangeParseError> {
@@ -5055,6 +5153,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("if")
     || name.eq_ignore_ascii_case("lock-token")
     || name.eq_ignore_ascii_case("origin-trial")
     || name.eq_ignore_ascii_case("proxy-authorization")
