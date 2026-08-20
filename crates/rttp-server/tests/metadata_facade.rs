@@ -15,13 +15,13 @@ use rttp_server::server::{
   HttpContentSecurityPolicyReportOnly, HttpContentSecurityPolicyReportOnlyParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
-  HttpDocumentPolicyParseError, HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError,
-  HttpExpectations, HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError,
-  HttpIfModifiedSince, HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince,
-  HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError,
-  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
+  HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDocumentPolicy,
+  HttpDocumentPolicyDirective, HttpDocumentPolicyParseError, HttpDocumentPolicyValue,
+  HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
+  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards,
+  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
   HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
@@ -31,12 +31,12 @@ use rttp_server::server::{
   HttpSecWebSocketKeyParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
   HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
-  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
-  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
-  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecPurpose,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -69,6 +69,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpOriginTrials::parse_values(["token-one", "token-two"]).expect("Origin-Trial should parse");
   let _: HttpOriginTrialParseError = HttpOriginTrials::parse("token\r\nX-Injected: 1")
     .expect_err("injected Origin-Trial should be rejected");
+  let speculation_rules: HttpSpeculationRules =
+    HttpSpeculationRules::parse("https://example.test/speculation-rules.json")
+      .expect("Speculation-Rules should parse");
+  let _: HttpSpeculationRulesParseError =
+    HttpSpeculationRules::parse("https://example.test/rules.json\r\nX-Injected: 1")
+      .expect_err("injected Speculation-Rules should be rejected");
   let request_method: HttpAccessControlRequestMethod =
     HttpAccessControlRequestMethod::parse("patch")
       .expect("Access-Control-Request-Method should parse");
@@ -111,6 +117,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
   let max_forwards_error: Result<HttpMaxForwards, HttpMaxForwardsParseError> =
     HttpMaxForwards::parse("4294967296");
+  let depth: HttpDepth = HttpDepth::parse("infinity").expect("Depth should parse");
+  let depth_error: Result<HttpDepth, HttpDepthParseError> = HttpDepth::parse("2");
   let expectations: HttpExpectations =
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let expectations_error: Result<HttpExpectations, HttpExpectParseError> =
@@ -259,6 +267,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
   assert!(!format!("{origin_trials:?}").contains("token-one"));
+  assert_eq!(
+    speculation_rules.header_value(),
+    "https://example.test/speculation-rules.json"
+  );
+  assert!(!format!("{speculation_rules:?}").contains("speculation-rules.json"));
   assert_eq!("PATCH", request_method.method());
   assert!(request_method_error.is_err());
   assert_eq!(
@@ -282,6 +295,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
   assert!(max_forwards_error.is_err());
+  assert_eq!(HttpDepth::Infinity, depth);
+  assert_eq!("infinity", depth.header_value());
+  assert!(depth_error.is_err());
   assert!(expectations.expects_continue());
   assert_eq!(["preview"], expectations.unsupported());
   assert_eq!(expectations.header_value(), "100-continue, preview");
@@ -861,6 +877,42 @@ fn request_facade_parses_max_forwards_metadata() {
 
   assert_eq!(0, max_forwards.value());
   assert_eq!("0", max_forwards.header_value());
+}
+
+#[test]
+fn request_facade_parses_depth_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"PROPFIND /collection HTTP/1.1\r\nHost: example.test\r\nDepth: INFINITY\r\n\r\n",
+  )
+  .expect("request should parse");
+  let depth: HttpDepth = request
+    .depth()
+    .expect("Depth should parse")
+    .expect("Depth should be present");
+
+  assert_eq!(HttpDepth::Infinity, depth);
+  assert_eq!("infinity", depth.header_value());
+  assert_eq!(Some("INFINITY"), request.header("Depth"));
+
+  let absent = HttpRequest::parse(b"PROPFIND /collection HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.depth().expect("missing Depth should be accepted")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"PROPFIND /collection HTTP/1.1\r\nHost: example.test\r\nDepth: 2\r\n\r\n")
+      .expect("request should parse");
+  assert!(malformed.depth().is_err());
+  assert_eq!(Some("2"), malformed.header("Depth"));
+
+  let duplicate = HttpRequest::parse(
+    b"PROPFIND /collection HTTP/1.1\r\nHost: example.test\r\nDepth: 0\r\ndepth: 1\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.depth().is_err());
+  assert_eq!(Some("0"), duplicate.header("Depth"));
 }
 
 #[test]
@@ -1575,5 +1627,45 @@ fn response_facade_builds_and_parses_origin_trial_metadata() {
     .contains(&format!("\r\nOrigin-Trial: {oversized}\r\n")));
   assert!(HttpResponse::ok("body")
     .with_origin_trials(["token\r\nX-Injected: 1"])
+    .is_err());
+}
+
+#[test]
+fn response_facade_builds_and_parses_speculation_rules_metadata() {
+  let value = "https://example.test/speculation-rules.json";
+  let response = HttpResponse::ok("body")
+    .header("Speculation-Rules", "https://example.test/stale.json")
+    .with_speculation_rules(value)
+    .expect("valid Speculation-Rules metadata should be accepted");
+  let rules: HttpSpeculationRules = response
+    .speculation_rules()
+    .expect("attached Speculation-Rules should parse")
+    .expect("Speculation-Rules should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(rules.as_str(), value);
+  assert_eq!(rules.header_value(), value);
+  assert_eq!(1, serialized.matches("\r\nSpeculation-Rules: ").count());
+  assert!(serialized.contains(&format!("\r\nSpeculation-Rules: {value}\r\n")));
+  assert!(!serialized.contains("stale.json"));
+  assert!(!format!("{rules:?}").contains(value));
+
+  let absent = HttpResponse::ok("body");
+  assert_eq!(
+    None,
+    absent
+      .speculation_rules()
+      .expect("missing Speculation-Rules should be accepted")
+  );
+
+  let duplicate = HttpResponse::ok("body")
+    .header("Speculation-Rules", "https://example.test/one.json")
+    .header("speculation-rules", "https://example.test/two.json");
+  assert!(duplicate.speculation_rules().is_err());
+
+  let malformed = HttpResponse::ok("body").header("Speculation-Rules", "");
+  assert!(malformed.speculation_rules().is_err());
+  assert!(HttpResponse::ok("body")
+    .with_speculation_rules("https://example.test/rules.json\r\nX-Injected: 1")
     .is_err());
 }

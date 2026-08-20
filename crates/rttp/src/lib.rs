@@ -28,17 +28,17 @@ pub use rttp_client::response::{
   PermissionsPolicy, PermissionsPolicyAllowlist, PermissionsPolicyAllowlistMember,
   PermissionsPolicyDirective, PermissionsPolicyParseError, Pragma, PragmaParseError, ReprDigest,
   SecWebSocketAccept, SecWebSocketAcceptParseError, ServiceWorkerAllowed,
-  ServiceWorkerAllowedParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  SupportsLoadingMode, SupportsLoadingModeParseError, Upgrade, UpgradeParseError,
-  WantContentDigest, WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge,
-  WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  ServiceWorkerAllowedParseError, SpeculationRules, SpeculationRulesParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
+  SupportsLoadingModeParseError, Upgrade, UpgradeParseError, WantContentDigest, WantReprDigest,
+  WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{
-  Baggage, BaggageMember, BaggageParseError, BaggageProperty, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser, SecPurpose, TraceParent, TraceParentParseError, TraceState,
-  TraceStateMember, TraceStateParseError,
+  Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose, TraceParent, TraceParentParseError,
+  TraceState, TraceStateMember, TraceStateParseError,
 };
 
 impl Http {

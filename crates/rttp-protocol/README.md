@@ -121,6 +121,18 @@ canonical decimal form. This parser reports declared metadata only; it does
 not decrement the hop count, route through proxies, select TRACE or OPTIONS,
 or apply forwarding policy.
 
+## Depth
+
+`depth` parses a singleton WebDAV `Depth` request field as one of `0`, `1`,
+or `infinity`. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. Surrounding SP and HTAB
+are trimmed as optional whitespace, and `infinity` is accepted
+case-insensitively but emitted in lowercase. Empty values, unsupported depth
+tokens, comma-lists, oversized values, and forbidden ASCII control bytes are
+errors. `header_value()` emits the canonical singleton value. This parser
+reports declared request metadata only; it does not traverse resources,
+select WebDAV methods, or enforce method policy.
+
 ## Idempotency-Key
 
 `idempotency_key` parses a singleton HTTP `Idempotency-Key` request field as
@@ -962,6 +974,15 @@ case-insensitive comparison. Empty members, strings, integers, inner lists,
 parameterized items, non-token members, and oversized values are rejected.
 The parser reports declared metadata only: it does not prerender documents,
 admit fenced frames, change navigation, or alter resource loading.
+
+## Speculation-Rules
+
+`speculation_rules` preserves one bounded `Speculation-Rules` response field
+value as opaque metadata. The value is limited to 64 KiB, duplicate fields are
+rejected, and control bytes that could inject response fields are rejected.
+Typed `Debug` reports only the byte length, and parse errors do not echo the
+field value. The parser does not fetch, parse, validate, or execute
+speculation rule resources.
 
 ## Pragma
 

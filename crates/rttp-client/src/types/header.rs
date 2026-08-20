@@ -117,7 +117,7 @@ impl fmt::Debug for DebugHeaderValue<'_> {
   }
 }
 
-fn is_sensitive_debug_header(name: &str) -> bool {
+pub(crate) fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
@@ -126,6 +126,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("sec-websocket-accept")
     || name.eq_ignore_ascii_case("sec-websocket-key")
     || name.eq_ignore_ascii_case("set-cookie")
+    || name.eq_ignore_ascii_case("speculation-rules")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
     || name.eq_ignore_ascii_case("baggage")
@@ -296,6 +297,10 @@ mod tests {
       ("Origin-Trial", "secret-origin-trial-token"),
       ("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
       ("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="),
+      (
+        "Speculation-Rules",
+        "https://example.test/speculation-rules.json",
+      ),
     ] {
       let debug = format!("{:?}", Header::new(name, secret));
       assert!(debug.contains(name));

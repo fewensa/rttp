@@ -554,6 +554,22 @@ oversized values are rejected.
 These helpers only declare and parse metadata. RTTP does not prerender
 documents, admit fenced frames, change navigation, or alter resource loading.
 
+## Speculation-Rules response metadata
+
+`HttpResponse::with_speculation_rules(value)` validates a declared opaque
+`Speculation-Rules` value through the shared protocol parser and replaces any
+existing raw `Speculation-Rules` fields with one field.
+`HttpResponse::speculation_rules()` parses attached raw fields into
+`HttpSpeculationRules`, returning `Ok(None)` when absent and parser errors
+without changing raw fields.
+Values are bounded to 64 KiB, duplicate fields fail closed, and control bytes
+that could inject response fields are rejected. Typed `Debug` and typed parse
+errors do not dump the field value.
+
+These helpers only declare and parse metadata. RTTP does not fetch, parse,
+validate, or execute speculation rule resources, and it does not prefetch,
+prerender, change navigation, or alter cache behavior based on this field.
+
 ## Want-Content-Digest request metadata
 
 Handlers can call `Request::want_content_digest()` and
@@ -665,6 +681,20 @@ expose the original raw field.
 
 These helpers parse request metadata only. They do not decrement the hop
 count, route a request, select TRACE or OPTIONS, or apply forwarding policy.
+
+## WebDAV Depth request metadata
+
+Handlers can call `Request::depth()` and `HttpRequest::depth()` to observe
+bounded typed WebDAV `Depth` request metadata through the shared protocol
+`HttpDepth` type. Absent fields return `Ok(None)`. Recognized values are the
+singleton depth values `0`, `1`, and `infinity`, with optional surrounding SP
+or HTAB and lowercase canonical emission for `infinity`. Malformed,
+oversized, duplicate, or control-byte values return a parser error while
+`Request::header()` and `HttpRequest::header()` continue to expose the
+original raw field.
+
+These helpers parse request metadata only. They do not traverse resources,
+select WebDAV methods, or enforce method policy.
 
 ## Idempotency-Key request metadata
 

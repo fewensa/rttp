@@ -2984,6 +2984,46 @@ fn sync_client_and_server_exchange_bounded_idempotency_key_metadata_without_poli
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_depth_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Depth server");
+  let addr = server.local_addr().expect("Depth server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .depth()
+            .expect("Depth should parse")
+            .map(|depth| depth.header_value().to_string()),
+          request.header("Depth").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Depth metadata");
+        HttpResponse::new(207, "Multi-Status")
+      })
+      .expect("serve Depth request");
+  });
+
+  let response = client()
+    .method("PROPFIND")
+    .url(format!("http://{addr}/matrix/collection"))
+    .depth("INFINITY")
+    .expect("Depth should be accepted")
+    .emit()
+    .expect("Depth response should parse");
+
+  let (typed, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe Depth metadata");
+  assert_eq!(Some("infinity".to_string()), typed);
+  assert_eq!(Some("infinity".to_string()), raw);
+  assert_eq!(207, response.code());
+  handle.join().expect("Depth server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_sec_websocket_key_metadata_without_handshake() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind sec websocket key server");

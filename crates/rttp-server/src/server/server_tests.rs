@@ -3083,6 +3083,64 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_depth_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"PROPFIND / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.depth().expect("missing value should be valid"));
+
+  for (value, expected) in [
+    ("0", HttpDepth::Zero),
+    ("1", HttpDepth::One),
+    ("infinity", HttpDepth::Infinity),
+    ("INFINITY", HttpDepth::Infinity),
+  ] {
+    let valid = Request::from_raw_frame(
+      format!("PROPFIND / HTTP/1.1\r\nHost: example.test\r\nDepth: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .depth()
+      .expect("value should parse")
+      .expect("Depth should be present");
+    assert_eq!(expected, parsed);
+    assert_eq!(expected.header_value(), parsed.header_value());
+  }
+
+  for value in ["", "2", "-1", "1.0", "0, 1", "infinite"] {
+    let request = Request::from_raw_frame(
+      format!("PROPFIND / HTTP/1.1\r\nHost: example.test\r\nDepth: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.depth().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Depth"));
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "PROPFIND".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Depth".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.depth().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_request.header("Depth"));
+
+  let duplicate = Request::from_raw_frame(
+    b"PROPFIND / HTTP/1.1\r\nHost: example.test\r\nDepth: 0\r\ndepth: 1\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.depth().is_err());
+  assert_eq!(Some("0"), duplicate.header("Depth"));
+}
+
+#[test]
 fn request_idempotency_key_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");
@@ -4445,6 +4503,43 @@ hello\r\n\
     assert!(String::from_utf8(malformed.to_bytes())
       .expect("response should serialize")
       .contains("\r\nOrigin-Trial: token\twith-tab\r\n"));
+  }
+
+  #[test]
+  fn speculation_rules_helpers_declare_parse_and_redact_response_metadata() {
+    let value = "https://example.test/speculation-rules.json";
+    let response = HttpResponse::ok([])
+      .header("Speculation-Rules", "https://example.test/stale.json")
+      .with_speculation_rules(value)
+      .expect("Speculation-Rules should be accepted");
+    let rules = response
+      .speculation_rules()
+      .expect("response Speculation-Rules should parse")
+      .expect("response Speculation-Rules should be present");
+
+    assert_eq!(rules.as_str(), value);
+    assert_eq!(rules.header_value(), value);
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(1, serialized.matches("\r\nSpeculation-Rules: ").count());
+    assert!(serialized.contains(&format!("\r\nSpeculation-Rules: {value}\r\n")));
+    assert!(!serialized.contains("stale.json"));
+
+    let response_debug = format!("{response:?}");
+    assert!(response_debug.contains("Speculation-Rules"));
+    assert!(response_debug.contains("[REDACTED]"));
+    assert!(!response_debug.contains(value));
+    assert!(!format!("{rules:?}").contains(value));
+
+    let duplicate = HttpResponse::ok([])
+      .header("Speculation-Rules", "https://example.test/one.json")
+      .header("speculation-rules", "https://example.test/two.json");
+    assert!(duplicate.speculation_rules().is_err());
+
+    let malformed = HttpResponse::ok([]).header("Speculation-Rules", "");
+    assert!(malformed.speculation_rules().is_err());
+    assert!(HttpResponse::ok([])
+      .with_speculation_rules("https://example.test/rules.json\r\nX-Injected: 1")
+      .is_err());
   }
 
   #[test]
