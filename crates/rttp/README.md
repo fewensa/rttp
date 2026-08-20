@@ -60,6 +60,13 @@ facade. The client facade re-exports the matching
 opaque, repeated fields preserve wire order, and raw headers remain observable
 on parse failures; the facade does not enforce CSP or send reports.
 
+`HttpResponse::with_dav(value)` / `dav()` and client `Response::dav()` expose
+bounded WebDAV `DAV` response metadata through the shared protocol `Dav` type.
+The parser preserves ordered classes, accepts `1`, `2`, `3`, extension tokens,
+and `<absolute-URI>` Coded-URLs, and rejects malformed, duplicate, oversized,
+aggregate-oversized, or over-32-member values. The facade does not infer,
+negotiate, or enforce WebDAV feature support from this header.
+
 ## Bounded HTTP/1.1 byte ranges
 
 The server exposes byte-range primitives, not an automatic static-file server.

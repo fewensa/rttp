@@ -8,6 +8,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
+use rttp_client::DavClass;
 use rttp_client::HttpClient;
 use rttp_server::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
@@ -21,6 +22,49 @@ type ObservedIfRangeHandle = thread::JoinHandle<ObservedIfRangeHeaders>;
 
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+fn spawn_dav_metadata_response_server() -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind DAV facade server");
+  let addr = server.local_addr().expect("DAV facade addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_dav("1, 2, extended-mkcol, <https://dav.example.test/ns>")
+          .expect("DAV metadata should be accepted")
+      })
+      .expect("serve DAV facade request");
+  });
+
+  (addr, handle)
+}
+
+#[test]
+fn http11_client_and_server_exchange_dav_metadata_without_policy() {
+  let (addr, handle) = spawn_dav_metadata_response_server();
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/collection"))
+    .emit()
+    .expect("request should complete");
+  let dav = response
+    .dav()
+    .expect("DAV response metadata should parse")
+    .expect("DAV response metadata should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    &[
+      DavClass::One,
+      DavClass::Two,
+      DavClass::ExtensionToken("extended-mkcol".to_string()),
+      DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  handle.join().expect("DAV server thread");
 }
 
 #[derive(Debug, PartialEq)]

@@ -69,6 +69,20 @@ fn spawn_representation_metadata_response_server(
 #[test]
 #[cfg(feature = "client")]
 fn compatibility_facade_exports_client_metadata_types() {
+  let dav: rttp::Dav =
+    rttp_client::response::Dav::parse("1, 2, extended-mkcol, <https://dav.example.test/ns>")
+      .expect("DAV should parse");
+  assert_eq!(
+    &[
+      rttp::DavClass::One,
+      rttp::DavClass::Two,
+      rttp::DavClass::ExtensionToken("extended-mkcol".to_string()),
+      rttp::DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  let _: rttp::DavParseError =
+    rttp_client::response::Dav::parse("1, 1").expect_err("duplicate DAV should fail");
   let accept_ch: rttp::AcceptCh =
     rttp_client::response::AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let allow_credentials: rttp::AccessControlAllowCredentials =

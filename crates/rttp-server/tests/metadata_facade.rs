@@ -47,6 +47,41 @@ use rttp_server::server::{
 };
 
 #[test]
+fn server_dav_response_metadata_uses_protocol_representation() {
+  let response = HttpResponse::ok("")
+    .header("DAV", "legacy")
+    .with_dav("1, 2, extended-mkcol, <https://dav.example.test/ns>")
+    .expect("valid DAV metadata should be accepted");
+  let dav = response
+    .dav()
+    .expect("DAV metadata should parse")
+    .expect("DAV metadata should be present");
+
+  assert_eq!(
+    "1, 2, extended-mkcol, <https://dav.example.test/ns>",
+    dav.header_value()
+  );
+  let rendered = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(rendered.contains("\r\nDAV: 1, 2, extended-mkcol, <https://dav.example.test/ns>\r\n"));
+  assert!(!rendered.contains("\r\nDAV: legacy\r\n"));
+
+  let unchanged = HttpResponse::ok("").header("DAV", "1");
+  assert!(unchanged.clone().with_dav("1, 1").is_err());
+  assert_eq!(
+    "1",
+    unchanged
+      .dav()
+      .expect("original DAV should still parse")
+      .expect("original DAV should be present")
+      .header_value()
+  );
+
+  let oversized = format!("x{}", "a".repeat(64 * 1024));
+  let invalid = HttpResponse::ok("").header("DAV", oversized);
+  assert!(invalid.dav().is_err());
+}
+
+#[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let accept_charsets: HttpRequestAcceptCharsets =

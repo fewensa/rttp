@@ -133,6 +133,18 @@ errors. `header_value()` emits the canonical singleton value. This parser
 reports declared request metadata only; it does not traverse resources,
 select WebDAV methods, or enforce method policy.
 
+## DAV
+
+`dav` parses one or more WebDAV `DAV` response fields into an ordered list of
+compliance classes. Recognized standard classes are `1`, `2`, and `3`;
+well-formed HTTP tokens are retained as extension classes, and `<absolute-URI>`
+Coded-URLs are retained without URI normalization. Each field value and the
+aggregate input are bounded to 64 KiB, and the combined list is bounded to 32
+members. Empty members, malformed tokens, malformed or relative Coded-URLs,
+duplicates, oversized input, too many members, and forbidden ASCII control
+bytes are errors. This parser reports declared response metadata only; it does
+not infer, negotiate, or enforce WebDAV feature support.
+
 ## Destination
 
 `destination` parses a singleton WebDAV `Destination` request field as one
