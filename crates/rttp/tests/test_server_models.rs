@@ -1570,6 +1570,81 @@ fn request_baggage_is_optional_and_rejects_invalid_metadata() {
 }
 
 #[test]
+fn request_cdn_loop_parses_standard_members_and_parameters() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: internal.test\r\n",
+    "CDN-Loop: foo123.foocdn.example, barcdn.example; trace=\"abcdef\"\r\n",
+    "CDN-Loop: AnotherCDN; abc=123; def=\"456\"\r\n",
+    "\r\n"
+  ));
+
+  let cdn_loop = request
+    .cdn_loop()
+    .expect("CDN-Loop should parse")
+    .expect("CDN-Loop should be present");
+
+  assert_eq!(3, cdn_loop.len());
+  assert_eq!("foo123.foocdn.example", cdn_loop.members()[0].identifier());
+  assert!(cdn_loop.members()[0].parameters().is_empty());
+  assert_eq!("barcdn.example", cdn_loop.members()[1].identifier());
+  assert_eq!(Some("abcdef"), cdn_loop.members()[1].parameter("trace"));
+  assert_eq!("AnotherCDN", cdn_loop.members()[2].identifier());
+  assert_eq!(Some("123"), cdn_loop.members()[2].parameter("abc"));
+  assert_eq!(Some("456"), cdn_loop.members()[2].parameter("def"));
+  assert_eq!(
+    "foo123.foocdn.example, barcdn.example; trace=abcdef, AnotherCDN; abc=123; def=456",
+    cdn_loop.header_value()
+  );
+}
+
+#[test]
+fn request_cdn_loop_is_optional_and_rejects_invalid_metadata() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .cdn_loop()
+      .expect("absent CDN-Loop should be accepted")
+  );
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "CDN-Loop: cdn; trace=1; TRACE=2\r\n\r\n"
+  ));
+  assert!(duplicate.cdn_loop().is_err());
+  assert_eq!(Some("cdn; trace=1; TRACE=2"), duplicate.header("CDN-Loop"));
+
+  let malformed = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "CDN-Loop: cdn; trace\r\n\r\n"
+  ));
+  assert!(malformed.cdn_loop().is_err());
+  assert_eq!(Some("cdn; trace"), malformed.header("CDN-Loop"));
+
+  let excessive = (0..257)
+    .map(|index| format!("cdn{index}.example"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = parse_request(&format!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\nCDN-Loop: {excessive}\r\n\r\n"
+  ));
+  assert!(request.cdn_loop().is_err());
+  assert_eq!(Some(excessive.as_str()), request.header("CDN-Loop"));
+
+  let repeated = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "CDN-Loop: edge.example, edge.example; hop=1\r\n\r\n"
+  ));
+  let repeated = repeated
+    .cdn_loop()
+    .expect("repeated CDN identifiers should parse")
+    .expect("CDN-Loop should be present");
+  assert_eq!(2, repeated.len());
+  assert_eq!("edge.example", repeated.members()[0].identifier());
+  assert_eq!("edge.example", repeated.members()[1].identifier());
+}
+
+#[test]
 fn request_te_and_prefer_parse_bounded_metadata_without_enabling_behavior() {
   let request = parse_request(concat!(
     "GET /metadata HTTP/1.1\r\n",
