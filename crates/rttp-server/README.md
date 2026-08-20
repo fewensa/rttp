@@ -154,6 +154,20 @@ and `Request::body()` continue to expose the original request.
 These helpers parse request metadata only. They do not select a variant, run
 transparent content negotiation, or change cache selection.
 
+## TCN response metadata
+
+`HttpResponse::with_tcn(value)` validates and replaces one bounded RFC 2295
+`TCN` response field through the shared `rttp-protocol` primitive.
+`HttpResponse::tcn()` parses attached raw `TCN` metadata without changing the
+response. Valid metadata is an ordered comma-separated list of `list`,
+`choice`, `adhoc`, `re-choose`, and `keep`, normalized to lowercase.
+Duplicate fields, duplicate tokens, malformed or unknown tokens, empty
+members, oversized values, and control-byte injection return
+`HttpTcnParseError` while raw response headers remain available.
+
+These helpers expose response metadata only. They do not select variants,
+synthesize `Alternates`, update `Vary`, or change cache behavior.
+
 ## Accept-Encoding request metadata
 
 Handlers can call `Request::accept_encoding()` and

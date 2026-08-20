@@ -13,7 +13,7 @@ use rttp::server::{
   HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
   HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
   HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
-  HttpScheduleTag, HttpServerTiming, HttpTimeoutType, HttpVary, HttpVia,
+  HttpScheduleTag, HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
 };
 
 #[test]
@@ -979,6 +979,55 @@ fn response_alternates_helper_rejects_invalid_duplicates_and_bounds_without_hidi
   assert!(String::from_utf8(raw.to_bytes())
     .expect("response should serialize")
     .contains(&format!("\r\nAlternates: {oversized}\r\n")));
+}
+
+#[test]
+fn response_tcn_helper_declares_replaces_and_parses_metadata_only_tokens() {
+  let response = HttpResponse::ok("body")
+    .header("TCN", "list")
+    .with_tcn("Choice, keep")
+    .expect("valid TCN metadata should be accepted");
+  let tcn: HttpTcn = response
+    .tcn()
+    .expect("attached TCN should parse")
+    .expect("TCN should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(
+    &[HttpTcnDirective::Choice, HttpTcnDirective::Keep],
+    tcn.members()
+  );
+  assert_eq!("choice, keep", tcn.header_value());
+  assert_eq!(1, serialized.matches("\r\nTCN: ").count());
+  assert!(serialized.contains("\r\nTCN: choice, keep\r\n"));
+  assert!(!serialized.contains("\r\nTCN: list\r\n"));
+}
+
+#[test]
+fn response_tcn_helper_rejects_invalid_duplicates_and_bounds_without_hiding_headers() {
+  assert!(HttpResponse::ok("body").with_tcn("variant").is_err());
+  assert!(HttpResponse::ok("body").with_tcn("list, LIST").is_err());
+
+  let duplicate_fields = HttpResponse::ok("body")
+    .header("TCN", "list")
+    .header("tcn", "choice");
+  assert!(duplicate_fields.tcn().is_err());
+  assert!(String::from_utf8(duplicate_fields.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nTCN: list\r\n"));
+
+  let malformed = HttpResponse::ok("body").header("TCN", "variant");
+  assert!(malformed.tcn().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nTCN: variant\r\n"));
+
+  let oversized = format!("list{}", "x".repeat(64 * 1024));
+  let raw = HttpResponse::ok("body").header("TCN", &oversized);
+  assert!(raw.tcn().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nTCN: {oversized}\r\n")));
 }
 
 #[test]

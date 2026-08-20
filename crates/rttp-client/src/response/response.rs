@@ -29,6 +29,7 @@ use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::Signature;
 use crate::response::SignatureInput;
+use crate::response::Tcn;
 use crate::response::Trailer;
 use crate::response::TransferEncoding;
 use crate::response::Upgrade;
@@ -1177,6 +1178,18 @@ impl Response {
       return Ok(None);
     }
     Alternates::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `TCN` as bounded transparent-negotiation result metadata. This
+  /// does not select a variant, request alternates, or change cache behavior.
+  pub fn tcn(&self) -> error::Result<Option<Tcn>> {
+    let values = self.header_values("tcn");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Tcn::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

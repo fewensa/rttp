@@ -73,6 +73,21 @@ value, duplicate, member-count, and size validation. It reports declared
 request metadata only; it does not select a variant, run transparent content
 negotiation, or change cache selection.
 
+## TCN
+
+`tcn` parses a singleton RFC 2295 `TCN` response field into an ordered list
+of negotiation result tokens. Each field value is bounded to 64 KiB, the raw
+field set is bounded to 64 KiB, and the member list is bounded to 32. The
+defined tokens are `list`, `choice`, `adhoc`, `re-choose`, and `keep`; they
+match case-insensitively and emit lowercase. Duplicate tokens, duplicate
+header fields, empty members, empty or trailing comma lists, unknown tokens,
+forbidden ASCII control bytes other than HTAB, oversized values, and a
+present header set that yields no member are errors. `header_value()` joins
+members with `", "`. This type is the shared authority for TCN token,
+singleton, duplicate, member-count, and size validation. It reports response
+metadata only; it does not select variants, synthesize `Alternates` or `Vary`,
+or change cache selection.
+
 ## Accept-Encoding
 
 `accept_encoding` parses one or more RFC 9110 `Accept-Encoding` field values
