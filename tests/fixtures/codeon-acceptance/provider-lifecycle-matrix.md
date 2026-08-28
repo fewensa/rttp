@@ -2,11 +2,11 @@
 M01: pending
 M02: pending
 M03: pending
-M04: pending
-M05: pending
+M04: verified
+M05: verified
 M06: verified
 M07: pending
-M08: pending
+M08: verified
 M09: pending
 M10: pending
 M11: pending
