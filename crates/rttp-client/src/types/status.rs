@@ -26,7 +26,7 @@ use std::str::FromStr;
 /// It allows status codes in the range [100, 599].
 ///
 /// IANA maintain the [Hypertext Transfer Protocol (HTTP) Status Code
-/// Registry](https://www.iana.org/assignments/http-status-codes/http-status-codes.xhtml) which is
+/// Registry](https://www.iana.org/assignments/http-status-codes/http-status-codes.xhtml) as
 /// the source for this enum (with one exception, 418 I'm a teapot, which is
 /// inexplicably not in the register).
 ///
