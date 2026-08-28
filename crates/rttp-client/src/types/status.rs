@@ -1,6 +1,6 @@
 //! HTTP status codes
 //!
-//! This module contains HTTP-status code related structs an errors. The main
+//! This module contains HTTP-status code related structs and errors. The main
 //! type in this module is `StatusCode` which is not intended to be used through
 //! this module but rather the `http::StatusCode` type.
 //!
@@ -26,7 +26,7 @@ use std::str::FromStr;
 /// It allows status codes in the range [100, 599].
 ///
 /// IANA maintain the [Hypertext Transfer Protocol (HTTP) Status Code
-/// Registry](http://www.iana.org/assignments/http-status-codes/http-status-codes.xhtml) which is
+/// Registry](https://www.iana.org/assignments/http-status-codes/http-status-codes.xhtml) which is
 /// the source for this enum (with one exception, 418 I'm a teapot, which is
 /// inexplicably not in the register).
 ///
