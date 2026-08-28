@@ -452,7 +452,7 @@ status_codes! {
     (431, REQUEST_HEADER_FIELDS_TOO_LARGE, "Request Header Fields Too Large");
 
     /// 451 Unavailable For Legal Reasons
-    /// [[RFC7725](http://tools.ietf.org/html/rfc7725)]
+    /// [[RFC7725](https://www.rfc-editor.org/rfc/rfc7725.html)]
     (451, UNAVAILABLE_FOR_LEGAL_REASONS, "Unavailable For Legal Reasons");
 
     /// 500 Internal Server Error
