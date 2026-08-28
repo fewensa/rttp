@@ -476,7 +476,7 @@ pub(crate) fn validate_http2_settings_payload(payload: &[u8]) -> io::Result<()> 
     return Err(invalid_http2_settings_error());
   }
 
-  for setting in payload.chunks_exact(6) {
+  for setting in payload.as_chunks::<6>().0 {
     let id = u16::from_be_bytes([setting[0], setting[1]]);
     let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
     match id {
@@ -647,7 +647,9 @@ pub(crate) fn http2_flow_control_overflow_error() -> io::Error {
 
 pub(crate) fn http2_settings_max_frame_size(payload: &[u8]) -> Option<usize> {
   payload
-    .chunks_exact(6)
+    .as_chunks::<6>()
+    .0
+    .iter()
     .fold(None, |max_frame_size, setting| {
       let id = u16::from_be_bytes([setting[0], setting[1]]);
       let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
@@ -661,7 +663,9 @@ pub(crate) fn http2_settings_max_frame_size(payload: &[u8]) -> Option<usize> {
 
 pub(crate) fn http2_settings_header_table_size(payload: &[u8]) -> Option<usize> {
   payload
-    .chunks_exact(6)
+    .as_chunks::<6>()
+    .0
+    .iter()
     .fold(None, |header_table_size, setting| {
       let id = u16::from_be_bytes([setting[0], setting[1]]);
       let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
@@ -675,7 +679,9 @@ pub(crate) fn http2_settings_header_table_size(payload: &[u8]) -> Option<usize> 
 
 pub(crate) fn http2_settings_initial_window_size(payload: &[u8]) -> Option<i32> {
   payload
-    .chunks_exact(6)
+    .as_chunks::<6>()
+    .0
+    .iter()
     .fold(None, |initial_window_size, setting| {
       let id = u16::from_be_bytes([setting[0], setting[1]]);
       let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
@@ -688,15 +694,19 @@ pub(crate) fn http2_settings_initial_window_size(payload: &[u8]) -> Option<i32> 
 }
 
 pub(crate) fn http2_settings_enable_connect_protocol(payload: &[u8]) -> bool {
-  payload.chunks_exact(6).fold(false, |enabled, setting| {
-    let id = u16::from_be_bytes([setting[0], setting[1]]);
-    let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
-    if id == HTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL {
-      value == 1
-    } else {
-      enabled
-    }
-  })
+  payload
+    .as_chunks::<6>()
+    .0
+    .iter()
+    .fold(false, |enabled, setting| {
+      let id = u16::from_be_bytes([setting[0], setting[1]]);
+      let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
+      if id == HTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL {
+        value == 1
+      } else {
+        enabled
+      }
+    })
 }
 
 pub(crate) fn bounded_http2_max_concurrent_streams(request_limit: usize) -> u32 {

@@ -5097,7 +5097,7 @@ fn settings_payload(identifier: u16, value: u32) -> Vec<u8> {
 }
 
 fn h2_setting_value(payload: &[u8], identifier: u16) -> Option<u32> {
-  payload.chunks_exact(6).find_map(|setting| {
+  payload.as_chunks::<6>().0.iter().find_map(|setting| {
     let id = u16::from_be_bytes([setting[0], setting[1]]);
     let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
     (id == identifier).then_some(value)

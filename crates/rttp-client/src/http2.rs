@@ -733,7 +733,7 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
     max_frame_size_changed: false,
     max_header_list_size: None,
   };
-  for setting in payload.chunks_exact(6) {
+  for setting in payload.as_chunks::<6>().0 {
     let identifier = u16::from_be_bytes([setting[0], setting[1]]);
     let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
     match identifier {

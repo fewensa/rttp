@@ -42,7 +42,7 @@ impl<'a> RawBuilder<'a> {
           &self
             .request
             .header("content-type")
-            .map_or(mime::TEXT_PLAIN.to_string(), |v| v)[..],
+            .unwrap_or(mime::TEXT_PLAIN.to_string())[..],
         )
         .map_err(error::builder)?,
       );
@@ -63,7 +63,7 @@ impl<'a> RawBuilder<'a> {
           &self
             .request
             .header("content-type")
-            .map_or(mime::APPLICATION_OCTET_STREAM.to_string(), |v| v)[..],
+            .unwrap_or(mime::APPLICATION_OCTET_STREAM.to_string())[..],
         )
         .map_err(error::builder)?,
       );
