@@ -421,7 +421,7 @@ status_codes! {
     (418, IM_A_TEAPOT, "I'm a teapot");
 
     /// 421 Misdirected Request
-    /// [RFC7540, Section 9.1.2](http://tools.ietf.org/html/rfc7540#section-9.1.2)
+    /// [RFC7540, Section 9.1.2](https://www.rfc-editor.org/rfc/rfc7540.html#section-9.1.2)
     (421, MISDIRECTED_REQUEST, "Misdirected Request");
     /// 422 Unprocessable Entity
     /// [[RFC4918](https://tools.ietf.org/html/rfc4918)]
