@@ -3,7 +3,7 @@ M01: pending
 M02: pending
 M03: pending
 M04: pending
-M05: pending
+M05: verified
 M06: pending
 M07: pending
 M08: pending
