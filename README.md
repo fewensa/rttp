@@ -98,6 +98,9 @@ available through `Response::trailers`, `Response::trailer`, and
 suffix before opening a socket. Callers can still set a manual `Range` header
 with the generic header API for cases outside those helpers.
 
+`example.test` is a reserved documentation domain used here as a placeholder;
+replace it with your own endpoint when running this example.
+
 ```rust
 client
   .get()
