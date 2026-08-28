@@ -171,11 +171,7 @@ impl RoUrl {
         let name = p.name();
         let traditional = self.traditional.unwrap_or(true);
         if traditional {
-          return format!(
-            "{}={}",
-            name,
-            p.value().clone().map_or("".to_string(), |t| t)
-          );
+          return format!("{}={}", name, p.value().clone().unwrap_or("".to_string()));
         }
         let is_array = all_paras
           .iter()
@@ -192,7 +188,7 @@ impl RoUrl {
           } else {
             ""
           },
-          p.value().clone().map_or("".to_string(), |t| t)
+          p.value().clone().unwrap_or("".to_string())
         )
       })
       .collect::<Vec<String>>()

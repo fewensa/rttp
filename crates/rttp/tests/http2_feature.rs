@@ -163,7 +163,7 @@ fn h2_setting(id: u16, value: u32) -> [u8; 6] {
 }
 
 fn h2_setting_value(payload: &[u8], id: u16) -> Option<u32> {
-  payload.chunks_exact(6).find_map(|setting| {
+  payload.as_chunks::<6>().0.iter().find_map(|setting| {
     if u16::from_be_bytes([setting[0], setting[1]]) == id {
       Some(u32::from_be_bytes([
         setting[2], setting[3], setting[4], setting[5],

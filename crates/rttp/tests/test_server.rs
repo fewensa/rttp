@@ -215,7 +215,7 @@ fn h2_setting_value(frame: &H2Frame, setting_id: u16) -> Option<u32> {
   assert_eq!(0, frame.stream_id);
   assert_eq!(0, frame.payload.len() % 6);
 
-  frame.payload.chunks_exact(6).find_map(|setting| {
+  frame.payload.as_chunks::<6>().0.iter().find_map(|setting| {
     let id = u16::from_be_bytes(setting[..2].try_into().unwrap());
     let value = u32::from_be_bytes(setting[2..].try_into().unwrap());
     (id == setting_id).then_some(value)

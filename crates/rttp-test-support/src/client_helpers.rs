@@ -70,7 +70,7 @@ fn socks5_target_addr(stream: &mut TcpStream, auth: Option<(&str, &str)>) -> io:
     0x04 => {
       let ip = read_exact_bytes(stream, 16)?;
       let mut segments = [0u16; 8];
-      for (idx, chunk) in ip.chunks_exact(2).enumerate() {
+      for (idx, chunk) in ip.as_chunks::<2>().0.iter().enumerate() {
         segments[idx] = u16::from_be_bytes([chunk[0], chunk[1]]);
       }
       Ipv6Addr::from(segments).to_string()
