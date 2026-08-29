@@ -12,11 +12,11 @@ M10: verified
 M11: verified
 M12: pending
 M13: pending
-M14: pending
+M14: verified
 M15: pending
-M16: pending
+M16: verified
 M17: pending
-M18: pending
+M18: verified
 M19: pending
 M20: verified
 M21: verified
