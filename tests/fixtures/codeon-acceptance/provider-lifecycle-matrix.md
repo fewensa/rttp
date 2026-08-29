@@ -10,7 +10,7 @@ M08: verified
 M09: verified
 M10: verified
 M11: verified
-M12: pending
+M12: verified
 M13: verified
 M14: verified
 M15: verified
