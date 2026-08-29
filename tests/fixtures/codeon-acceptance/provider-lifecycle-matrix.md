@@ -5,7 +5,7 @@ M03: verified
 M04: verified
 M05: verified
 M06: verified
-M07: pending
+M07: verified
 M08: verified
 M09: pending
 M10: verified
@@ -23,7 +23,7 @@ M21: verified
 M22: verified
 M23: pending
 M24: pending
-M25: pending
+M25: verified
 M26: pending
 M27: pending
 M28: pending
