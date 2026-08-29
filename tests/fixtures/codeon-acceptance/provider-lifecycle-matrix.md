@@ -5,7 +5,7 @@ M03: pending
 M04: verified
 M05: verified
 M06: verified
-M07: pending
+M07: verified
 M08: verified
 M09: pending
 M10: verified
