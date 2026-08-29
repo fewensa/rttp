@@ -1,6 +1,6 @@
 # Codeon Provider Lifecycle Matrix
 M01: verified
-M02: pending
+M02: verified
 M03: pending
 M04: verified
 M05: verified
