@@ -22,7 +22,7 @@ M20: verified
 M21: verified
 M22: verified
 M23: verified
-M24: pending
+M24: verified
 M25: verified
 M26: pending
 M27: verified
