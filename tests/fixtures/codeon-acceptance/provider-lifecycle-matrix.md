@@ -13,7 +13,7 @@ M11: verified
 M12: pending
 M13: pending
 M14: pending
-M15: pending
+M15: verified
 M16: pending
 M17: pending
 M18: pending
