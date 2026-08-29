@@ -24,7 +24,7 @@ M22: pending
 M23: pending
 M24: pending
 M25: pending
-M26: pending
+M26: verified
 M27: pending
 M28: pending
 M29: pending
