@@ -1,6 +1,8 @@
 rttp
 ====
 
+Codeon publishes completed implementation through a pull request.
+
 A small Rust HTTP workspace. Application code typically depends on the `rttp`
 facade crate, which forwards to the public `rttp_client` and `rttp-server`
 crates; those share the wire primitives in the internal `rttp-protocol` crate.
