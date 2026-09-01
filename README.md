@@ -3,7 +3,7 @@ rttp
 
 Codeon publishes completed implementation through a pull request.
 
-Revision fixture status: WRONG.
+Revision fixture status: CORRECT.
 
 A small Rust HTTP workspace. Application code typically depends on the `rttp`
 facade crate, which forwards to the public `rttp_client` and `rttp-server`
