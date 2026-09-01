@@ -2,6 +2,8 @@
 
 Shared HTTP wire syntax and framing primitives for the rttp client and server crates.
 
+This crate is intended for reusable HTTP protocol primitives, not application-level client or server APIs.
+
 This crate owns shared, bounded HTTP wire syntax and framing primitives. It
 does not own application-level HTTP policy; that policy belongs to the client
 and server crates.
