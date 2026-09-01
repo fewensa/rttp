@@ -10,6 +10,9 @@ no server loop, event loop, connection pooling, cache, retry, or status-policy
 engine of its own, and all bounded behavior and metadata-only helpers remain in
 the underlying `rttp_client` and `rttp-server` crates.
 
+Applications that want one dependency for both client and server entry points
+can use this compatibility facade.
+
 ## Server
 
 Create a listener with `rttp::Http::server` or call `HttpServer::bind` directly.
