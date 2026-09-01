@@ -12,7 +12,7 @@ the underlying `rttp_client` and `rttp-server` crates.
 
 Applications that want one dependency for both client and server entry points
 can use this compatibility facade.
-The compatibility facade keeps client and server entry points available from a single crate.
+The compatibility facade keeps client and server entry points accessible through one crate.
 
 ## Server
 
