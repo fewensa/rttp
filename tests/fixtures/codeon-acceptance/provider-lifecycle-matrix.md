@@ -43,7 +43,7 @@ K01: provider=pending; lifecycle=pending
 K02: provider=pending; lifecycle=pending
 K03: provider=pending; lifecycle=pending
 K04: provider=pending; lifecycle=pending
-C01: pending
+C01: verifed
 C02: pending
 C03: pending
 C04: pending
