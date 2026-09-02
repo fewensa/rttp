@@ -39,7 +39,7 @@ M37: verified
 M38: verified
 M39: verified
 M40: verified
-K01: provider=pending; lifecycle=pending
+K01: provider=codex; lifecycle=verified
 K02: provider=pending; lifecycle=pending
 K03: provider=pending; lifecycle=pending
 K04: provider=pending; lifecycle=pending
