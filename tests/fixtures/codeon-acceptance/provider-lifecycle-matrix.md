@@ -42,7 +42,7 @@ M40: verified
 K01: provider=codex; lifecycle=verified
 K02: provider=cursor; lifecycle=verified
 K03: provider=pi; lifecycle=verified
-K04: provider=pending; lifecycle=pending
+K04: provider=grok; lifecycle=verified
 C01: verified
 C02: pending
 C03: pending
