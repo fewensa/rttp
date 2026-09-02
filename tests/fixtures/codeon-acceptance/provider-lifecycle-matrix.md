@@ -44,7 +44,7 @@ K02: provider=cursor; lifecycle=verified
 K03: provider=pi; lifecycle=verified
 K04: provider=grok; lifecycle=verified
 C01: verified
-C02: pending
+C02: verified
 C03: pending
 C04: pending
 C05: pending
