@@ -36,7 +36,7 @@ M34: verified
 M35: rejected
 M36: verified
 M37: verified
-M38: pending
+M38: verified
 M39: pending
 M40: pending
 K01: provider=pending; lifecycle=pending
