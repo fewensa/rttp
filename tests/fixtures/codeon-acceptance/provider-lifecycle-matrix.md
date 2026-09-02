@@ -32,7 +32,7 @@ M30: verified
 M31: verified
 M32: pending
 M33: pending
-M34: verifed
+M34: verified
 M35: pending
 M36: pending
 M37: pending
