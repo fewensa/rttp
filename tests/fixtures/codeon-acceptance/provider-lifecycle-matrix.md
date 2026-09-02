@@ -45,7 +45,7 @@ K03: provider=pi; lifecycle=verified
 K04: provider=grok; lifecycle=verified
 C01: verified
 C02: verified
-C03: pending
+C03: rejected
 C04: pending
 C05: pending
 C06: pending
