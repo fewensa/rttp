@@ -523,6 +523,10 @@ impl HttpByteRange {
     Self { start, end }
   }
 
+  /// Parses one `bytes` range for a single-range `206` response.
+  ///
+  /// Comma-separated members return [`HttpByteRangeError::MultipleRanges`].
+  /// Request accessors resolve multiple members through [`HttpByteRangeSet`].
   pub fn parse<S: AsRef<str>>(
     range_header: S,
     entity_length: usize,

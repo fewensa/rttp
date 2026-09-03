@@ -4817,11 +4817,114 @@ fn request_exposes_bounded_range_and_conditional_metadata() {
   .as_bytes())
   .expect("request should retain metadata");
 
-  assert_eq!(Some(HttpByteRange::new(6, 9)), request.range(10).expect("Range should parse"));
+  assert_eq!(
+    Some(HttpByteRangeSet::new(vec![HttpByteRange::new(6, 9)])),
+    request.range(10).expect("Range should parse")
+  );
   assert!(matches!(request.if_range(), Ok(Some(HttpIfRange::Date(_)))));
   assert_eq!(Ok(Some(HttpIfNoneMatch::Any)), request.if_none_match());
   assert!(matches!(request.if_modified_since(), Ok(Some(_))));
   assert!(matches!(request.if_unmodified_since(), Ok(None)));
+}
+
+fn range_request(range: &str) -> Request {
+  Request::from_raw_frame(
+    format!("GET /asset HTTP/1.1\r\nHost: example.test\r\nRange: {range}\r\n\r\n").as_bytes(),
+  )
+  .expect("request should parse")
+}
+
+#[test]
+fn request_resolves_mixed_and_partially_unsatisfied_range_sets() {
+  assert_eq!(
+    Some(HttpByteRangeSet::new(vec![
+      HttpByteRange::new(0, 1),
+      HttpByteRange::new(5, 9),
+      HttpByteRange::new(7, 9),
+    ])),
+    range_request("bytes=0-1,5-,-3")
+      .range(10)
+      .expect("mixed Range should parse")
+  );
+  assert_eq!(
+    Some(HttpByteRangeSet::new(vec![
+      HttpByteRange::new(0, 1),
+      HttpByteRange::new(4, 5),
+    ])),
+    range_request("bytes=0-1,99-100,4-5")
+      .range(10)
+      .expect("partially unsatisfied Range should keep valid members")
+  );
+}
+
+#[test]
+fn request_range_rejects_all_unsatisfied_zero_length_and_over_limit_sets() {
+  assert_eq!(
+    Err(HttpByteRangeError::UnsatisfiedRange),
+    range_request("bytes=99-100,200-").range(10)
+  );
+  assert_eq!(
+    Err(HttpByteRangeError::UnsatisfiedRange),
+    range_request("bytes=0-0").range(0)
+  );
+  let allowed = (0..HttpByteRangeSet::MAX_RANGES)
+    .map(|index| format!("{index}-{index}"))
+    .collect::<Vec<_>>()
+    .join(",");
+  assert_eq!(
+    HttpByteRangeSet::MAX_RANGES,
+    range_request(&format!("bytes={allowed}"))
+      .range(HttpByteRangeSet::MAX_RANGES)
+      .expect("32 members should resolve")
+      .expect("Range should be present")
+      .len()
+  );
+  let rejected = (0..=HttpByteRangeSet::MAX_RANGES)
+    .map(|index| format!("{index}-{index}"))
+    .collect::<Vec<_>>()
+    .join(",");
+  assert_eq!(
+    Err(HttpByteRangeError::MultipleRanges),
+    range_request(&format!("bytes={rejected}")).range(HttpByteRangeSet::MAX_RANGES + 1)
+  );
+}
+
+#[test]
+fn request_range_rejects_duplicate_fields_and_preserves_legacy_singles() {
+  let duplicate = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nRange: bytes=0-1\r\nRange: bytes=2-3\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(Err(HttpByteRangeError::MultipleRanges), duplicate.range(10));
+  assert_eq!(
+    Some(HttpByteRangeSet::new(vec![HttpByteRange::new(2, 5)])),
+    range_request("bytes=2-5")
+      .range(10)
+      .expect("closed range should parse")
+  );
+}
+
+#[test]
+fn if_range_carries_resolved_range_set_after_validator_success() {
+  let request = Request::from_raw_frame(
+    concat!(
+      "GET /asset HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Range: bytes=0-1,99-100,5-\r\n",
+      "If-Range: \"abc123\"\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+  )
+  .expect("request should parse");
+  let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("abc123"));
+
+  assert_eq!(
+    Ok(HttpIfRangeRequestOutcome::PartialContent(
+      HttpByteRangeSet::new(vec![HttpByteRange::new(0, 1), HttpByteRange::new(5, 9)])
+    )),
+    request.evaluate_if_range(&metadata, 10)
+  );
 }
 
 #[test]

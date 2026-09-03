@@ -76,15 +76,21 @@ negotiate, or enforce WebDAV feature support from this header.
 The server exposes byte-range primitives, not an automatic static-file server.
 Applications that want range support should read the request `Range` header,
 decide whether it applies to the selected representation, and call
-`HttpByteRange::parse(range_header, entity_length)`.
+`Request::range(entity_length)` / `HttpRequest::range(entity_length)` or
+`HttpByteRangeSet::parse(range_header, entity_length)`.
 
-`HttpByteRange::parse` supports one `bytes` range at a time:
-`bytes=start-end`, `bytes=start-`, and `bytes=-suffix`. Closed ranges must have
-`start <= end`; open-ended ranges are clipped to the entity length; suffix
-ranges must request at least one byte. Unsupported units return
-`UnsupportedUnit`, comma-separated ranges return `MultipleRanges`, malformed
-or inverted ranges return `InvalidRange`, and ranges outside the entity return
-`UnsatisfiedRange`.
+Those request helpers resolve one `bytes` field into `HttpByteRangeSet`: closed
+`bytes=start-end`, open-ended `bytes=start-`, and suffix `bytes=-suffix`
+members in one header, in wire order, using checked arithmetic. The set is
+never empty and contains at most 32 members (`HttpByteRangeSet::MAX_RANGES`).
+Unsatisfiable members are omitted; if every member is unsatisfiable the result
+is `UnsatisfiedRange`. Duplicate `Range` fields and more than 32 members return
+`MultipleRanges`. Unsupported units return `UnsupportedUnit`; malformed or
+inverted members return `InvalidRange`.
+
+`HttpByteRange::parse` remains the single-range helper used by
+`HttpResponse::partial_content`: comma-separated members still return
+`MultipleRanges`. Multipart response bodies are not serialized.
 
 Use `HttpResponse::partial_content(body, range)` for a satisfiable range. It
 returns `206 Partial Content`, writes `Content-Range: bytes start-end/length`,
@@ -121,13 +127,13 @@ raw headers and parsing only when requested.
 For conditional range requests, build `HttpConditionalMetadata` from the
 selected representation and call `Request::evaluate_if_range(&metadata,
 entity_length)` or `HttpRequest::evaluate_if_range(&metadata, entity_length)`.
-The helper returns `PartialContent(HttpByteRange)` when the request can use the
-parsed single byte range, `RangeNotSatisfiable` when the guarded range is
-outside the representation, or `FullResponse` when there is no `Range` header
-or an `If-Range` validator is absent, invalid, weak, stale, or missing from the
-caller-provided metadata. Strong ETags use strong comparison, and HTTP-date
-validators require an exact `Last-Modified` match at HTTP-date second
-precision.
+The helper returns `PartialContent(HttpByteRangeSet)` when the request can use
+the resolved range set after a successful validator check,
+`RangeNotSatisfiable` when every guarded member is outside the representation,
+or `FullResponse` when there is no `Range` header or an `If-Range` validator is
+absent, invalid, weak, stale, or missing from the caller-provided metadata.
+Strong ETags use strong comparison, and HTTP-date validators require an exact
+`Last-Modified` match at HTTP-date second precision.
 
 Multipart byte ranges are intentionally not serialized: RTTP does not generate
 `Range` requests, `multipart/byteranges` responses, partial response engines,
@@ -1575,7 +1581,7 @@ scheduling, or async accept loops.
 | HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, protocol-owned `Expect` metadata including `100-continue`, and obsolete line folding rejection | Expect metadata does not send `100 Continue` or reject unsupported extensions; intended for local tests and simple embedded use, not full RFC coverage |
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
-| Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` and `HttpRequest::evaluate_if_range` gate it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with the shared checked `HttpContentRange` formatter, `HttpResponse::content_range` parses attached `Content-Range` metadata, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, automatic cache validation, static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |
+| Byte ranges | `HttpByteRangeSet` resolves at most 32 `bytes` members from one `Range` field, `Request::evaluate_if_range` and `HttpRequest::evaluate_if_range` gate that set with caller-provided strong ETag or exact HTTP-date metadata, `HttpByteRange::parse` remains the single-range helper, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with the shared checked `HttpContentRange` formatter, `HttpResponse::content_range` parses attached `Content-Range` metadata, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, automatic cache validation, static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified`, `precondition_failed`, `with_etag`, and typed bounded `etag` serialize or expose `304`/`412` metadata while preserving raw headers; `with_delta_base`/`delta_base` declare and parse bounded singleton `Delta-Base` metadata through the shared entity-tag primitive; `with_schedule_tag` and `schedule_tag` declare and parse bounded `Schedule-Tag` response metadata through the shared protocol type | No cache storage, static-file serving policy, automatic revalidation, cached-entity lookup, delta application, calendar-version generation, schedule-tag comparison, calendar inspection, scheduling policy, or cache-control engine |
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and protocol-backed `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |

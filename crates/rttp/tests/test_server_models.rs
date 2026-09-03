@@ -4,13 +4,13 @@ use rttp::server::{
   HttpAccept, HttpAcceptCh, HttpAcceptDatetime, HttpAcceptDatetimeParseError, HttpAcceptRanges,
   HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAltUsed,
-  HttpAlternates, HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData,
-  HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentRange,
-  HttpContentSecurityPolicy, HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh,
-  HttpDeltaBase, HttpDeprecation, HttpDepth, HttpDocumentPolicy, HttpDocumentPolicyReportOnly,
-  HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
-  HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel, HttpOriginTrials,
-  HttpOverwrite, HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem,
+  HttpAlternates, HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpByteRangeSet,
+  HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages,
+  HttpContentRange, HttpContentSecurityPolicy, HttpContentSecurityPolicyReportOnly,
+  HttpContentType, HttpCriticalCh, HttpDeltaBase, HttpDeprecation, HttpDepth, HttpDocumentPolicy,
+  HttpDocumentPolicyReportOnly, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch,
+  HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel,
+  HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem,
   HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets,
   HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpScheduleTag,
@@ -1256,7 +1256,7 @@ fn request_parses_bounded_range_and_conditional_metadata() {
   ));
 
   assert_eq!(
-    Some(HttpByteRange::new(2, 9)),
+    Some(HttpByteRangeSet::new(vec![HttpByteRange::new(2, 9)])),
     request.range(10).expect("Range should parse")
   );
   assert_eq!(
@@ -5242,7 +5242,7 @@ fn if_range_allows_partial_content_for_matching_strong_etag() {
 
   assert_eq!(
     Ok(HttpIfRangeRequestOutcome::PartialContent(
-      HttpByteRange::new(2, 5)
+      HttpByteRangeSet::new(vec![HttpByteRange::new(2, 5)])
     )),
     request.evaluate_if_range(&metadata, 10)
   );
@@ -5285,7 +5285,7 @@ fn if_range_allows_partial_content_for_exact_http_date_match() {
 
   assert_eq!(
     Ok(HttpIfRangeRequestOutcome::PartialContent(
-      HttpByteRange::new(7, 9)
+      HttpByteRangeSet::new(vec![HttpByteRange::new(7, 9)])
     )),
     request.evaluate_if_range(&metadata, 10)
   );
@@ -5345,7 +5345,7 @@ fn if_range_without_if_range_header_uses_existing_range_parser_outcomes() {
 
   assert_eq!(
     Ok(HttpIfRangeRequestOutcome::PartialContent(
-      HttpByteRange::new(6, 9)
+      HttpByteRangeSet::new(vec![HttpByteRange::new(6, 9)])
     )),
     partial.evaluate_if_range(&metadata, 10)
   );
@@ -5371,6 +5371,106 @@ fn if_range_without_range_header_falls_back_to_full_response() {
 
   assert_eq!(
     Ok(HttpIfRangeRequestOutcome::FullResponse),
+    request.evaluate_if_range(&metadata, 10)
+  );
+}
+
+fn range_request(range: &str) -> HttpRequest {
+  parse_request(&format!(
+    "GET /asset HTTP/1.1\r\nHost: example.test\r\nRange: {range}\r\n\r\n"
+  ))
+}
+
+#[test]
+fn request_resolves_mixed_partial_and_legacy_byte_range_sets() {
+  assert_eq!(
+    Some(HttpByteRangeSet::new(vec![
+      HttpByteRange::new(0, 1),
+      HttpByteRange::new(5, 9),
+      HttpByteRange::new(7, 9),
+    ])),
+    range_request("bytes=0-1,5-,-3")
+      .range(10)
+      .expect("mixed Range should parse")
+  );
+  assert_eq!(
+    Some(HttpByteRangeSet::new(vec![
+      HttpByteRange::new(0, 1),
+      HttpByteRange::new(4, 5),
+    ])),
+    range_request("bytes=0-1,99-100,4-5")
+      .range(10)
+      .expect("partially unsatisfied Range should keep valid members")
+  );
+  assert_eq!(
+    Err(HttpByteRangeError::UnsatisfiedRange),
+    range_request("bytes=99-100,200-").range(10)
+  );
+  assert_eq!(
+    Err(HttpByteRangeError::UnsatisfiedRange),
+    range_request("bytes=-1").range(0)
+  );
+  assert_eq!(
+    Some(HttpByteRangeSet::new(vec![HttpByteRange::new(2, 5)])),
+    range_request("bytes=2-5")
+      .range(10)
+      .expect("legacy closed range should parse")
+  );
+}
+
+#[test]
+fn request_range_enforces_member_limit_overflow_and_duplicate_fields() {
+  let allowed = (0..HttpByteRangeSet::MAX_RANGES)
+    .map(|index| format!("{index}-{index}"))
+    .collect::<Vec<_>>()
+    .join(",");
+  assert_eq!(
+    HttpByteRangeSet::MAX_RANGES,
+    range_request(&format!("bytes={allowed}"))
+      .range(HttpByteRangeSet::MAX_RANGES)
+      .expect("32 members should resolve")
+      .expect("Range should be present")
+      .len()
+  );
+  let rejected = (0..=HttpByteRangeSet::MAX_RANGES)
+    .map(|index| format!("{index}-{index}"))
+    .collect::<Vec<_>>()
+    .join(",");
+  assert_eq!(
+    Err(HttpByteRangeError::MultipleRanges),
+    range_request(&format!("bytes={rejected}")).range(HttpByteRangeSet::MAX_RANGES + 1)
+  );
+  assert_eq!(
+    Some(HttpByteRangeSet::new(vec![HttpByteRange::new(0, 9)])),
+    range_request("bytes=0-18446744073709551615")
+      .range(10)
+      .expect("overflow end should clip")
+  );
+  let duplicate = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Range: bytes=0-1\r\n",
+    "Range: bytes=2-3\r\n",
+    "\r\n"
+  ));
+  assert_eq!(Err(HttpByteRangeError::MultipleRanges), duplicate.range(10));
+}
+
+#[test]
+fn if_range_carries_resolved_range_set_after_validator_success() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Range: bytes=0-1,99-100,5-\r\n",
+    "If-Range: \"abc123\"\r\n",
+    "\r\n"
+  ));
+  let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("abc123"));
+
+  assert_eq!(
+    Ok(HttpIfRangeRequestOutcome::PartialContent(
+      HttpByteRangeSet::new(vec![HttpByteRange::new(0, 1), HttpByteRange::new(5, 9)])
+    )),
     request.evaluate_if_range(&metadata, 10)
   );
 }

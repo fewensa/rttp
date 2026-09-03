@@ -1039,8 +1039,8 @@ fn range_response(request: Request) -> HttpResponse {
 
 fn if_range_response(request: Request, metadata: HttpConditionalMetadata) -> HttpResponse {
   match request.evaluate_if_range(&metadata, RANGE_BODY.len()) {
-    Ok(HttpIfRangeRequestOutcome::PartialContent(range)) => {
-      HttpResponse::partial_content(RANGE_BODY, range)
+    Ok(HttpIfRangeRequestOutcome::PartialContent(ranges)) => {
+      HttpResponse::partial_content(RANGE_BODY, ranges[0])
         .header("ETag", r#""abc""#)
         .header("Last-Modified", CONDITIONAL_LAST_MODIFIED)
     }
