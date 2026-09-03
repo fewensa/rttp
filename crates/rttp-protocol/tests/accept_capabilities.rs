@@ -122,3 +122,24 @@ fn accept_patch_rejects_control_bytes_and_accepts_exact_value_bound() {
   assert!(AcceptPatch::parse(&exact).is_ok());
   assert!(AcceptPatch::parse(format!("{exact}x")).is_err());
 }
+
+#[test]
+fn accept_patch_bounds_canonical_serialization_at_exact_value_limit() {
+  let raw_prefix = "a/b;foo=";
+  let raw_at_limit = format!(
+    "{raw_prefix}{}",
+    "x".repeat(MAX_ACCEPT_PATCH_VALUE_BYTES - raw_prefix.len())
+  );
+  assert_eq!(raw_at_limit.len(), MAX_ACCEPT_PATCH_VALUE_BYTES);
+  assert!(AcceptPatch::parse(&raw_at_limit).is_err());
+  assert!(AcceptPatch::from_media_types([raw_at_limit.as_str()]).is_err());
+
+  let canonical_prefix = "a/b; foo=";
+  let canonical_at_limit = format!(
+    "{canonical_prefix}{}",
+    "x".repeat(MAX_ACCEPT_PATCH_VALUE_BYTES - canonical_prefix.len())
+  );
+  let parsed = AcceptPatch::parse(&canonical_at_limit).expect("canonical value should parse");
+  assert_eq!(parsed.header_value(), canonical_at_limit);
+  assert_eq!(parsed.header_value().len(), MAX_ACCEPT_PATCH_VALUE_BYTES);
+}

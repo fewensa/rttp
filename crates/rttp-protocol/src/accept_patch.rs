@@ -42,14 +42,20 @@ impl AcceptPatch {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    crate::media_type::parse_values(
+    let media_types = crate::media_type::parse_values(
       values,
       "Accept-Patch",
       MAX_ACCEPT_PATCH_VALUE_BYTES,
       MAX_ACCEPT_PATCH_MEDIA_TYPES,
     )
-    .map(|media_types| Self { media_types })
-    .map_err(|message| AcceptPatchParseError { message })
+    .map_err(|message| AcceptPatchParseError { message })?;
+    let accept_patch = Self { media_types };
+    if accept_patch.header_value().len() > MAX_ACCEPT_PATCH_VALUE_BYTES {
+      return Err(AcceptPatchParseError::new(
+        "Accept-Patch header value is too large",
+      ));
+    }
+    Ok(accept_patch)
   }
 
   /// Validates supplied media types as one bounded `Accept-Patch` field value.
