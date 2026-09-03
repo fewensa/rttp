@@ -36,14 +36,54 @@ fn compatibility_facade_reexports_accept_response_metadata() {
   )
   .expect("response should parse");
 
-  let _: rttp::AcceptPatch = response
+  let accept_patch: rttp::AcceptPatch = response
     .accept_patch()
     .expect("Accept-Patch should parse")
     .expect("Accept-Patch should be present");
+  let _: &[rttp::MediaType] = accept_patch.media_types();
+  assert_eq!("application", accept_patch.media_types()[0].type_());
+  assert_eq!("json", accept_patch.media_types()[0].subtype());
+  let _: rttp::AcceptPatchParseError =
+    rttp_client::response::AcceptPatch::parse("application/json,")
+      .expect_err("malformed Accept-Patch should fail");
   let _: rttp::AcceptPost = response
     .accept_post()
     .expect("Accept-Post should parse")
     .expect("Accept-Post should be present");
+}
+
+#[test]
+#[cfg(any(feature = "all", feature = "client"))]
+fn compatibility_facade_roundtrips_accept_patch_metadata_over_http11() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind Accept-Patch server");
+  let addr = server.local_addr().expect("Accept-Patch server address");
+  let handle = std::thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        rttp::server::HttpResponse::ok("OK")
+          .with_accept_patch([
+            "application/merge-patch+json; charset=utf-8",
+            "application/json",
+          ])
+          .expect("Accept-Patch declaration should parse")
+      })
+      .expect("serve Accept-Patch response");
+  });
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/accept-patch"))
+    .emit()
+    .expect("Accept-Patch response should parse");
+  let metadata = response
+    .accept_patch()
+    .expect("Accept-Patch metadata should parse")
+    .expect("Accept-Patch metadata should be present");
+  assert_eq!(2, metadata.len());
+  assert_eq!("application", metadata.media_types()[0].type_());
+  assert_eq!("merge-patch+json", metadata.media_types()[0].subtype());
+  assert_eq!("utf-8", metadata.media_types()[0].parameters()[0].value());
+  handle.join().expect("Accept-Patch server thread");
 }
 
 #[test]

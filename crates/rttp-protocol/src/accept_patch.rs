@@ -17,6 +17,14 @@ pub struct AcceptPatchParseError {
   message: String,
 }
 
+impl AcceptPatchParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
 impl fmt::Display for AcceptPatchParseError {
   fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     formatter.write_str(&self.message)
@@ -34,14 +42,61 @@ impl AcceptPatch {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    crate::media_type::parse_values(
+    let media_types = crate::media_type::parse_values(
       values,
       "Accept-Patch",
       MAX_ACCEPT_PATCH_VALUE_BYTES,
       MAX_ACCEPT_PATCH_MEDIA_TYPES,
     )
-    .map(|media_types| Self { media_types })
-    .map_err(|message| AcceptPatchParseError { message })
+    .map_err(|message| AcceptPatchParseError { message })?;
+    let accept_patch = Self { media_types };
+    if accept_patch.header_value().len() > MAX_ACCEPT_PATCH_VALUE_BYTES {
+      return Err(AcceptPatchParseError::new(
+        "Accept-Patch header value is too large",
+      ));
+    }
+    Ok(accept_patch)
+  }
+
+  /// Validates supplied media types as one bounded `Accept-Patch` field value.
+  pub fn from_media_types<I, M>(media_types: I) -> Result<Self, AcceptPatchParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    let mut value = String::with_capacity(MAX_ACCEPT_PATCH_VALUE_BYTES);
+
+    for (index, media_type) in media_types.into_iter().enumerate() {
+      if index >= MAX_ACCEPT_PATCH_MEDIA_TYPES {
+        return Err(AcceptPatchParseError::new(
+          "too many Accept-Patch media types",
+        ));
+      }
+
+      let media_type = media_type.as_ref();
+      let separator_bytes = if index > 0 { 2 } else { 0 };
+      let Some(value_length) = value
+        .len()
+        .checked_add(separator_bytes)
+        .and_then(|length| length.checked_add(media_type.len()))
+      else {
+        return Err(AcceptPatchParseError::new(
+          "Accept-Patch header value is too large",
+        ));
+      };
+      if value_length > MAX_ACCEPT_PATCH_VALUE_BYTES {
+        return Err(AcceptPatchParseError::new(
+          "Accept-Patch header value is too large",
+        ));
+      }
+
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(media_type);
+    }
+
+    Self::parse(value)
   }
 
   pub fn media_types(&self) -> &[MediaType] {

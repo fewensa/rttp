@@ -960,16 +960,16 @@ fn server_response_accept_patch_and_accept_post_helpers_declare_and_parse_media_
     .expect("Accept-Patch should parse")
     .expect("Accept-Patch should be present");
   assert_eq!(
-    vec!["application/json", "application/merge-patch+json"],
+    vec![("application", "json"), ("application", "merge-patch+json")],
     accept_patch
       .media_types()
       .iter()
-      .map(|media_type| media_type.media_type())
+      .map(|media_type| (media_type.type_(), media_type.subtype()))
       .collect::<Vec<_>>()
   );
   assert_eq!(
-    Some("utf-8"),
-    accept_patch.media_types()[0].parameter("charset")
+    "utf-8",
+    accept_patch.media_types()[0].parameters()[0].value()
   );
 
   let accept_post = response

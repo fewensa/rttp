@@ -6,8 +6,8 @@ pub use rttp_server::server;
 
 #[cfg(feature = "client")]
 pub use rttp_client::response::{
-  AcceptCh, AcceptCharset, AcceptEncoding, AcceptPatch, AcceptPost, AcceptRanges,
-  AccessControlAllowCredentials, AccessControlAllowCredentialsParseError, AltSvc,
+  AcceptCh, AcceptCharset, AcceptEncoding, AcceptPatch, AcceptPatchParseError, AcceptPost,
+  AcceptRanges, AccessControlAllowCredentials, AccessControlAllowCredentialsParseError, AltSvc,
   AltSvcAlternative, AltSvcParameter, AltSvcParseError, AltUsed, AltUsedParseError,
   AlternateAttribute, AlternateVariant, Alternates, AlternatesParseError, AuthenticationInfo,
   AuthenticationInfoParameter, AuthenticationInfoParseError, CacheStatus, CacheStatusIdentifier,
@@ -27,8 +27,8 @@ pub use rttp_client::response::{
   DocumentPolicyReportOnlyParseError, DocumentPolicyReportOnlyValue, DocumentPolicyValue,
   EntityTag, EntityTagParseError, HttpContentLength, HttpCookieParseError, HttpSameSite,
   HttpSetCookie, HttpSetCookieAttribute, HttpSetCookieAttributeKind, HttpSetCookies, Im, ImMember,
-  ImParameter, ImParseError, Location, LocationParseError, MementoDatetime,
-  MementoDatetimeParseError, Nel, NelParseError, NelUnknownMember, NoVarySearch,
+  ImParameter, ImParseError, Location, LocationParseError, MediaType, MediaTypeParameter,
+  MementoDatetime, MementoDatetimeParseError, Nel, NelParseError, NelUnknownMember, NoVarySearch,
   NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
   PermissionsPolicy, PermissionsPolicyAllowlist, PermissionsPolicyAllowlistMember,
   PermissionsPolicyDirective, PermissionsPolicyParseError, Pragma, PragmaParseError, ReprDigest,

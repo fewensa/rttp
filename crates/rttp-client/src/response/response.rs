@@ -38,6 +38,7 @@ use crate::response::Via;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
+use rttp_protocol::accept_patch::AcceptPatch;
 use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_allow_credentials::AccessControlAllowCredentials;
 use rttp_protocol::access_control_allow_headers::AccessControlAllowHeaders;
@@ -561,7 +562,9 @@ impl Response {
     if values.is_empty() {
       return Ok(None);
     }
-    AcceptPatch::parse_values(values.into_iter().map(String::as_str)).map(Some)
+    AcceptPatch::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses `Accept-Post` media-type metadata without choosing an upload or
@@ -1596,30 +1599,6 @@ impl Allow {
 
   pub fn contains_method(&self, method: impl AsRef<str>) -> bool {
     self.inner.contains_method(method)
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AcceptPatch {
-  media_types: Vec<ContentType>,
-}
-
-impl AcceptPatch {
-  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  fn parse_values<'a, I>(values: I) -> error::Result<Self>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    Ok(Self {
-      media_types: parse_accepted_media_types(values, "Accept-Patch")?,
-    })
-  }
-
-  pub fn media_types(&self) -> &[ContentType] {
-    &self.media_types
   }
 }
 

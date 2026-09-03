@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::accept_patch::{
+  AcceptPatch as HttpAcceptPatch, AcceptPatchParseError as HttpAcceptPatchParseError,
+  MediaType as HttpMediaType, MediaTypeParameter as HttpMediaTypeParameter,
+};
 pub use rttp_protocol::accept_ranges::{
   AcceptRanges as HttpAcceptRanges, AcceptRangesParseError as HttpAcceptRangesParseError,
 };
@@ -411,8 +415,6 @@ pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 pub(crate) const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_VARY_FIELDS: usize = 256;
-pub(crate) const MAX_ACCEPT_PATCH_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_ACCEPT_PATCH_MEDIA_TYPES: usize = 32;
 pub(crate) const MAX_ACCEPT_POST_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_POST_MEDIA_TYPES: usize = 32;
 pub(crate) const MAX_EARLY_HINTS_VALUE_BYTES: usize = 64 * 1024;
@@ -2191,12 +2193,13 @@ impl HttpResponse {
     M: AsRef<str>,
   {
     let accept_patch = HttpAcceptPatch::from_media_types(media_types)?;
+    let header_value = accept_patch.header_value();
     self
       .headers
       .retain(|header| !header.name.eq_ignore_ascii_case("Accept-Patch"));
     self
       .headers
-      .push(HttpHeader::new("Accept-Patch", accept_patch.header_value()));
+      .push(HttpHeader::new("Accept-Patch", header_value));
     Ok(self)
   }
 
@@ -4683,71 +4686,6 @@ fn split_accept_capability_members(value: &str) -> Result<Vec<&str>, String> {
   members.push(member);
   Ok(members)
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptPatch(HttpAcceptedMediaTypes);
-
-impl HttpAcceptPatch {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptPatchParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptPatchParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    HttpAcceptedMediaTypes::parse_values(
-      values,
-      "Accept-Patch",
-      MAX_ACCEPT_PATCH_VALUE_BYTES,
-      MAX_ACCEPT_PATCH_MEDIA_TYPES,
-    )
-    .map(Self)
-    .map_err(HttpAcceptPatchParseError::new)
-  }
-
-  pub fn from_media_types<I, M>(media_types: I) -> Result<Self, HttpAcceptPatchParseError>
-  where
-    I: IntoIterator<Item = M>,
-    M: AsRef<str>,
-  {
-    HttpAcceptedMediaTypes::from_media_types(
-      media_types,
-      "Accept-Patch",
-      MAX_ACCEPT_PATCH_VALUE_BYTES,
-      MAX_ACCEPT_PATCH_MEDIA_TYPES,
-    )
-    .map(Self)
-    .map_err(HttpAcceptPatchParseError::new)
-  }
-
-  pub fn media_types(&self) -> &[HttpContentType] {
-    self.0.media_types()
-  }
-
-  pub fn header_value(&self) -> String {
-    self.0.header_value()
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptPatchParseError {
-  message: String,
-}
-
-impl HttpAcceptPatchParseError {
-  fn new(message: String) -> Self {
-    Self { message }
-  }
-}
-
-impl fmt::Display for HttpAcceptPatchParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpAcceptPatchParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpAcceptPost(HttpAcceptedMediaTypes);
