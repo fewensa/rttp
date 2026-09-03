@@ -5799,6 +5799,161 @@ hello\r\n\
   }
 
   #[test]
+  fn referer_helpers_parse_bounded_metadata_without_policy() {
+    let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse");
+    assert_eq!(
+      None,
+      absent.referer().expect("missing Referer should be valid")
+    );
+    let absent_http = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse");
+    assert_eq!(
+      None,
+      absent_http
+        .referer()
+        .expect("missing Referer should be valid")
+    );
+
+    for value in [
+      "https://shop.example/checkout?step=pay",
+      "/checkout?step=pay",
+      "//cdn.example/lib.js",
+      "\thttps://example.test/path?q=1\t",
+    ] {
+      let expected = value.trim_matches(|c| c == ' ' || c == '\t');
+      let raw = format!(
+        "GET / HTTP/1.1\r\nHost: example.test\r\nReferer: {value}\r\n\r\n"
+      );
+      let request = Request::from_raw_frame(raw.as_bytes()).expect("request should parse");
+      let referer = request
+        .referer()
+        .expect("Referer should parse")
+        .expect("Referer should be present");
+      assert_eq!(expected, referer.header_value());
+
+      let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+      let http_referer = http_request
+        .referer()
+        .expect("Referer should parse")
+        .expect("Referer should be present");
+      assert_eq!(expected, http_referer.header_value());
+    }
+
+    for value in [
+      "",
+      "https://example.test/path#frag",
+      "https://example.test/%zz",
+      "https://example.test/a b",
+    ] {
+      let raw = format!(
+        "GET / HTTP/1.1\r\nHost: example.test\r\nReferer: {value}\r\n\r\n"
+      );
+      let request = Request::from_raw_frame(raw.as_bytes()).expect("request should be retained");
+      assert!(
+        request.referer().is_err(),
+        "Referer should reject {value:?}"
+      );
+      assert_eq!(Some(value), request.header("Referer"));
+
+      let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should be retained");
+      assert!(
+        http_request.referer().is_err(),
+        "Referer should reject {value:?}"
+      );
+      assert_eq!(Some(value), http_request.header("Referer"));
+    }
+
+    let duplicate_raw = concat!(
+      "GET / HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Referer: https://example.test/a\r\n",
+      "referer: https://example.test/b\r\n",
+      "\r\n"
+    );
+    let duplicate = Request::from_raw_frame(duplicate_raw.as_bytes())
+      .expect("duplicate metadata should be retained");
+    assert!(duplicate.referer().is_err());
+    assert_eq!(Some("https://example.test/a"), duplicate.header("Referer"));
+    let duplicate_http = HttpRequest::parse(duplicate_raw.as_bytes())
+      .expect("duplicate metadata should be retained");
+    assert!(duplicate_http.referer().is_err());
+    assert_eq!(
+      Some("https://example.test/a"),
+      duplicate_http.header("Referer")
+    );
+
+    let control = Request {
+      method: "GET".to_string(),
+      target: "/".to_string(),
+      version: "HTTP/1.1".to_string(),
+      headers: vec![
+        ("Host".to_string(), "example.test".to_string()),
+        (
+          "Referer".to_string(),
+          "https://example.test/path\0".to_string(),
+        ),
+      ],
+      trailers: Vec::new(),
+      body: Vec::new(),
+      content_length: None,
+      extended_connect_protocol: None,
+    };
+    assert!(control.referer().is_err());
+    assert_eq!(
+      Some("https://example.test/path\0"),
+      control.header("Referer")
+    );
+
+    let control_http = HttpRequest {
+      method: "GET".to_string(),
+      path: "/".to_string(),
+      query: None,
+      version: "HTTP/1.1".to_string(),
+      headers: vec![HttpHeader::new("Referer", "https://example.test/path\0")],
+      body: Vec::new(),
+      content_length: None,
+    };
+    assert!(control_http.referer().is_err());
+    assert_eq!(
+      Some("https://example.test/path\0"),
+      control_http.header("Referer")
+    );
+
+    let oversized = "a".repeat(64 * 1024 + 1);
+    let oversized_request = Request {
+      method: "GET".to_string(),
+      target: "/".to_string(),
+      version: "HTTP/1.1".to_string(),
+      headers: vec![("Referer".to_string(), oversized.clone())],
+      trailers: Vec::new(),
+      body: Vec::new(),
+      content_length: None,
+      extended_connect_protocol: None,
+    };
+    assert!(oversized_request.referer().is_err());
+    assert_eq!(
+      Some(oversized.as_str()),
+      oversized_request.header("Referer")
+    );
+
+    let oversized_http = HttpRequest {
+      method: "GET".to_string(),
+      path: "/".to_string(),
+      query: None,
+      version: "HTTP/1.1".to_string(),
+      headers: vec![HttpHeader::new("Referer", oversized.clone())],
+      body: Vec::new(),
+      content_length: None,
+    };
+    assert!(oversized_http.referer().is_err());
+    assert_eq!(Some(oversized.as_str()), oversized_http.header("Referer"));
+
+    let _: HttpRefererParseError = HttpReferer::parse("https://example.test/path\0")
+      .expect_err("control-byte Referer metadata should be rejected");
+  }
+
+  #[test]
   fn authentication_helpers_parse_bounded_metadata_without_authentication_policy() {
     let raw = concat!(
       "GET / HTTP/1.1\r\n",

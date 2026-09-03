@@ -114,6 +114,9 @@ pub use rttp_protocol::prefer::{
   Preference as HttpPreference, PreferenceKind as HttpPreferenceKind,
   PreferenceParameter as HttpPreferenceParameter,
 };
+pub use rttp_protocol::referer::{
+  Referer as HttpReferer, RefererParseError as HttpRefererParseError,
+};
 pub use rttp_protocol::save_data::{
   SaveData as HttpSaveData, SaveDataParseError as HttpSaveDataParseError,
 };
@@ -628,6 +631,18 @@ impl Request {
       return Ok(None);
     }
     HttpFrom::parse_values(values).map(Some)
+  }
+
+  /// Parses one bounded `Referer` request field without enforcing
+  /// `Referrer-Policy`, trust, CSRF, redaction, URL canonicalization, or
+  /// redirect behavior. Duplicate or malformed fields return a parser error
+  /// while the raw request header remains available through [`Self::header`].
+  pub fn referer(&self) -> Result<Option<HttpReferer>, HttpRefererParseError> {
+    let values: Vec<&str> = self.headers_named("Referer").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpReferer::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed
@@ -2315,6 +2330,23 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpFrom::parse_values(values).map(Some)
+  }
+
+  /// Parses one bounded `Referer` request field without enforcing
+  /// `Referrer-Policy`, trust, CSRF, redaction, URL canonicalization, or
+  /// redirect behavior. Duplicate or malformed fields return a parser error
+  /// while the raw request header remains available through [`Self::header`].
+  pub fn referer(&self) -> Result<Option<HttpReferer>, HttpRefererParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Referer"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpReferer::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed

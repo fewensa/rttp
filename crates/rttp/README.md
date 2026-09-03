@@ -462,6 +462,24 @@ ownership, apply privacy or authorization policy, assess deliverability,
 perform DNS or SMTP work, or send email. The client’s raw `header` helper
 remains available for values outside the bounded typed syntax.
 
+## Bounded Referer request metadata
+
+With the client feature, `HttpClient::referer(value)` validates and emits one
+canonical `Referer` request field through the shared protocol `Referer` type,
+replacing any existing case-insensitive field before a socket is opened.
+`rttp::Referer` and `rttp::RefererParseError` are re-exported for direct
+parsing. Absolute, relative, and scheme-relative URI references are accepted.
+On the server facade, `Request::referer()` and `HttpRequest::referer()` parse
+all received `Referer` fields into `HttpReferer`, returning `Ok(None)` when
+absent and a parser error for duplicate, fragment, malformed
+percent-encoding, control-byte, empty, or oversized values while raw headers
+remain available.
+
+The boundary is syntax-only metadata. RTTP does not enforce `Referrer-Policy`,
+make trust decisions, apply CSRF protection, redact values, canonicalize URLs,
+or change redirect behavior. The client’s raw `header` helper remains
+available for values outside the bounded typed syntax.
+
 ## Bounded Idempotency-Key request metadata
 
 `HttpClient::idempotency_key(value)` validates and emits one opaque

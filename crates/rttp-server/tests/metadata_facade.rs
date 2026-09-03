@@ -33,23 +33,23 @@ use rttp_server::server::{
   HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
-  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
-  HttpRetryAfterParseError, HttpSameSite, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag,
-  HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
-  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
-  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpProxyStatusParseError, HttpReferer, HttpRefererParseError, HttpRequest,
+  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpResponseDate,
+  HttpResponseDateParseError, HttpResponseExpires, HttpResponseLastModified,
+  HttpResponseLastModifiedParseError, HttpRetryAfter, HttpRetryAfterParseError, HttpSameSite,
+  HttpSaveData, HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
+  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
+  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
   HttpVariantVaryParseError, HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest,
   HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
@@ -196,6 +196,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let save_data_error: Result<HttpSaveData, HttpSaveDataParseError> = HttpSaveData::parse("?1");
   let dnt: HttpDnt = HttpDnt::parse("1").expect("DNT should parse");
   let dnt_error: Result<HttpDnt, HttpDntParseError> = HttpDnt::parse("on");
+  let referer: HttpReferer =
+    HttpReferer::parse("https://shop.example/checkout?step=pay").expect("Referer should parse");
+  let referer_error: Result<HttpReferer, HttpRefererParseError> =
+    HttpReferer::parse("https://example.test/path#frag");
   let sec_gpc: HttpSecGpc = HttpSecGpc::parse("1").expect("Sec-GPC should parse");
   let sec_gpc_error: Result<HttpSecGpc, HttpSecGpcParseError> = HttpSecGpc::parse("0");
   let upgrade_insecure_requests: HttpUpgradeInsecureRequests =
@@ -499,6 +503,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(save_data_error.is_err());
   assert_eq!(dnt.header_value(), "1");
   assert!(dnt_error.is_err());
+  assert_eq!(
+    referer.header_value(),
+    "https://shop.example/checkout?step=pay"
+  );
+  assert!(referer_error.is_err());
   assert_eq!(sec_gpc.header_value(), "1");
   assert!(sec_gpc_error.is_err());
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
@@ -1659,6 +1668,94 @@ fn request_facade_parses_from_metadata_without_policy() {
     HttpFrom::parse("a".repeat(64 * 1024 + 1)).is_err(),
     "oversized From metadata should be rejected"
   );
+}
+
+#[test]
+fn request_facade_parses_referer_metadata_without_policy() {
+  let absolute = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nReferer: https://shop.example/checkout?step=pay\r\n\r\n",
+  )
+  .expect("request should parse");
+  let absolute_referer: HttpReferer = absolute
+    .referer()
+    .expect("Referer should parse")
+    .expect("Referer should be present");
+  assert_eq!(
+    "https://shop.example/checkout?step=pay",
+    absolute_referer.header_value()
+  );
+
+  let relative = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nReferer: /checkout?step=pay\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    "/checkout?step=pay",
+    relative
+      .referer()
+      .expect("Referer should parse")
+      .expect("Referer should be present")
+      .header_value()
+  );
+
+  let scheme_relative = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nReferer: //cdn.example/lib.js\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    "//cdn.example/lib.js",
+    scheme_relative
+      .referer()
+      .expect("Referer should parse")
+      .expect("Referer should be present")
+      .header_value()
+  );
+
+  let trimmed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nReferer: \thttps://example.test/path?q=1\t\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    "https://example.test/path?q=1",
+    trimmed
+      .referer()
+      .expect("Referer should parse")
+      .expect("Referer should be present")
+      .header_value()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.referer().expect("missing Referer should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nReferer: https://example.test/path#frag\r\n\r\n",
+  )
+  .expect("malformed metadata should remain available");
+  assert!(malformed.referer().is_err());
+  assert_eq!(
+    Some("https://example.test/path#frag"),
+    malformed.header("Referer")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nReferer: https://example.test/a\r\nreferer: https://example.test/b\r\n\r\n",
+  )
+  .expect("duplicate metadata should remain available");
+  assert!(duplicate.referer().is_err());
+  assert_eq!(Some("https://example.test/a"), duplicate.header("Referer"));
+
+  let _: HttpRefererParseError = HttpReferer::parse("https://example.test/%zz")
+    .expect_err("malformed percent-encoding Referer should be rejected");
+  assert!(
+    HttpReferer::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Referer metadata should be rejected"
+  );
+  let _: HttpRefererParseError = HttpReferer::parse("https://example.test/path\0")
+    .expect_err("control-byte Referer metadata should be rejected");
 }
 
 #[test]

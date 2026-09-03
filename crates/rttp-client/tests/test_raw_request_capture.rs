@@ -652,6 +652,76 @@ fn from_helper_rejects_invalid_and_oversized_metadata_before_connecting() {
   }
 }
 
+#[test]
+fn referer_helper_emits_one_canonical_case_insensitive_singleton() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("referer", "https://legacy.example/path"))
+      .referer("\thttps://shop.example/checkout?step=pay\t")
+      .expect("Referer metadata should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(1, request.matches("\r\nReferer: ").count());
+  assert_eq!(
+    Some("https://shop.example/checkout?step=pay"),
+    header_value(&request, "REFERER")
+  );
+}
+
+#[test]
+fn referer_helper_emits_absolute_relative_and_scheme_relative_forms() {
+  for value in [
+    "https://shop.example/checkout?step=pay",
+    "/checkout?step=pay",
+    "//cdn.example/lib.js",
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .referer(value)
+        .expect("Referer metadata should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    assert_eq!(
+      Some(value),
+      header_value(&request_text(&request), "Referer")
+    );
+  }
+}
+
+#[test]
+fn referer_helper_rejects_invalid_and_oversized_metadata_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  for value in [
+    "".to_string(),
+    "https://example.test/path#frag".to_string(),
+    "https://example.test/%zz".to_string(),
+    "https://example.test/path\0".to_string(),
+    "https://example.test/a b".to_string(),
+    oversized,
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .referer(&value)
+        .expect_err("invalid Referer metadata should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid metadata must not open a socket"
+    );
+  }
+}
+
 #[cfg(feature = "async")]
 #[test]
 fn async_from_helper_emits_canonical_metadata() {

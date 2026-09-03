@@ -53,11 +53,11 @@ pub use rttp_client::{
   DestinationParseError, Dnt, DntParseError, From, FromParseError, If, IfCondition, IfList,
   IfParseError, IfPredicate, IfResourceTag, IfScheduleTagMatch, IfScheduleTagMatchParseError,
   IfStateToken, LockToken, LockTokenParseError, Negotiate, NegotiateDirective, NegotiateParseError,
-  Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
-  SecPurpose, Timeout, TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError,
-  TraceState, TraceStateMember, TraceStateParseError, Via, ViaMember, ViaParseError, XForwardedFor,
-  XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError, XForwardedHost,
-  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  Overwrite, OverwriteParseError, Referer, RefererParseError, SecFetchDest, SecFetchMode,
+  SecFetchSite, SecFetchUser, SecPurpose, Timeout, TimeoutParseError, TimeoutType, TraceParent,
+  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError, Via, ViaMember,
+  ViaParseError, XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError,
+  XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 
 impl Http {

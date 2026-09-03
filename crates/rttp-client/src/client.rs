@@ -43,6 +43,7 @@ use rttp_protocol::overwrite::Overwrite;
 use rttp_protocol::pragma::Pragma;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::range::{Range, MAX_RANGE_COUNT};
+use rttp_protocol::referer::Referer;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
@@ -242,6 +243,21 @@ impl HttpClient {
     let from = From::parse(value.as_ref())
       .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
     Ok(self.header(Header::new("From", from.header_value())))
+  }
+
+  /// Set bounded `Referer` request metadata.
+  ///
+  /// The value must be one RFC 9110 URI reference (`absolute-URI` /
+  /// `partial-URI`) accepted by the shared protocol parser. The canonical
+  /// OWS-trimmed value replaces any existing case-insensitive `Referer`
+  /// field before a connection is opened. This only declares
+  /// syntax-validated metadata; RTTP does not enforce `Referrer-Policy`,
+  /// make trust decisions, apply CSRF protection, redact values,
+  /// canonicalize URLs, or change redirect behavior.
+  pub fn referer<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let referer = Referer::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Referer", referer.header_value())))
   }
 
   ///  Add request header

@@ -11,11 +11,11 @@ use rttp::server::{
   HttpDocumentPolicyReportOnly, HttpEntityTag, HttpExpectations, HttpFrom, HttpFromParseError,
   HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
   HttpMementoDatetime, HttpNel, HttpOriginTrials, HttpOverwrite, HttpPartialContentError,
-  HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy,
-  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
-  HttpResponseContentEncodings, HttpRetryAfter, HttpScheduleTag, HttpServerTiming, HttpTcn,
-  HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
+  HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferer,
+  HttpRefererParseError, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
+  HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
+  HttpScheduleTag, HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
 };
 
 #[test]
@@ -1279,6 +1279,67 @@ fn request_from_metadata_is_available_through_the_compatibility_facade() {
   let _: HttpFromParseError = HttpFrom::parse("ops@example.test\0")
     .expect_err("control-byte From metadata should be rejected");
   assert!(HttpFrom::parse("a".repeat(64 * 1024 + 1)).is_err());
+}
+
+#[test]
+fn request_referer_metadata_is_available_through_the_compatibility_facade() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Referer: https://shop.example/checkout?step=pay\r\n",
+    "\r\n"
+  ));
+  let referer: HttpReferer = request
+    .referer()
+    .expect("Referer should parse")
+    .expect("Referer should be present");
+  assert_eq!(
+    "https://shop.example/checkout?step=pay",
+    referer.header_value()
+  );
+
+  for value in ["/checkout?step=pay", "//cdn.example/lib.js"] {
+    let parsed = parse_request(&format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nReferer: {value}\r\n\r\n"
+    ));
+    assert_eq!(
+      value,
+      parsed
+        .referer()
+        .expect("Referer should parse")
+        .expect("Referer should be present")
+        .header_value()
+    );
+  }
+
+  let absent = parse_request("GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent.referer().expect("missing Referer should be valid")
+  );
+
+  let malformed = parse_request(
+    "GET /asset HTTP/1.1\r\nHost: example.test\r\nReferer: https://example.test/path#frag\r\n\r\n",
+  );
+  assert!(malformed.referer().is_err());
+  assert_eq!(
+    Some("https://example.test/path#frag"),
+    malformed.header("Referer")
+  );
+
+  let duplicate = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Referer: https://example.test/a\r\n",
+    "referer: https://example.test/b\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.referer().is_err());
+  assert_eq!(Some("https://example.test/a"), duplicate.header("Referer"));
+
+  let _: HttpRefererParseError = HttpReferer::parse("https://example.test/%zz")
+    .expect_err("malformed percent-encoding Referer should be rejected");
+  assert!(HttpReferer::parse("a".repeat(64 * 1024 + 1)).is_err());
 }
 
 #[test]

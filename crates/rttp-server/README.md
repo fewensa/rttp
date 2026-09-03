@@ -155,6 +155,22 @@ This boundary is syntax-only metadata. RTTP does not verify identity or
 ownership, apply privacy or authorization policy, assess deliverability,
 perform DNS or SMTP work, or send email.
 
+## Referer request metadata
+
+`Request::referer()` and `HttpRequest::referer()` parse all case-insensitive
+`Referer` request fields through the shared `rttp_protocol::referer::Referer`
+type as `HttpReferer`. They return `Ok(None)` when the field is absent and
+expose the OWS-trimmed URI reference through `header_value()`. Absolute,
+relative, and scheme-relative references are accepted. Duplicate, fragment,
+malformed percent-encoding, interior whitespace, ASCII control, empty, and
+oversized fields return `HttpRefererParseError`; raw values remain available
+through `Request::header()` or `HttpRequest::header()` after typed parsing
+fails.
+
+This boundary is syntax-only metadata. RTTP does not enforce `Referrer-Policy`,
+make trust decisions, apply CSRF protection, redact values, canonicalize URLs,
+or change redirect behavior.
+
 ## Request representation metadata
 
 Handlers can call `Request::content_type()`, `content_encoding()`, and
