@@ -386,6 +386,7 @@ fn test_buffered_gzip_response_exposes_decoded_body_headers() {
   assert_eq!(b"decoded", response.body().binary());
   assert!(response.header("Content-Encoding").is_none());
   assert!(response.header("Content-Length").is_none());
+  assert!(response.content_length().is_none());
 }
 
 #[test]
@@ -408,6 +409,7 @@ fn test_buffered_deflate_response_exposes_decoded_body_headers() {
   assert_eq!(b"decoded", response.body().binary());
   assert!(response.header("Content-Encoding").is_none());
   assert!(response.header("Content-Length").is_none());
+  assert!(response.content_length().is_none());
 }
 
 #[test]

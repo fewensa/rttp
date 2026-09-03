@@ -31,3 +31,7 @@ path = "websocket_handshake_metadata_matrix.rs"
 [[test]]
 name = "transparent_negotiation_metadata_matrix"
 path = "transparent_negotiation_metadata_matrix.rs"
+
+[[test]]
+name = "response_decoding_transport_matrix"
+path = "response_decoding_transport_matrix.rs"
