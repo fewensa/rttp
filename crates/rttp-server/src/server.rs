@@ -26,6 +26,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use socket2::{Domain, Protocol, Socket, Type};
 use url::Url;
 
+mod byte_range;
 mod connection;
 mod handoff;
 mod http1;
@@ -33,6 +34,7 @@ mod http2;
 mod request;
 mod response;
 
+pub use byte_range::*;
 pub use connection::HttpServer;
 pub use handoff::*;
 pub use http2::Http2ServerPolicy;

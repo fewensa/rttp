@@ -371,10 +371,19 @@ impl Request {
     evaluate_if_range_request(self, metadata, entity_length)
   }
 
-  /// Parses one bounded `Range` field against an entity length without
-  /// selecting or serving a representation.
-  pub fn range(&self, entity_length: usize) -> Result<Option<HttpByteRange>, HttpByteRangeError> {
-    parse_range_values(self.headers_named("Range"), entity_length)
+  /// Parses one bounded `Range` field against a representation length without
+  /// selecting or serving bytes.
+  ///
+  /// Satisfiable closed, open-ended, and suffix members are retained in wire
+  /// order as [`HttpByteRangeSet`], which contains at least one and at most
+  /// [`HttpByteRangeSet::MAX_RANGES`] (32) members. Unsatisfiable members are
+  /// omitted. If every member is unsatisfiable, the result is
+  /// [`HttpByteRangeError::UnsatisfiedRange`].
+  pub fn range(
+    &self,
+    entity_length: usize,
+  ) -> Result<Option<HttpByteRangeSet>, HttpByteRangeError> {
+    HttpByteRangeSet::parse_values(self.headers_named("Range"), entity_length)
   }
 
   /// Parses one strong entity-tag or HTTP-date `If-Range` validator.
@@ -1706,23 +1715,6 @@ impl fmt::Display for HttpIfNoneMatchParseError {
 
 impl Error for HttpIfNoneMatchParseError {}
 
-fn parse_range_values<'a, I>(
-  values: I,
-  entity_length: usize,
-) -> Result<Option<HttpByteRange>, HttpByteRangeError>
-where
-  I: IntoIterator<Item = &'a str>,
-{
-  let mut values = values.into_iter();
-  let Some(value) = values.next() else {
-    return Ok(None);
-  };
-  if values.next().is_some() {
-    return Err(HttpByteRangeError::MultipleRanges);
-  }
-  HttpByteRange::parse(value, entity_length).map(Some)
-}
-
 impl HttpConditionalMetadata {
   pub fn new() -> Self {
     Self::default()
@@ -1795,10 +1787,10 @@ pub fn evaluate_conditional_request(
   HttpConditionalRequestOutcome::Proceed
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HttpIfRangeRequestOutcome {
   FullResponse,
-  PartialContent(HttpByteRange),
+  PartialContent(HttpByteRangeSet),
   RangeNotSatisfiable,
 }
 
@@ -1807,23 +1799,27 @@ pub fn evaluate_if_range_request(
   metadata: &HttpConditionalMetadata,
   entity_length: usize,
 ) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
-  evaluate_if_range_headers(
-    request.header("Range"),
+  evaluate_if_range_values(
+    request.headers_named("Range"),
     request.header("If-Range"),
     metadata,
     entity_length,
   )
 }
 
-pub(crate) fn evaluate_if_range_headers(
-  range_header: Option<&str>,
+pub(crate) fn evaluate_if_range_values<'a, I>(
+  range_values: I,
   if_range: Option<&str>,
   metadata: &HttpConditionalMetadata,
   entity_length: usize,
-) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
-  let Some(range_header) = range_header else {
+) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let range_values: Vec<&str> = range_values.into_iter().collect();
+  if range_values.is_empty() {
     return Ok(HttpIfRangeRequestOutcome::FullResponse);
-  };
+  }
 
   if let Some(if_range) = if_range {
     if !if_range_matches(if_range, metadata) {
@@ -1831,8 +1827,9 @@ pub(crate) fn evaluate_if_range_headers(
     }
   }
 
-  match HttpByteRange::parse(range_header, entity_length) {
-    Ok(range) => Ok(HttpIfRangeRequestOutcome::PartialContent(range)),
+  match HttpByteRangeSet::parse_values(range_values, entity_length) {
+    Ok(Some(ranges)) => Ok(HttpIfRangeRequestOutcome::PartialContent(ranges)),
+    Ok(None) => Ok(HttpIfRangeRequestOutcome::FullResponse),
     Err(HttpByteRangeError::UnsatisfiedRange) => Ok(HttpIfRangeRequestOutcome::RangeNotSatisfiable),
     Err(error) => Err(error),
   }
@@ -2100,10 +2097,19 @@ impl HttpRequest {
     self.content_length
   }
 
-  /// Parses one bounded `Range` field against an entity length without
-  /// selecting or serving a representation.
-  pub fn range(&self, entity_length: usize) -> Result<Option<HttpByteRange>, HttpByteRangeError> {
-    parse_range_values(
+  /// Parses one bounded `Range` field against a representation length without
+  /// selecting or serving bytes.
+  ///
+  /// Satisfiable closed, open-ended, and suffix members are retained in wire
+  /// order as [`HttpByteRangeSet`], which contains at least one and at most
+  /// [`HttpByteRangeSet::MAX_RANGES`] (32) members. Unsatisfiable members are
+  /// omitted. If every member is unsatisfiable, the result is
+  /// [`HttpByteRangeError::UnsatisfiedRange`].
+  pub fn range(
+    &self,
+    entity_length: usize,
+  ) -> Result<Option<HttpByteRangeSet>, HttpByteRangeError> {
+    HttpByteRangeSet::parse_values(
       self
         .headers
         .iter()
@@ -3116,8 +3122,12 @@ impl HttpRequest {
     metadata: &HttpConditionalMetadata,
     entity_length: usize,
   ) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
-    evaluate_if_range_headers(
-      self.header("Range"),
+    evaluate_if_range_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Range"))
+        .map(|header| header.value.as_str()),
       self.header("If-Range"),
       metadata,
       entity_length,

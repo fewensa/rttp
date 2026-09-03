@@ -2000,15 +2000,17 @@ The listener path uses `socket2`.
 The server provides range parsing and response constructors for applications
 that choose to support partial content. It does not automatically serve files
 or decide static-file policy. Application code should inspect `Range`, choose
-the representation and entity length, and pass the header to
-`HttpByteRange::parse(range_header, entity_length)`.
+the representation and entity length, and call `Request::range(entity_length)`
+or `HttpByteRangeSet::parse(range_header, entity_length)`.
 
-Supported request forms are a single `bytes=start-end`, `bytes=start-`, or
-`bytes=-suffix` range. Open-ended ranges are clipped to the representation
-length, suffix ranges require a nonzero suffix, unsupported units return
-`UnsupportedUnit`, comma-separated ranges return `MultipleRanges`, malformed
-or inverted ranges return `InvalidRange`, and ranges beyond the entity return
-`UnsatisfiedRange`.
+One `Range` field may include closed `bytes=start-end`, open-ended
+`bytes=start-`, and suffix `bytes=-suffix` members. Satisfiable members are
+kept in wire order in `HttpByteRangeSet`, which contains at least one and at
+most 32 members. Unsatisfiable members are omitted; if none remain the result
+is `UnsatisfiedRange`. Duplicate `Range` fields and more than 32 members return
+`MultipleRanges`. Unsupported units return `UnsupportedUnit`; malformed or
+inverted members return `InvalidRange`. `HttpByteRange::parse` remains the
+single-range helper used by `HttpResponse::partial_content`.
 
 For a satisfiable range, `HttpResponse::partial_content(body, range)` returns
 `206 Partial Content`, adds `Content-Range: bytes start-end/length`, and sends
@@ -2019,11 +2021,11 @@ body.
 
 For conditional range requests, `Request::evaluate_if_range(&metadata,
 entity_length)` composes caller-provided `HttpConditionalMetadata` with the
-existing single-range parser. Matching strong ETags or exact HTTP-date
-`Last-Modified` validators return `PartialContent(HttpByteRange)`;
-non-matching, weak, invalid, or metadata-missing validators return
-`FullResponse`; guarded unsatisfied ranges return `RangeNotSatisfiable`.
-Application code still chooses the final `200`, `206`, or `416` response.
+resolved range set. Matching strong ETags or exact HTTP-date `Last-Modified`
+validators return `PartialContent(HttpByteRangeSet)`; non-matching, weak,
+invalid, or metadata-missing validators return `FullResponse`; guarded
+unsatisfied sets return `RangeNotSatisfiable`. Application code still chooses
+the final `200`, `206`, or `416` response.
 
 Multipart ranges are intentionally not generated: RTTP does not serialize
 `multipart/byteranges` or pick a multipart response for multiple requested
