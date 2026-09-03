@@ -619,6 +619,41 @@ impl fmt::Display for HttpByteRangeError {
 
 impl Error for HttpByteRangeError {}
 
+/// Maximum encoded body size for a constructed `multipart/byteranges` `206` response.
+///
+/// This bound applies only to the framed multi-range payload produced by
+/// [`HttpResponse::partial_content_ranges`]. It is independent of the request
+/// body cap and is not applied to the single-range [`HttpResponse::partial_content`]
+/// fast path.
+pub const MAX_PARTIAL_CONTENT_BODY_BYTES: usize = 8 * 1024 * 1024;
+
+/// Failure while constructing a bounded `206` response from a resolved range set.
+///
+/// An empty representation cannot satisfy [`HttpByteRangeSet`]: every member
+/// selects at least one byte, so a missing or empty source slice is
+/// [`Self::UnsatisfiedRange`]. This type does not parse `Range` request headers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpPartialContentError {
+  UnsatisfiedRange,
+  Overflow,
+  BodyLimit,
+  Allocation,
+}
+
+impl fmt::Display for HttpPartialContentError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    let message = match self {
+      Self::UnsatisfiedRange => "byte range is not satisfiable for the selected representation",
+      Self::Overflow => "multipart byte range framing overflowed",
+      Self::BodyLimit => "multipart byte range body exceeds the response body limit",
+      Self::Allocation => "multipart byte range body allocation failed",
+    };
+    formatter.write_str(message)
+  }
+}
+
+impl Error for HttpPartialContentError {}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpEarlyHintsError {
   pub(crate) message: String,
@@ -987,6 +1022,72 @@ impl HttpResponse {
         .header_value(),
       )
       .body(partial)
+  }
+
+  /// Builds a `206` response from a resolved [`HttpByteRangeSet`].
+  ///
+  /// A single member uses the [`Self::partial_content`] fast path. Two or more
+  /// members are serialized as `multipart/byteranges` with a collision-safe
+  /// boundary, per-part `Content-Range` headers, CRLF framing, and a terminating
+  /// close-delimiter. An empty representation cannot satisfy the set.
+  pub fn partial_content_ranges<B: AsRef<[u8]>>(
+    body: B,
+    ranges: &HttpByteRangeSet,
+  ) -> Result<Self, HttpPartialContentError> {
+    Self::partial_content_from_ranges(body.as_ref(), ranges, None, MAX_PARTIAL_CONTENT_BODY_BYTES)
+  }
+
+  /// Builds a `206` response from a resolved range set, copying `content_type`
+  /// onto each multipart part when two or more members are selected.
+  ///
+  /// A single member still uses [`Self::partial_content`] and does not add a
+  /// representation `Content-Type` header.
+  pub fn partial_content_ranges_with_content_type<B, C>(
+    body: B,
+    ranges: &HttpByteRangeSet,
+    content_type: C,
+  ) -> Result<Self, HttpPartialContentError>
+  where
+    B: AsRef<[u8]>,
+    C: AsRef<str>,
+  {
+    Self::partial_content_from_ranges(
+      body.as_ref(),
+      ranges,
+      Some(content_type.as_ref()),
+      MAX_PARTIAL_CONTENT_BODY_BYTES,
+    )
+  }
+
+  fn partial_content_from_ranges(
+    body: &[u8],
+    ranges: &HttpByteRangeSet,
+    content_type: Option<&str>,
+    max_body_bytes: usize,
+  ) -> Result<Self, HttpPartialContentError> {
+    if let Some(content_type) = content_type {
+      assert_valid_header_component(content_type);
+    }
+    if ranges.len() == 1 {
+      let range = ranges[0];
+      range
+        .slice(body)
+        .filter(|slice| !slice.is_empty())
+        .ok_or(HttpPartialContentError::UnsatisfiedRange)?;
+      return Ok(Self::partial_content(body, range));
+    }
+
+    build_multipart_partial_content(body, ranges, content_type, max_body_bytes)
+  }
+
+  #[cfg(test)]
+  pub(crate) fn partial_content_from_ranges_with_limit(
+    body: &[u8],
+    ranges: &HttpByteRangeSet,
+    content_type: Option<&str>,
+    max_body_bytes: usize,
+  ) -> Result<Self, HttpPartialContentError> {
+    Self::partial_content_from_ranges(body, ranges, content_type, max_body_bytes)
   }
 
   pub fn range_not_satisfiable(entity_length: usize) -> Self {
@@ -3934,6 +4035,201 @@ pub(crate) fn parse_byte_range_position(value: &str) -> Result<usize, HttpByteRa
   value
     .parse::<usize>()
     .map_err(|_| HttpByteRangeError::InvalidRange)
+}
+
+const MULTIPART_CRLF: &[u8] = b"\r\n";
+const MULTIPART_DASH_DASH: &[u8] = b"--";
+const MULTIPART_CONTENT_TYPE_PREFIX: &[u8] = b"Content-Type: ";
+const MULTIPART_CONTENT_RANGE_PREFIX: &[u8] = b"Content-Range: ";
+
+struct MultipartByteRangePart<'a> {
+  content_range: String,
+  payload: &'a [u8],
+}
+
+fn build_multipart_partial_content(
+  body: &[u8],
+  ranges: &HttpByteRangeSet,
+  content_type: Option<&str>,
+  max_body_bytes: usize,
+) -> Result<HttpResponse, HttpPartialContentError> {
+  debug_assert!(ranges.len() >= 2);
+
+  let mut parts = Vec::new();
+  parts
+    .try_reserve(ranges.len())
+    .map_err(|_| HttpPartialContentError::Allocation)?;
+  for range in ranges.iter() {
+    let payload = range
+      .slice(body)
+      .filter(|slice| !slice.is_empty())
+      .ok_or(HttpPartialContentError::UnsatisfiedRange)?;
+    parts.push(MultipartByteRangePart {
+      content_range: HttpContentRange::Bytes {
+        start: range.start() as u64,
+        end: range.end() as u64,
+        complete_length: Some(body.len() as u64),
+      }
+      .header_value(),
+      payload,
+    });
+  }
+
+  let boundary = collision_safe_multipart_boundary(&parts, content_type);
+  let framed_len = multipart_byteranges_body_len(&parts, content_type, &boundary)?;
+  if framed_len > max_body_bytes {
+    return Err(HttpPartialContentError::BodyLimit);
+  }
+
+  let mut framed = Vec::new();
+  framed
+    .try_reserve(framed_len)
+    .map_err(|_| HttpPartialContentError::Allocation)?;
+  write_multipart_byteranges_body(&mut framed, &parts, content_type, &boundary);
+  debug_assert_eq!(framed.len(), framed_len);
+
+  let mut response = HttpResponse::new(206, "Partial Content").header(
+    "Content-Type",
+    format!("multipart/byteranges; boundary={boundary}"),
+  );
+  response.body = framed;
+  Ok(response)
+}
+
+fn collision_safe_multipart_boundary(
+  parts: &[MultipartByteRangePart<'_>],
+  content_type: Option<&str>,
+) -> String {
+  let mut seed = 0u64;
+  for part in parts {
+    for byte in part.payload {
+      seed = seed.wrapping_mul(16777619).wrapping_add(u64::from(*byte));
+    }
+  }
+  let mut attempt = 0u64;
+  loop {
+    let boundary = format!("rttp_br_{:016x}", seed.wrapping_add(attempt));
+    if !multipart_contains_boundary(parts, content_type, &boundary) {
+      return boundary;
+    }
+    attempt = attempt.wrapping_add(1);
+  }
+}
+
+fn multipart_contains_boundary(
+  parts: &[MultipartByteRangePart<'_>],
+  content_type: Option<&str>,
+  boundary: &str,
+) -> bool {
+  let marker = format!("--{boundary}");
+  let marker = marker.as_bytes();
+  if let Some(content_type) = content_type {
+    if contains_bytes(content_type.as_bytes(), marker) {
+      return true;
+    }
+  }
+  parts.iter().any(|part| {
+    contains_bytes(part.content_range.as_bytes(), marker) || contains_bytes(part.payload, marker)
+  })
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+  haystack
+    .windows(needle.len())
+    .any(|window| window == needle)
+}
+
+fn multipart_byteranges_body_len(
+  parts: &[MultipartByteRangePart<'_>],
+  content_type: Option<&str>,
+  boundary: &str,
+) -> Result<usize, HttpPartialContentError> {
+  let mut total = 0usize;
+  for (index, part) in parts.iter().enumerate() {
+    if index == 0 {
+      total = add_multipart_len(total, multipart_open_delimiter_len(boundary))?;
+    } else {
+      total = add_multipart_len(total, multipart_part_delimiter_len(boundary))?;
+    }
+    total = add_multipart_len(total, multipart_part_headers_len(content_type, part)?)?;
+    total = add_multipart_len(total, part.payload.len())?;
+  }
+  add_multipart_len(total, multipart_close_delimiter_len(boundary))
+}
+
+fn multipart_open_delimiter_len(boundary: &str) -> usize {
+  MULTIPART_DASH_DASH.len() + boundary.len() + MULTIPART_CRLF.len()
+}
+
+fn multipart_part_delimiter_len(boundary: &str) -> usize {
+  MULTIPART_CRLF.len() + multipart_open_delimiter_len(boundary)
+}
+
+fn multipart_close_delimiter_len(boundary: &str) -> usize {
+  MULTIPART_CRLF.len()
+    + MULTIPART_DASH_DASH.len()
+    + boundary.len()
+    + MULTIPART_DASH_DASH.len()
+    + MULTIPART_CRLF.len()
+}
+
+fn multipart_part_headers_len(
+  content_type: Option<&str>,
+  part: &MultipartByteRangePart<'_>,
+) -> Result<usize, HttpPartialContentError> {
+  let mut total = 0usize;
+  if let Some(content_type) = content_type {
+    total = add_multipart_len(total, MULTIPART_CONTENT_TYPE_PREFIX.len())?;
+    total = add_multipart_len(total, content_type.len())?;
+    total = add_multipart_len(total, MULTIPART_CRLF.len())?;
+  }
+  total = add_multipart_len(total, MULTIPART_CONTENT_RANGE_PREFIX.len())?;
+  total = add_multipart_len(total, part.content_range.len())?;
+  add_multipart_len(total, MULTIPART_CRLF.len() + MULTIPART_CRLF.len())
+}
+
+fn write_multipart_byteranges_body(
+  out: &mut Vec<u8>,
+  parts: &[MultipartByteRangePart<'_>],
+  content_type: Option<&str>,
+  boundary: &str,
+) {
+  for (index, part) in parts.iter().enumerate() {
+    if index == 0 {
+      out.extend_from_slice(MULTIPART_DASH_DASH);
+      out.extend_from_slice(boundary.as_bytes());
+      out.extend_from_slice(MULTIPART_CRLF);
+    } else {
+      out.extend_from_slice(MULTIPART_CRLF);
+      out.extend_from_slice(MULTIPART_DASH_DASH);
+      out.extend_from_slice(boundary.as_bytes());
+      out.extend_from_slice(MULTIPART_CRLF);
+    }
+    if let Some(content_type) = content_type {
+      out.extend_from_slice(MULTIPART_CONTENT_TYPE_PREFIX);
+      out.extend_from_slice(content_type.as_bytes());
+      out.extend_from_slice(MULTIPART_CRLF);
+    }
+    out.extend_from_slice(MULTIPART_CONTENT_RANGE_PREFIX);
+    out.extend_from_slice(part.content_range.as_bytes());
+    out.extend_from_slice(MULTIPART_CRLF);
+    out.extend_from_slice(MULTIPART_CRLF);
+    out.extend_from_slice(part.payload);
+  }
+  out.extend_from_slice(MULTIPART_CRLF);
+  out.extend_from_slice(MULTIPART_DASH_DASH);
+  out.extend_from_slice(boundary.as_bytes());
+  out.extend_from_slice(MULTIPART_DASH_DASH);
+  out.extend_from_slice(MULTIPART_CRLF);
+}
+
+pub(crate) fn add_multipart_len(
+  total: usize,
+  extra: usize,
+) -> Result<usize, HttpPartialContentError> {
+  total
+    .checked_add(extra)
+    .ok_or(HttpPartialContentError::Overflow)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

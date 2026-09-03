@@ -10,7 +10,6 @@ use super::response::{HttpByteRange, HttpByteRangeError};
 /// Invariant: the set contains at least one member and at most
 /// [`Self::MAX_RANGES`] (32) members, stored in wire order. Unsatisfiable
 /// members are omitted during resolution; this type is never empty.
-/// Multipart response serialization of multiple members is out of scope.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpByteRangeSet {
   ranges: Vec<HttpByteRange>,

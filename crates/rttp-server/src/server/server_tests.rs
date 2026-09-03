@@ -4925,6 +4925,35 @@ fn if_range_carries_resolved_range_set_after_validator_success() {
     )),
     request.evaluate_if_range(&metadata, 10)
   );
+
+  let ranges = match request.evaluate_if_range(&metadata, 10) {
+    Ok(HttpIfRangeRequestOutcome::PartialContent(ranges)) => ranges,
+    other => panic!("expected resolved range set, got {other:?}"),
+  };
+  let response = HttpResponse::partial_content_ranges(b"0123456789", &ranges)
+    .expect("resolved If-Range set should serialize");
+  let content_type = response
+    .content_type()
+    .expect("Content-Type should parse")
+    .expect("multipart Content-Type should be present");
+  assert_eq!("multipart", content_type.type_());
+  assert_eq!("byteranges", content_type.subtype());
+  assert!(content_type.parameter("boundary").is_some());
+}
+
+#[test]
+fn multipart_partial_content_enforces_body_limit_and_checked_overflow() {
+  let body = b"0123456789";
+  let ranges = HttpByteRangeSet::new(vec![HttpByteRange::new(0, 1), HttpByteRange::new(5, 9)]);
+
+  assert_eq!(
+    Err(HttpPartialContentError::BodyLimit),
+    HttpResponse::partial_content_from_ranges_with_limit(body, &ranges, None, 0)
+  );
+  assert_eq!(
+    Err(HttpPartialContentError::Overflow),
+    add_multipart_len(usize::MAX, 1)
+  );
 }
 
 #[test]

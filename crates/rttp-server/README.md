@@ -583,10 +583,11 @@ through the unit declaration helper are rejected. The declaration helper
 replaces existing raw `Accept-Ranges` fields, while manually attached fields
 remain preserved until the typed parser is requested.
 
-These helpers only declare and inspect metadata. RTTP does not parse request
-`Range` fields, generate `Range` requests, create a partial response engine,
-serve bytes, slice content, resume downloads, or choose redirect, retry, or
-status-policy behavior.
+These helpers only declare and inspect metadata. RTTP does not generate
+`Range` requests, create a partial response engine, serve files, resume
+downloads, or choose redirect, retry, or status-policy behavior. Resolved
+range sets are serialized by `HttpResponse::partial_content` and
+`HttpResponse::partial_content_ranges`.
 
 ## Content-Disposition response metadata
 
