@@ -41,6 +41,7 @@ use rttp_protocol::origin::Origin;
 use rttp_protocol::overwrite::Overwrite;
 use rttp_protocol::pragma::Pragma;
 use rttp_protocol::priority::Priority;
+use rttp_protocol::range::Range;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
@@ -60,6 +61,8 @@ use rttp_protocol::x_forwarded_for::{XForwardedFor, MAX_X_FORWARDED_FOR_VALUE_BY
 use rttp_protocol::x_forwarded_host::{XForwardedHost, MAX_X_FORWARDED_HOST_VALUE_BYTES};
 use rttp_protocol::x_forwarded_proto::{XForwardedProto, MAX_X_FORWARDED_PROTO_VALUE_BYTES};
 use std::io;
+
+pub use rttp_protocol::range::ByteRangeSpec;
 
 #[derive(Debug)]
 pub struct HttpClient {
@@ -829,6 +832,46 @@ impl HttpClient {
       ));
     }
     Ok(self.header(("Range", format!("bytes=-{}", suffix).as_str())))
+  }
+
+  /// Set a bounded multi-range request header, `Range: bytes=...`.
+  ///
+  /// Members may be closed (`FromTo { end: Some(...) }`), open-ended
+  /// (`FromTo { end: None }`), or suffix ranges. The complete set is
+  /// validated before the request is mutated, then one canonical `Range`
+  /// field replaces any prior `Range` header.
+  pub fn ranges<I>(&mut self, ranges: I) -> error::Result<&mut Self>
+  where
+    I: IntoIterator<Item = ByteRangeSpec>,
+  {
+    let members = ranges.into_iter().collect::<Vec<_>>();
+    if members
+      .iter()
+      .any(|member| matches!(member, ByteRangeSpec::Suffix { length: 0 }))
+    {
+      return Err(error::builder_with_message(
+        "byte range suffix length must be greater than zero",
+      ));
+    }
+
+    let candidate = format!(
+      "bytes={}",
+      members
+        .iter()
+        .map(|member| match member {
+          ByteRangeSpec::FromTo {
+            start,
+            end: Some(end),
+          } => format!("{start}-{end}"),
+          ByteRangeSpec::FromTo { start, end: None } => format!("{start}-"),
+          ByteRangeSpec::Suffix { length } => format!("-{length}"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+    );
+    let range = Range::parse(candidate)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Range", range.header_value())))
   }
 
   /// Set a bounded `Max-Forwards` request header for TRACE or OPTIONS diagnostics.
