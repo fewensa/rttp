@@ -76,6 +76,14 @@ fn spawn_representation_metadata_response_server(
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_exports_from_metadata_types() {
+  let from = rttp::From::parse("Ops Team <ops@example.test>").expect("From metadata should parse");
+  assert_eq!("Ops Team <ops@example.test>", from.header_value());
+  let _: rttp::FromParseError = rttp::From::parse("invalid").expect_err("invalid From should fail");
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn compatibility_facade_exports_client_metadata_types() {
   let dav: rttp::Dav =
     rttp_client::response::Dav::parse("1, 2, extended-mkcol, <https://dav.example.test/ns>")

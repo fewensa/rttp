@@ -5675,6 +5675,130 @@ hello\r\n\
   }
 
   #[test]
+  fn from_helpers_parse_bounded_metadata_without_identity_policy() {
+    let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse");
+    assert_eq!(None, absent.from().expect("missing From should be valid"));
+    let absent_http = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse");
+    assert_eq!(
+      None,
+      absent_http
+        .from()
+        .expect("missing From should be valid")
+    );
+
+    for (value, expected) in [
+      ("ops@example.test", "ops@example.test"),
+      ("Ops\t Team  <ops@example.test>", "Ops Team <ops@example.test>"),
+    ] {
+      let raw = format!(
+        "GET / HTTP/1.1\r\nHost: example.test\r\nFrom: {value}\r\n\r\n"
+      );
+      let request = Request::from_raw_frame(raw.as_bytes()).expect("request should parse");
+      let from = request
+        .from()
+        .expect("From should parse")
+        .expect("From should be present");
+      assert_eq!(expected, from.header_value());
+      assert_eq!("ops@example.test", from.address());
+
+      let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+      let http_from = http_request
+        .from()
+        .expect("From should parse")
+        .expect("From should be present");
+      assert_eq!(expected, http_from.header_value());
+    }
+
+    for value in ["", "ops", "Ops Team<ops@example.test>", "Ops Team < ops@example.test>"] {
+      let raw = format!(
+        "GET / HTTP/1.1\r\nHost: example.test\r\nFrom: {value}\r\n\r\n"
+      );
+      let request = Request::from_raw_frame(raw.as_bytes()).expect("request should be retained");
+      assert!(request.from().is_err(), "From should reject {value:?}");
+      assert_eq!(Some(value), request.header("From"));
+
+      let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should be retained");
+      assert!(http_request.from().is_err(), "From should reject {value:?}");
+      assert_eq!(Some(value), http_request.header("From"));
+    }
+
+    let duplicate_raw = concat!(
+      "GET / HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "From: ops@example.test\r\n",
+      "from: other@example.test\r\n",
+      "\r\n"
+    );
+    let duplicate = Request::from_raw_frame(duplicate_raw.as_bytes())
+      .expect("duplicate metadata should be retained");
+    assert!(duplicate.from().is_err());
+    assert_eq!(Some("ops@example.test"), duplicate.header("From"));
+    let duplicate_http = HttpRequest::parse(duplicate_raw.as_bytes())
+      .expect("duplicate metadata should be retained");
+    assert!(duplicate_http.from().is_err());
+    assert_eq!(Some("ops@example.test"), duplicate_http.header("From"));
+
+    let control = Request {
+      method: "GET".to_string(),
+      target: "/".to_string(),
+      version: "HTTP/1.1".to_string(),
+      headers: vec![
+        ("Host".to_string(), "example.test".to_string()),
+        ("From".to_string(), "ops@example.test\0".to_string()),
+      ],
+      trailers: Vec::new(),
+      body: Vec::new(),
+      content_length: None,
+      extended_connect_protocol: None,
+    };
+    assert!(control.from().is_err());
+    assert_eq!(Some("ops@example.test\0"), control.header("From"));
+
+    let control_http = HttpRequest {
+      method: "GET".to_string(),
+      path: "/".to_string(),
+      query: None,
+      version: "HTTP/1.1".to_string(),
+      headers: vec![HttpHeader::new("From", "ops@example.test\0")],
+      body: Vec::new(),
+      content_length: None,
+    };
+    assert!(control_http.from().is_err());
+    assert_eq!(Some("ops@example.test\0"), control_http.header("From"));
+
+    let oversized = format!("{}@example.test", "a".repeat(64 * 1024));
+    let oversized_request = Request {
+      method: "GET".to_string(),
+      target: "/".to_string(),
+      version: "HTTP/1.1".to_string(),
+      headers: vec![("From".to_string(), oversized.clone())],
+      trailers: Vec::new(),
+      body: Vec::new(),
+      content_length: None,
+      extended_connect_protocol: None,
+    };
+    assert!(oversized_request.from().is_err());
+    assert_eq!(Some(oversized.as_str()), oversized_request.header("From"));
+
+    let oversized_http = HttpRequest {
+      method: "GET".to_string(),
+      path: "/".to_string(),
+      query: None,
+      version: "HTTP/1.1".to_string(),
+      headers: vec![HttpHeader::new("From", oversized.clone())],
+      body: Vec::new(),
+      content_length: None,
+    };
+    assert!(oversized_http.from().is_err());
+    assert_eq!(Some(oversized.as_str()), oversized_http.header("From"));
+
+    let _: HttpFromParseError = HttpFrom::parse("ops@example.test\0")
+      .expect_err("control-byte From metadata should be rejected");
+  }
+
+  #[test]
   fn authentication_helpers_parse_bounded_metadata_without_authentication_policy() {
     let raw = concat!(
       "GET / HTTP/1.1\r\n",

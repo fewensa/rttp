@@ -122,6 +122,29 @@ fn prior_knowledge_get_sends_h2_handshake_and_reads_single_response_stream() {
 }
 
 #[test]
+fn prior_knowledge_emits_typed_from_metadata() {
+  let (addr, handle) = spawn_h2_prior_knowledge_peer();
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/hello", addr))
+    .from("Ops\t Team <ops@example.test>")
+    .expect("From metadata should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("single h2 GET response");
+
+  assert_eq!(200, response.code());
+  let request_header_block = handle.join().expect("h2 peer thread");
+  assert_eq!(
+    b"Ops Team <ops@example.test>",
+    find_header_value(&request_header_block, b"from")
+      .expect("From request metadata")
+      .value
+      .as_slice()
+  );
+}
+
+#[test]
 fn prior_knowledge_client_acks_ping_and_ignores_ping_ack_during_response() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");

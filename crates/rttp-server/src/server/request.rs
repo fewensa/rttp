@@ -70,6 +70,7 @@ pub use rttp_protocol::forwarded::{
   Forwarded as HttpForwarded, ForwardedElement as HttpForwardedElement,
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
 };
+pub use rttp_protocol::from::{From as HttpFrom, FromParseError as HttpFromParseError};
 pub use rttp_protocol::host::{Host as HttpHost, HostParseError as HttpHostParseError};
 pub use rttp_protocol::idempotency_key::{
   IdempotencyKey as HttpIdempotencyKey, IdempotencyKeyParseError as HttpIdempotencyKeyParseError,
@@ -615,6 +616,18 @@ impl Request {
       return Ok(None);
     }
     HttpAuthorization::parse_values(values).map(Some)
+  }
+
+  /// Parses one bounded `From` request field without applying identity,
+  /// ownership, privacy, deliverability, authorization, DNS, or SMTP policy.
+  /// Duplicate or malformed fields return a parser error while the raw
+  /// request header remains available through [`Self::header`].
+  pub fn from(&self) -> Result<Option<HttpFrom>, HttpFromParseError> {
+    let values: Vec<&str> = self.headers_named("From").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpFrom::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed
@@ -2285,6 +2298,23 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpAuthorization::parse_values(values).map(Some)
+  }
+
+  /// Parses one bounded `From` request field without applying identity,
+  /// ownership, privacy, deliverability, authorization, DNS, or SMTP policy.
+  /// Duplicate or malformed fields return a parser error while the raw
+  /// request header remains available through [`Self::header`].
+  pub fn from(&self) -> Result<Option<HttpFrom>, HttpFromParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("From"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpFrom::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed

@@ -140,6 +140,21 @@ These helpers only expose metadata. RTTP does not validate credentials, select
 realms, challenge clients automatically, or enforce authentication or
 authorization decisions.
 
+## From request metadata
+
+`Request::from()` and `HttpRequest::from()` parse all case-insensitive `From`
+request fields through the shared `rttp_protocol::from::From` type. They return
+`Ok(None)` when the field is absent and expose a bare mailbox or name-address
+with canonical `header_value()`, `address()`, `local_part()`, `domain()`, and
+`display_name()` accessors. Duplicate, malformed, non-ASCII, control-byte, and
+oversized fields return `HttpFromParseError`; raw values remain available
+through `Request::header()` or `HttpRequest::header()` after typed parsing
+fails.
+
+This boundary is syntax-only metadata. RTTP does not verify identity or
+ownership, apply privacy or authorization policy, assess deliverability,
+perform DNS or SMTP work, or send email.
+
 ## Request representation metadata
 
 Handlers can call `Request::content_type()`, `content_encoding()`, and

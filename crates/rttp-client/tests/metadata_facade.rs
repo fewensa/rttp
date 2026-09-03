@@ -40,19 +40,26 @@ use rttp_client::response::{
 use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, AcceptDatetime, AcceptDatetimeParseError, Baggage,
   BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
-  DestinationParseError, Dnt, DntParseError, HttpClient, If, IfCondition, IfList, IfParseError,
-  IfPredicate, IfResourceTag, IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken,
-  Negotiate, NegotiateDirective, NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Tcn,
-  TcnDirective, TcnParseError, Timeout, TimeoutParseError, TimeoutType, TraceParent,
-  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
-  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, Via as ClientVia,
-  ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError, XForwardedHost,
-  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  DestinationParseError, Dnt, DntParseError, From, FromParseError, HttpClient, If, IfCondition,
+  IfList, IfParseError, IfPredicate, IfResourceTag, IfScheduleTagMatch,
+  IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective, NegotiateParseError,
+  Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc,
+  SecGpcParseError, SecPurpose, Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError,
+  TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
+  Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError,
+  XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 use rttp_protocol::expect::Expect;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_test_support as support;
+
+#[test]
+fn client_facade_exports_from_metadata_types() {
+  let from: From = From::parse("Ops Team <ops@example.test>").expect("From metadata should parse");
+  assert_eq!("Ops Team <ops@example.test>", from.header_value());
+  let _: FromParseError = From::parse("invalid").expect_err("invalid From should fail");
+}
 
 #[test]
 fn response_facade_exports_representative_bounded_metadata_types() {
