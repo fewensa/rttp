@@ -375,7 +375,7 @@ validation.
 ```rust
 use rttp_client::{ByteRangeSpec, HttpClient};
 
-client
+HttpClient::new()
   .get()
   .url("http://example.test/archive")
   .ranges([
