@@ -41,7 +41,7 @@ use rttp_protocol::origin::Origin;
 use rttp_protocol::overwrite::Overwrite;
 use rttp_protocol::pragma::Pragma;
 use rttp_protocol::priority::Priority;
-use rttp_protocol::range::Range;
+use rttp_protocol::range::{Range, MAX_RANGE_COUNT};
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
@@ -839,19 +839,24 @@ impl HttpClient {
   /// Members may be closed (`FromTo { end: Some(...) }`), open-ended
   /// (`FromTo { end: None }`), or suffix ranges. The complete set is
   /// validated before the request is mutated, then one canonical `Range`
-  /// field replaces any prior `Range` header.
+  /// field replaces any prior `Range` header. Member count is capped while
+  /// consuming the iterator so oversized inputs are rejected without
+  /// unbounded allocation.
   pub fn ranges<I>(&mut self, ranges: I) -> error::Result<&mut Self>
   where
     I: IntoIterator<Item = ByteRangeSpec>,
   {
-    let members = ranges.into_iter().collect::<Vec<_>>();
-    if members
-      .iter()
-      .any(|member| matches!(member, ByteRangeSpec::Suffix { length: 0 }))
-    {
-      return Err(error::builder_with_message(
-        "byte range suffix length must be greater than zero",
-      ));
+    let mut members = Vec::with_capacity(MAX_RANGE_COUNT);
+    for member in ranges {
+      if members.len() >= MAX_RANGE_COUNT {
+        return Err(error::builder_with_message("too many Range members"));
+      }
+      if matches!(member, ByteRangeSpec::Suffix { length: 0 }) {
+        return Err(error::builder_with_message(
+          "byte range suffix length must be greater than zero",
+        ));
+      }
+      members.push(member);
     }
 
     let candidate = format!(

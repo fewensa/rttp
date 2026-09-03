@@ -2042,6 +2042,25 @@ fn ranges_helper_enforces_member_limit() {
     request.is_empty(),
     "oversized ranges helper should not open a socket"
   );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .ranges(std::iter::repeat_with(|| ByteRangeSpec::FromTo {
+        start: 0,
+        end: Some(0),
+      }))
+      .expect_err("unbounded range iterators should be rejected while consuming");
+
+    assert!(error.is_builder());
+    assert!(error.to_string().contains("too many Range members"));
+  });
+  assert!(
+    request.is_empty(),
+    "unbounded ranges helper should not open a socket"
+  );
 }
 
 #[test]
