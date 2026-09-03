@@ -3,7 +3,7 @@ use rttp_test_support as support;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
 use rttp_client::types::{Auth, Header, Proxy};
-use rttp_client::{HttpClient, SecPurpose};
+use rttp_client::{ByteRangeSpec, HttpClient, SecPurpose};
 use rttp_protocol::authorization::MAX_AUTHORIZATION_VALUE_BYTES;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -422,6 +422,116 @@ fn range_helpers_emit_single_byte_range_headers() {
   });
   let suffix = request_text(&suffix);
   assert_eq!(Some("bytes=-128"), header_value(&suffix, "Range"));
+}
+
+#[test]
+fn ranges_helper_emits_canonical_mixed_byte_range_header() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .ranges([
+        ByteRangeSpec::FromTo {
+          start: 0,
+          end: Some(499),
+        },
+        ByteRangeSpec::FromTo {
+          start: 500,
+          end: None,
+        },
+        ByteRangeSpec::Suffix { length: 200 },
+      ])
+      .expect("mixed ranges should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("bytes=0-499, 500-, -200"),
+    header_value(&request_text(&request), "Range")
+  );
+}
+
+#[test]
+fn ranges_helper_emits_each_valid_member_kind() {
+  let closed = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .ranges([ByteRangeSpec::FromTo {
+        start: 10,
+        end: Some(19),
+      }])
+      .expect("closed range should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  assert_eq!(
+    Some("bytes=10-19"),
+    header_value(&request_text(&closed), "Range")
+  );
+
+  let open_ended = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .ranges([ByteRangeSpec::FromTo {
+        start: 20,
+        end: None,
+      }])
+      .expect("open-ended range should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  assert_eq!(
+    Some("bytes=20-"),
+    header_value(&request_text(&open_ended), "Range")
+  );
+
+  let suffix = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .ranges([ByteRangeSpec::Suffix { length: 128 }])
+      .expect("suffix range should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  assert_eq!(
+    Some("bytes=-128"),
+    header_value(&request_text(&suffix), "Range")
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_ranges_helper_emits_canonical_mixed_byte_range_header() {
+  let request = capture_request(|base_url| {
+    block_on(
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .ranges([
+          ByteRangeSpec::FromTo {
+            start: 0,
+            end: Some(499),
+          },
+          ByteRangeSpec::FromTo {
+            start: 500,
+            end: None,
+          },
+          ByteRangeSpec::Suffix { length: 200 },
+        ])
+        .expect("mixed ranges should be accepted")
+        .rasync(),
+    )
+    .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("bytes=0-499, 500-, -200"),
+    header_value(&request_text(&request), "Range")
+  );
 }
 
 #[test]
@@ -1832,6 +1942,124 @@ fn range_helper_rejects_malformed_inputs_before_connecting() {
   assert!(
     request.is_empty(),
     "malformed suffix helper should not open a socket"
+  );
+}
+
+#[test]
+fn ranges_helper_rejects_invalid_inputs_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .ranges(Vec::<ByteRangeSpec>::new())
+      .expect_err("empty ranges should be rejected");
+
+    assert!(error.is_builder());
+    assert!(error.to_string().contains("invalid Range header value"));
+  });
+  assert!(
+    request.is_empty(),
+    "empty ranges helper should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .ranges([ByteRangeSpec::FromTo {
+        start: 20,
+        end: Some(10),
+      }])
+      .expect_err("reversed range should be rejected");
+
+    assert!(error.is_builder());
+    assert!(error.to_string().contains("invalid Range member"));
+  });
+  assert!(
+    request.is_empty(),
+    "reversed ranges helper should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .ranges([ByteRangeSpec::Suffix { length: 0 }])
+      .expect_err("zero suffix range should be rejected");
+
+    assert!(error.is_builder());
+    assert!(error
+      .to_string()
+      .contains("byte range suffix length must be greater than zero"));
+  });
+  assert!(
+    request.is_empty(),
+    "zero suffix ranges helper should not open a socket"
+  );
+}
+
+#[test]
+fn ranges_helper_enforces_member_limit() {
+  let accepted = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .ranges((0..32).map(|index| ByteRangeSpec::FromTo {
+        start: index,
+        end: Some(index),
+      }))
+      .expect("32 range members should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let expected = (0..32)
+    .map(|index| format!("{index}-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert_eq!(
+    Some(format!("bytes={expected}").as_str()),
+    header_value(&request_text(&accepted), "Range")
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .ranges((0..33).map(|index| ByteRangeSpec::FromTo {
+        start: index,
+        end: Some(index),
+      }))
+      .expect_err("33 range members should be rejected");
+
+    assert!(error.is_builder());
+    assert!(error.to_string().contains("too many Range members"));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized ranges helper should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .ranges(std::iter::repeat_with(|| ByteRangeSpec::FromTo {
+        start: 0,
+        end: Some(0),
+      }))
+      .expect_err("unbounded range iterators should be rejected while consuming");
+
+    assert!(error.is_builder());
+    assert!(error.to_string().contains("too many Range members"));
+  });
+  assert!(
+    request.is_empty(),
+    "unbounded ranges helper should not open a socket"
   );
 }
 
