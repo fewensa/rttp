@@ -10,11 +10,11 @@ use rttp::server::{
   HttpContentType, HttpCriticalCh, HttpDeltaBase, HttpDeprecation, HttpDepth, HttpDocumentPolicy,
   HttpDocumentPolicyReportOnly, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch,
   HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel,
-  HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem,
-  HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets,
-  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpScheduleTag,
-  HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
+  HttpOriginTrials, HttpOverwrite, HttpPartialContentError, HttpPermissionsPolicy, HttpProxyStatus,
+  HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
+  HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
+  HttpScheduleTag, HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
 };
 
 #[test]
@@ -5202,6 +5202,211 @@ fn serializes_partial_content_response_for_parsed_byte_range() {
     )
     .as_bytes(),
     response.to_bytes().as_slice()
+  );
+}
+
+fn multipart_boundary(response: &HttpResponse) -> String {
+  response
+    .content_type()
+    .expect("Content-Type should parse")
+    .expect("Content-Type should be present")
+    .parameter("boundary")
+    .expect("multipart boundary should be present")
+    .to_string()
+}
+
+fn expected_multipart_body(
+  boundary: &str,
+  content_type: Option<&str>,
+  parts: &[(&str, &[u8])],
+) -> Vec<u8> {
+  let mut body = Vec::new();
+  for (index, (content_range, payload)) in parts.iter().enumerate() {
+    if index == 0 {
+      body.extend_from_slice(b"--");
+      body.extend_from_slice(boundary.as_bytes());
+      body.extend_from_slice(b"\r\n");
+    } else {
+      body.extend_from_slice(b"\r\n--");
+      body.extend_from_slice(boundary.as_bytes());
+      body.extend_from_slice(b"\r\n");
+    }
+    if let Some(content_type) = content_type {
+      body.extend_from_slice(b"Content-Type: ");
+      body.extend_from_slice(content_type.as_bytes());
+      body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(b"Content-Range: ");
+    body.extend_from_slice(content_range.as_bytes());
+    body.extend_from_slice(b"\r\n\r\n");
+    body.extend_from_slice(payload);
+  }
+  body.extend_from_slice(b"\r\n--");
+  body.extend_from_slice(boundary.as_bytes());
+  body.extend_from_slice(b"--\r\n");
+  body
+}
+
+fn expected_multipart_response(
+  boundary: &str,
+  content_type: Option<&str>,
+  parts: &[(&str, &[u8])],
+) -> Vec<u8> {
+  let body = expected_multipart_body(boundary, content_type, parts);
+  let mut serialized = format!(
+    "HTTP/1.1 206 Partial Content\r\nContent-Type: multipart/byteranges; boundary={boundary}\r\nContent-Length: {}\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  serialized.extend_from_slice(&body);
+  serialized
+}
+
+#[test]
+fn serializes_two_part_multipart_byteranges_response_byte_for_byte() {
+  let body = b"0123456789";
+  let ranges = HttpByteRangeSet::new(vec![HttpByteRange::new(0, 1), HttpByteRange::new(5, 9)]);
+  let response =
+    HttpResponse::partial_content_ranges(body, &ranges).expect("two-part body should serialize");
+  let boundary = multipart_boundary(&response);
+  let parts = [
+    ("bytes 0-1/10", &b"01"[..]),
+    ("bytes 5-9/10", &b"56789"[..]),
+  ];
+  let expected = expected_multipart_response(&boundary, None, &parts);
+
+  assert_eq!(expected, response.to_bytes());
+  assert!(response
+    .content_range()
+    .expect("no top-level Content-Range")
+    .is_none());
+  assert!(expected_multipart_body(&boundary, None, &parts)
+    .ends_with(format!("\r\n--{boundary}--\r\n").as_bytes()));
+}
+
+#[test]
+fn serializes_three_part_multipart_byteranges_response_byte_for_byte() {
+  let body = b"0123456789";
+  let ranges = HttpByteRangeSet::new(vec![
+    HttpByteRange::new(0, 1),
+    HttpByteRange::new(4, 5),
+    HttpByteRange::new(8, 9),
+  ]);
+  let response =
+    HttpResponse::partial_content_ranges(body, &ranges).expect("three-part body should serialize");
+  let boundary = multipart_boundary(&response);
+  let parts = [
+    ("bytes 0-1/10", &b"01"[..]),
+    ("bytes 4-5/10", &b"45"[..]),
+    ("bytes 8-9/10", &b"89"[..]),
+  ];
+
+  assert_eq!(
+    expected_multipart_response(&boundary, None, &parts),
+    response.to_bytes()
+  );
+}
+
+#[test]
+fn multipart_byteranges_propagates_and_omits_content_type() {
+  let body = b"0123456789";
+  let ranges = HttpByteRangeSet::new(vec![HttpByteRange::new(0, 1), HttpByteRange::new(5, 9)]);
+  let with_type = HttpResponse::partial_content_ranges_with_content_type(
+    body,
+    &ranges,
+    "text/plain; charset=utf-8",
+  )
+  .expect("content type should propagate");
+  let without_type =
+    HttpResponse::partial_content_ranges(body, &ranges).expect("absent content type should omit");
+  let boundary = multipart_boundary(&with_type);
+  let parts = [
+    ("bytes 0-1/10", &b"01"[..]),
+    ("bytes 5-9/10", &b"56789"[..]),
+  ];
+
+  assert_eq!(
+    expected_multipart_response(&boundary, Some("text/plain; charset=utf-8"), &parts),
+    with_type.to_bytes()
+  );
+  assert!(!String::from_utf8_lossy(&without_type.to_bytes()).contains("Content-Type: text/plain"));
+  assert_eq!(
+    2,
+    String::from_utf8_lossy(&with_type.to_bytes())
+      .matches("Content-Type: text/plain; charset=utf-8\r\n")
+      .count()
+  );
+}
+
+#[test]
+fn range_set_constructor_keeps_single_range_fast_path() {
+  let body = b"0123456789";
+  let range = HttpByteRange::new(3, 6);
+  let expected = HttpResponse::partial_content(body, range).to_bytes();
+  let ranges = HttpByteRangeSet::new(vec![range]);
+
+  assert_eq!(
+    expected,
+    HttpResponse::partial_content_ranges(body, &ranges)
+      .expect("singleton range set should serialize")
+      .to_bytes()
+  );
+  assert_eq!(
+    expected,
+    HttpResponse::partial_content_ranges_with_content_type(body, &ranges, "text/plain")
+      .expect("singleton range set should keep the fast path")
+      .to_bytes()
+  );
+}
+
+#[test]
+fn multipart_byteranges_rejects_empty_or_missing_selected_slices() {
+  let ranges = HttpByteRangeSet::new(vec![HttpByteRange::new(0, 1), HttpByteRange::new(5, 9)]);
+
+  assert_eq!(
+    Err(HttpPartialContentError::UnsatisfiedRange),
+    HttpResponse::partial_content_ranges("", &ranges)
+  );
+  assert_eq!(
+    Err(HttpPartialContentError::UnsatisfiedRange),
+    HttpResponse::partial_content_ranges("0123", &ranges)
+  );
+  assert_eq!(
+    Err(HttpPartialContentError::UnsatisfiedRange),
+    HttpResponse::partial_content_ranges(
+      "",
+      &HttpByteRangeSet::new(vec![HttpByteRange::new(0, 0)]),
+    )
+  );
+}
+
+#[test]
+fn if_range_resolved_set_serializes_multipart_partial_content() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Range: bytes=0-1,99-100,5-\r\n",
+    "If-Range: \"abc123\"\r\n",
+    "\r\n"
+  ));
+  let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("abc123"));
+  let HttpIfRangeRequestOutcome::PartialContent(ranges) = request
+    .evaluate_if_range(&metadata, 10)
+    .expect("If-Range should allow the resolved set")
+  else {
+    panic!("expected a resolved range set");
+  };
+  let response = HttpResponse::partial_content_ranges("0123456789", &ranges)
+    .expect("resolved set should serialize");
+  let boundary = multipart_boundary(&response);
+  let parts = [
+    ("bytes 0-1/10", &b"01"[..]),
+    ("bytes 5-9/10", &b"56789"[..]),
+  ];
+
+  assert_eq!(
+    expected_multipart_response(&boundary, None, &parts),
+    response.to_bytes()
   );
 }
 

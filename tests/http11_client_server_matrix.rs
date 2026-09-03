@@ -11,7 +11,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp_client::DavClass;
 use rttp_client::HttpClient;
 use rttp_server::server::{
-  HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
+  HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
   HttpContentDisposition, HttpContentType, HttpDav, HttpDepth, HttpDestination, HttpEntityTag,
   HttpIf, HttpIfRangeRequestOutcome, HttpIfScheduleTagMatch, HttpLockToken, HttpOverwrite,
   HttpResponse, HttpScheduleTag, HttpTimeout, Request, SecFetchDest, SecFetchMode, SecFetchSite,
@@ -1025,22 +1025,22 @@ const NO_BODY_STATUS_WITH_FRAMING_CASES: &[(&str, &[u8], u32, &str, &str)] = &[
 ];
 
 fn range_response(request: Request) -> HttpResponse {
-  match request.header("range") {
-    Some(range_header) => match HttpByteRange::parse(range_header, RANGE_BODY.len()) {
-      Ok(range) => HttpResponse::partial_content(RANGE_BODY, range),
-      Err(HttpByteRangeError::UnsatisfiedRange) => {
-        HttpResponse::range_not_satisfiable(RANGE_BODY.len())
-      }
-      Err(error) => HttpResponse::new(400, "Bad Request").body(error.to_string()),
-    },
-    None => HttpResponse::ok(RANGE_BODY),
+  match request.range(RANGE_BODY.len()) {
+    Ok(Some(ranges)) => HttpResponse::partial_content_ranges(RANGE_BODY, &ranges)
+      .unwrap_or_else(|error| HttpResponse::new(400, "Bad Request").body(error.to_string())),
+    Ok(None) => HttpResponse::ok(RANGE_BODY),
+    Err(HttpByteRangeError::UnsatisfiedRange) => {
+      HttpResponse::range_not_satisfiable(RANGE_BODY.len())
+    }
+    Err(error) => HttpResponse::new(400, "Bad Request").body(error.to_string()),
   }
 }
 
 fn if_range_response(request: Request, metadata: HttpConditionalMetadata) -> HttpResponse {
   match request.evaluate_if_range(&metadata, RANGE_BODY.len()) {
     Ok(HttpIfRangeRequestOutcome::PartialContent(ranges)) => {
-      HttpResponse::partial_content(RANGE_BODY, ranges[0])
+      HttpResponse::partial_content_ranges(RANGE_BODY, &ranges)
+        .unwrap_or_else(|error| HttpResponse::new(400, "Bad Request").body(error.to_string()))
         .header("ETag", r#""abc""#)
         .header("Last-Modified", CONDITIONAL_LAST_MODIFIED)
     }
@@ -8353,6 +8353,74 @@ fn sync_client_manual_range_header_interoperates_with_server_partial_content_hel
 
   assert_partial_response("manual range", response, "bytes 5-9/16", "56789");
   assert_observed_range(handle, "bytes=5-9", "manual range");
+}
+
+fn assert_multipart_partial_response(
+  name: &str,
+  response: rttp_client::response::Response,
+  expected_parts: &[(&str, &str)],
+) {
+  assert_eq!(206, response.code(), "{name}");
+  assert!(response.is_partial_content(), "{name}");
+  assert!(response.header_value("Content-Range").is_none(), "{name}");
+  let content_type = response
+    .header_value("Content-Type")
+    .expect("multipart Content-Type should be present");
+  assert!(
+    content_type.starts_with("multipart/byteranges; boundary="),
+    "{name}: {content_type}"
+  );
+  let boundary = content_type
+    .rsplit_once("boundary=")
+    .map(|(_, boundary)| boundary)
+    .expect("multipart boundary should be present");
+  let body = response.body().string().unwrap();
+  assert!(body.ends_with(&format!("\r\n--{boundary}--\r\n")), "{name}");
+  for (content_range, payload) in expected_parts {
+    assert!(
+      body.contains(&format!("Content-Range: {content_range}\r\n\r\n{payload}")),
+      "{name}: missing {content_range}"
+    );
+  }
+}
+
+#[test]
+fn sync_client_multi_range_header_interoperates_with_server_multipart_partial_content() {
+  let (addr, handle) = spawn_range_server();
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/range", addr))
+    .header(("Range", "bytes=0-1,5-9"))
+    .emit()
+    .expect("multi-range response should parse");
+
+  assert_multipart_partial_response(
+    "two-part range",
+    response,
+    &[("bytes 0-1/16", "01"), ("bytes 5-9/16", "56789")],
+  );
+  assert_observed_range(handle, "bytes=0-1,5-9", "two-part range");
+}
+
+#[test]
+fn sync_client_if_range_resolved_set_returns_multipart_partial_content() {
+  let (addr, handle) = spawn_if_range_server(conditional_metadata());
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/if-range", addr))
+    .header(("Range", "bytes=0-1,5-9"))
+    .header(("If-Range", r#""abc""#))
+    .emit()
+    .expect("If-Range multi-range response should parse");
+
+  assert_multipart_partial_response(
+    "if-range two-part",
+    response,
+    &[("bytes 0-1/16", "01"), ("bytes 5-9/16", "56789")],
+  );
+  assert_observed_if_range(handle, "bytes=0-1,5-9", r#""abc""#, "if-range two-part");
 }
 
 #[test]
