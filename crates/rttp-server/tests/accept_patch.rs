@@ -1,3 +1,4 @@
+use rttp_protocol::accept_patch::MAX_ACCEPT_PATCH_MEDIA_TYPES;
 use rttp_server::server::{
   HttpAcceptPatch, HttpAcceptPatchParseError, HttpMediaType, HttpMediaTypeParameter, HttpResponse,
 };
@@ -88,6 +89,18 @@ fn response_accept_patch_builder_uses_256_member_bound_and_is_atomic_on_failure(
     Some("application/json"),
     header_value(&serialized, "Accept-Patch")
   );
+}
+
+#[test]
+fn response_accept_patch_builder_does_not_materialize_unbounded_iterators() {
+  let mut yielded = 0;
+  let result = HttpResponse::ok("").with_accept_patch(std::iter::from_fn(|| {
+    yielded += 1;
+    Some("application/json")
+  }));
+
+  assert!(result.is_err());
+  assert_eq!(MAX_ACCEPT_PATCH_MEDIA_TYPES + 1, yielded);
 }
 
 #[test]

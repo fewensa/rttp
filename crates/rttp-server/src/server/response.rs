@@ -2192,12 +2192,7 @@ impl HttpResponse {
     I: IntoIterator<Item = M>,
     M: AsRef<str>,
   {
-    let value = media_types
-      .into_iter()
-      .map(|media_type| media_type.as_ref().to_owned())
-      .collect::<Vec<_>>()
-      .join(", ");
-    let accept_patch = HttpAcceptPatch::parse(value)?;
+    let accept_patch = HttpAcceptPatch::from_media_types(media_types)?;
     let header_value = accept_patch.header_value();
     self
       .headers
