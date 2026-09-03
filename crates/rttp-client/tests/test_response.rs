@@ -24,6 +24,35 @@ fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
   encoder.finish().expect("finish gzip fixture")
 }
 
+fn zlib_bytes(bytes: &[u8]) -> Vec<u8> {
+  let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+  encoder.write_all(bytes).expect("write zlib fixture");
+  encoder.finish().expect("finish zlib fixture")
+}
+
+fn raw_deflate_bytes(bytes: &[u8]) -> Vec<u8> {
+  let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+  encoder.write_all(bytes).expect("write raw deflate fixture");
+  encoder.finish().expect("finish raw deflate fixture")
+}
+
+fn encoded_response(encoding: &str, body: &[u8]) -> Vec<u8> {
+  let mut raw = format!("HTTP/1.1 200 OK\r\nContent-Encoding: {encoding}\r\n").into_bytes();
+  raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+  raw.extend_from_slice(body);
+  raw
+}
+
+fn assert_decode_error(error: rttp_client::error::Error) {
+  assert!(
+    error
+      .to_string()
+      .starts_with("error decoding response body"),
+    "unexpected error: {error}"
+  );
+  assert!(!error.is_body_too_large());
+}
+
 #[test]
 fn test_parse_cookie_name_can_match_attribute_name() {
   let same_site = Cookie::parse("SameSite=choice; Path=/").unwrap();
@@ -5114,6 +5143,117 @@ fn test_content_encoding_runtime_leaves_duplicate_gzip_fields_undecoded() {
   );
   assert_eq!(
     Some(content_length.as_str()),
+    response.header_value("Content-Length").map(String::as_str)
+  );
+}
+
+#[test]
+fn test_content_encoding_runtime_decodes_single_deflate_coding_case_insensitively() {
+  let body = zlib_bytes(b"OK");
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("DEFLATE", &body),
+  )
+  .expect("single deflate response should decode");
+
+  assert_eq!("OK", response.body().string().unwrap());
+  assert!(response.header("Content-Encoding").is_none());
+  assert!(response.header("Content-Length").is_none());
+  assert!(response.content_encoding().unwrap().is_none());
+  assert!(response
+    .binary()
+    .windows(b"Content-Encoding: DEFLATE".len())
+    .any(|window| window == b"Content-Encoding: DEFLATE"));
+}
+
+#[test]
+fn test_content_encoding_runtime_decodes_empty_valid_zlib_payload() {
+  let body = zlib_bytes(b"");
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("deflate", &body),
+  )
+  .expect("empty zlib payload should decode");
+
+  assert!(response.body().binary().is_empty());
+  assert!(response.header("Content-Encoding").is_none());
+  assert!(response.header("Content-Length").is_none());
+}
+
+#[test]
+fn test_content_encoding_runtime_rejects_malformed_single_deflate_body() {
+  let error = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("deflate", b"not-zlib"),
+  )
+  .expect_err("malformed deflate response should fail");
+
+  assert_decode_error(error);
+}
+
+#[test]
+fn test_content_encoding_runtime_rejects_truncated_deflate_body() {
+  let mut body = zlib_bytes(b"OK");
+  body.pop();
+  let error = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("deflate", &body),
+  )
+  .expect_err("truncated deflate response should fail");
+
+  assert_decode_error(error);
+}
+
+#[test]
+fn test_content_encoding_runtime_rejects_raw_deflate_body() {
+  let error = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("deflate", &raw_deflate_bytes(b"OK")),
+  )
+  .expect_err("raw deflate response should fail");
+
+  assert_decode_error(error);
+}
+
+#[test]
+fn test_content_encoding_runtime_limits_decoded_deflate_body() {
+  let decoded = vec![b'a'; rttp_client::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES + 1];
+  let error = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("deflate", &zlib_bytes(&decoded)),
+  )
+  .expect_err("oversized decoded deflate body should fail");
+
+  assert!(error.is_body_too_large(), "unexpected error: {error}");
+  assert_eq!(
+    Some(rttp_client::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES),
+    error.body_limit()
+  );
+}
+
+#[test]
+fn test_content_encoding_runtime_leaves_stacked_deflate_undecoded() {
+  let body = zlib_bytes(b"OK");
+  let mut raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Encoding: deflate, gzip\r\n")
+    .as_bytes()
+    .to_vec();
+  raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+  raw.extend_from_slice(&body);
+
+  let response = Response::new(RoUrl::with("https://example.test"), raw)
+    .expect("stacked deflate content-encoding should remain usable");
+
+  assert_eq!(body, response.body().binary());
+  assert_eq!(
+    vec!["deflate", "gzip"],
+    response
+      .content_encoding()
+      .expect("content-encoding should parse")
+      .expect("content-encoding should be present")
+      .codings()
+  );
+  assert_eq!(
+    Some(body.len().to_string().as_str()),
     response.header_value("Content-Length").map(String::as_str)
   );
 }

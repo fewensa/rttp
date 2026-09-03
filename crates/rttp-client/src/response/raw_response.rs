@@ -280,10 +280,24 @@ impl Parser {
       return Ok(());
     }
 
-    if has_single_gzip_content_encoding(response.headers_get()) {
-      let mut decoder = flate2::read::GzDecoder::new(binary.as_slice());
+    if let Some(decoder) = single_content_decoder(response.headers_get()) {
       let mut buffer = Vec::new();
-      read_decoded_body_to_end(&mut decoder, &mut buffer, self.max_body_bytes)?;
+      match decoder {
+        ContentDecoder::Gzip => {
+          read_decoded_body_to_end(
+            &mut flate2::read::GzDecoder::new(binary.as_slice()),
+            &mut buffer,
+            self.max_body_bytes,
+          )?;
+        }
+        ContentDecoder::Deflate => {
+          read_decoded_body_to_end(
+            &mut flate2::read::ZlibDecoder::new(binary.as_slice()),
+            &mut buffer,
+            self.max_body_bytes,
+          )?;
+        }
+      }
       response.headers.retain(|header| {
         !header.name().eq_ignore_ascii_case("Content-Encoding")
           && !header.name().eq_ignore_ascii_case("Content-Length")
@@ -340,21 +354,31 @@ fn response_status_has_no_body(status_code: u32) -> bool {
   (100..200).contains(&status_code) || status_code == 204 || status_code == 304
 }
 
-fn has_single_gzip_content_encoding(headers: &[Header]) -> bool {
+enum ContentDecoder {
+  Gzip,
+  Deflate,
+}
+
+fn single_content_decoder(headers: &[Header]) -> Option<ContentDecoder> {
   let mut values = headers
     .iter()
     .filter(|header| header.name().eq_ignore_ascii_case("Content-Encoding"));
-  let Some(header) = values.next() else {
-    return false;
-  };
+  let header = values.next()?;
   if values.next().is_some() {
-    return false;
+    return None;
   }
 
   let mut codings = header.value().split(',').map(str::trim);
-  let Some(coding) = codings.next() else {
-    return false;
-  };
+  let coding = codings.next()?;
+  if coding.is_empty() || codings.next().is_some() {
+    return None;
+  }
 
-  !coding.is_empty() && coding.eq_ignore_ascii_case("gzip") && codings.next().is_none()
+  if coding.eq_ignore_ascii_case("gzip") {
+    Some(ContentDecoder::Gzip)
+  } else if coding.eq_ignore_ascii_case("deflate") {
+    Some(ContentDecoder::Deflate)
+  } else {
+    None
+  }
 }

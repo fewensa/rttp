@@ -4891,6 +4891,99 @@ fn prior_knowledge_buffered_response_enforces_exact_body_limit() {
   }
 }
 
+fn zlib_bytes(bytes: &[u8]) -> Vec<u8> {
+  let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+  encoder.write_all(bytes).expect("write zlib fixture");
+  encoder.finish().expect("finish zlib fixture")
+}
+
+fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+  let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+  encoder.write_all(bytes).expect("write gzip fixture");
+  encoder.finish().expect("finish gzip fixture")
+}
+
+fn h2_content_encoding_header_block(encoding: &[u8]) -> Vec<u8> {
+  let mut block = vec![0x88];
+  block.extend_from_slice(&h2_literal_new_name(b"content-encoding", encoding));
+  block
+}
+
+fn spawn_h2_encoded_peer(
+  encoding: &'static [u8],
+  body: Vec<u8>,
+) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let header_block = h2_content_encoding_header_block(encoding);
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &header_block,
+    );
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, &body);
+  });
+
+  (addr, handle)
+}
+
+#[test]
+fn prior_knowledge_decodes_single_deflate_response() {
+  let (addr, _handle) = spawn_h2_encoded_peer(b"deflate", zlib_bytes(b"decoded"));
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/deflate"))
+    .emit_http2_prior_knowledge()
+    .expect("h2 deflate response should decode");
+
+  assert_eq!(b"decoded", response.body().binary());
+  assert!(response.header("Content-Encoding").is_none());
+  assert!(response.header("Content-Length").is_none());
+}
+
+#[test]
+fn prior_knowledge_enforces_decoded_deflate_body_limit() {
+  let decoded = vec![b'a'; 256];
+  let compressed = zlib_bytes(&decoded);
+  assert!(compressed.len() <= 64);
+  let (addr, _handle) = spawn_h2_encoded_peer(b"deflate", compressed);
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/deflate"))
+    .config(
+      Config::builder()
+        .max_buffered_response_body_bytes(64)
+        .build(),
+    )
+    .emit_http2_prior_knowledge()
+    .unwrap_err();
+
+  assert!(error.is_body_too_large(), "unexpected error: {error}");
+  assert_eq!(Some(64), error.body_limit());
+}
+
+#[test]
+fn prior_knowledge_decodes_single_gzip_response() {
+  let (addr, _handle) = spawn_h2_encoded_peer(b"gzip", gzip_bytes(b"decoded"));
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/gzip"))
+    .emit_http2_prior_knowledge()
+    .expect("h2 gzip response should decode");
+
+  assert_eq!(b"decoded", response.body().binary());
+  assert!(response.header("Content-Encoding").is_none());
+  assert!(response.header("Content-Length").is_none());
+}
+
 fn spawn_initial_settings_peer(
   flags: u8,
   stream_id: u32,

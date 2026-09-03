@@ -7,7 +7,7 @@ use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
 
-use flate2::write::GzEncoder;
+use flate2::write::{GzEncoder, ZlibEncoder};
 use flate2::Compression;
 use rttp_client::types::{Auth, Para, Proxy, RoUrl, StatusCode};
 use rttp_client::ConnectionReader;
@@ -32,6 +32,22 @@ fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
   let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
   encoder.write_all(bytes).expect("write gzip fixture");
   encoder.finish().expect("finish gzip fixture")
+}
+
+fn zlib_bytes(bytes: &[u8]) -> Vec<u8> {
+  let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+  encoder.write_all(bytes).expect("write zlib fixture");
+  encoder.finish().expect("finish zlib fixture")
+}
+
+fn assert_decode_error(error: rttp_client::error::Error) {
+  assert!(
+    error
+      .to_string()
+      .starts_with("error decoding response body"),
+    "unexpected error: {error}"
+  );
+  assert!(!error.is_body_too_large());
 }
 
 fn spawn_streaming_upload_capture_server() -> (std::net::SocketAddr, thread::JoinHandle<Vec<u8>>) {
@@ -370,6 +386,70 @@ fn test_buffered_gzip_response_exposes_decoded_body_headers() {
   assert_eq!(b"decoded", response.body().binary());
   assert!(response.header("Content-Encoding").is_none());
   assert!(response.header("Content-Length").is_none());
+}
+
+#[test]
+fn test_buffered_deflate_response_exposes_decoded_body_headers() {
+  let body = zlib_bytes(b"decoded");
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: deflate\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&body);
+  let (addr, _handle) = support::spawn_chunked_response_server(raw);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/deflate", addr))
+    .emit()
+    .expect("buffered deflate response");
+
+  assert_eq!(b"decoded", response.body().binary());
+  assert!(response.header("Content-Encoding").is_none());
+  assert!(response.header("Content-Length").is_none());
+}
+
+#[test]
+fn test_buffered_deflate_response_limits_decoded_body() {
+  let decoded = vec![b'a'; 256];
+  let compressed = zlib_bytes(&decoded);
+  assert!(compressed.len() <= 64);
+  let mut response = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: deflate\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    compressed.len()
+  )
+  .into_bytes();
+  response.extend_from_slice(&compressed);
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  let error = client()
+    .url(format!("http://{addr}/deflate"))
+    .config(buffered_response_config(64))
+    .emit()
+    .unwrap_err();
+
+  assert_body_too_large(error, 64);
+}
+
+#[test]
+fn test_invalid_deflate_returns_typed_decode_error() {
+  let body = b"not-zlib";
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: deflate\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(body);
+  let (addr, _handle) = support::spawn_chunked_response_server(raw);
+
+  let error = client()
+    .get()
+    .url(format!("http://{}/deflate", addr))
+    .emit()
+    .expect_err("malformed deflate response should fail");
+
+  assert_decode_error(error);
 }
 
 #[test]
