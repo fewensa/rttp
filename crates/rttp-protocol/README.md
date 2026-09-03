@@ -33,6 +33,25 @@ of valueless extension parameters. The server facade aliases the same types as
 accessors. Raw `Accept` headers remain caller-owned escape hatches outside the
 bounded helper API.
 
+## Accept-Patch
+
+`accept_patch` parses one or more `Accept-Patch` response field values into an
+ordered list of `MediaType` values. Repeated fields are flattened in wire
+order, and duplicate media types are retained because this protocol primitive
+does not impose application policy. Each field value is limited to 64 KiB and
+the combined parsed list is limited to 256 media types.
+
+Each media type exposes its `type_()`, `subtype()`, and ordered
+`parameters()`. Media-type tokens, optional whitespace, quoted parameter values
+(including commas and escaped quotes), and control-byte rejection are validated
+by the shared parser. `AcceptPatch::header_value()` serializes the validated
+list with canonical separators and quoted-string escaping. Empty values,
+malformed media types or parameters, forbidden control bytes, oversized field
+values, and more than 256 members return `AcceptPatchParseError`.
+
+This type reports response metadata only. It does not route `PATCH` requests,
+decode payloads, negotiate media types, or select a method automatically.
+
 ## Accept-Charset
 
 `accept_charset` parses one or more RFC 9110 `Accept-Charset` field values

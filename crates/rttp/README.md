@@ -71,6 +71,30 @@ and `<absolute-URI>` Coded-URLs, and rejects malformed, duplicate, oversized,
 aggregate-oversized, or over-32-member values. The facade does not infer,
 negotiate, or enforce WebDAV feature support from this header.
 
+## Bounded Accept-Patch response metadata
+
+The facade exposes `HttpResponse::with_accept_patch(media_types)` and
+`HttpResponse::accept_patch()` through `rttp::server`. The declaration helper
+joins and validates an ordered list of media-type values with the shared
+`HttpAcceptPatch` protocol type, serializes one `Accept-Patch` field, and
+replaces existing same-name fields. The accessor combines repeated fields in
+wire order and returns the shared `HttpAcceptPatch` metadata type. The server
+aliases `HttpAcceptPatchParseError`, `HttpMediaType`, and
+`HttpMediaTypeParameter` are available for typed inspection.
+
+Each field value is bounded to 64 KiB and the ordered parsed list to 256 media
+types. Media-type tokens, quoted parameters including commas and escaped
+quotes, and control-byte rejection are handled by the protocol parser.
+Duplicate media types are retained without application policy. Invalid typed
+declarations fail before replacement, and invalid attached values leave raw
+headers available through ordinary response serialization. The facade also
+re-exports the client `AcceptPatch` and `AcceptPatchParseError` types behind its
+`client` feature, where `Response::accept_patch()` provides the same behavior.
+
+This metadata is informational only. The facade does not route `PATCH`
+requests, decode payloads, negotiate media types, select a method, retry, or
+automatically apply or send patches.
+
 ## Bounded HTTP/1.1 byte ranges
 
 The server exposes byte-range primitives, not an automatic static-file server.
@@ -1591,6 +1615,7 @@ scheduling, or async accept loops.
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Byte ranges | `HttpByteRangeSet` resolves at most 32 `bytes` members from one `Range` field, `Request::evaluate_if_range` and `HttpRequest::evaluate_if_range` gate that set with caller-provided strong ETag or exact HTTP-date metadata, `HttpByteRange::parse` remains the single-range helper, `HttpResponse::partial_content`/`partial_content_ranges`/`range_not_satisfiable` serialize single-range or bounded `multipart/byteranges` `206` and `416` with the shared checked `HttpContentRange` formatter, `HttpResponse::content_range` parses attached `Content-Range` metadata, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, general-purpose MIME APIs, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, automatic cache validation, static-file policy, automatic byte serving, download resume, or status-policy behavior |
+| Accept-Patch | `HttpResponse::with_accept_patch` and `HttpResponse::accept_patch` declare or parse repeated bounded response fields through shared `HttpAcceptPatch`/`HttpMediaType` types, replacing raw fields on valid declaration and preserving them on parse errors; client `Response::accept_patch` exposes the same protocol `AcceptPatch` metadata | No PATCH routing, payload decoding, media-type negotiation, method selection, retry, or automatic patch application |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified`, `precondition_failed`, `with_etag`, and typed bounded `etag` serialize or expose `304`/`412` metadata while preserving raw headers; `with_delta_base`/`delta_base` declare and parse bounded singleton `Delta-Base` metadata through the shared entity-tag primitive; `with_schedule_tag` and `schedule_tag` declare and parse bounded `Schedule-Tag` response metadata through the shared protocol type | No cache storage, static-file serving policy, automatic revalidation, cached-entity lookup, delta application, calendar-version generation, schedule-tag comparison, calendar inspection, scheduling policy, or cache-control engine |
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and protocol-backed `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |

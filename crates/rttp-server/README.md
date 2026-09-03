@@ -589,6 +589,29 @@ downloads, or choose redirect, retry, or status-policy behavior. Resolved
 range sets are serialized by `HttpResponse::partial_content` and
 `HttpResponse::partial_content_ranges`.
 
+## Accept-Patch response metadata
+
+`HttpResponse::with_accept_patch(media_types)` validates an ordered list of
+media-type field values through the shared protocol `HttpAcceptPatch` type,
+serializes it as one `Accept-Patch` field, and replaces existing fields with
+that name. `HttpResponse::accept_patch()` parses attached fields in wire order
+into the same `HttpAcceptPatch` type. The server module exposes the shared
+`HttpAcceptPatchParseError`, `HttpMediaType`, and `HttpMediaTypeParameter`
+aliases for typed inspection.
+
+Each field value is limited to 64 KiB and the parsed list is limited to 256
+media types. Media-type tokens, optional whitespace, token parameters, quoted
+parameters (including commas and escaped quotes), and forbidden control bytes
+are validated by `rttp-protocol`. Duplicate media types are retained in order;
+RTTP does not add duplicate handling or media-type negotiation policy. An
+invalid declaration is rejected before existing response fields are replaced,
+and invalid attached fields remain available through ordinary response
+serialization after `accept_patch()` returns an error.
+
+These helpers only declare and inspect response metadata. RTTP does not route
+`PATCH` requests, decode patch payloads, negotiate media types, select a method,
+or automatically apply or send a patch.
+
 ## Content-Disposition response metadata
 
 `HttpResponse::with_content_disposition(value)` validates one

@@ -7235,19 +7235,19 @@ fn test_parse_accept_patch_response_helper_preserves_media_types_across_header_f
 
   assert_eq!(
     vec![
-      "application/json",
-      "application/merge-patch+json",
-      "application/example",
+      ("application", "json"),
+      ("application", "merge-patch+json"),
+      ("application", "example")
     ],
     accept_patch
       .media_types()
       .iter()
-      .map(|media_type| media_type.essence())
+      .map(|media_type| (media_type.type_(), media_type.subtype()))
       .collect::<Vec<_>>()
   );
   assert_eq!(
-    Some("https://example.test/schema,v1"),
-    accept_patch.media_types()[2].parameter("profile")
+    "https://example.test/schema,v1",
+    accept_patch.media_types()[2].parameters()[0].value()
   );
   assert_eq!(
     vec![
