@@ -1091,6 +1091,21 @@ syntax. Credential interpretation remains application-owned: RTTP does not
 validate individual schemes, store or refresh credentials, process challenges,
 retry, or forward credentials on redirects.
 
+## Bounded From request metadata
+
+`HttpClient::from(value)` validates and emits one canonical `From` request
+field through the shared `rttp_protocol::from::From` type, replacing any
+existing case-insensitive `From` field before a socket is opened. The value is
+one bare mailbox or one name-address, bounded to 64 KiB, with optional
+surrounding HTTP OWS; name-address display-name whitespace is normalized.
+Malformed, duplicate, non-ASCII, control-byte, and oversized values are
+rejected before connecting. `header(("From", value))` remains available when
+an application needs raw header control.
+
+This is syntax-only metadata. RTTP does not verify identity or ownership,
+apply privacy or authorization policy, assess deliverability, perform DNS or
+SMTP work, or send email.
+
 ## Bounded HTTP request control metadata
 
 `HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a bounded `TE`

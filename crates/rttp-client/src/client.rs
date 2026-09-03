@@ -29,6 +29,7 @@ use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
+use rttp_protocol::from::From;
 use rttp_protocol::idempotency_key::IdempotencyKey;
 use rttp_protocol::if_header::If;
 use rttp_protocol::if_modified_since::IfModifiedSince;
@@ -228,6 +229,19 @@ impl HttpClient {
     let authorization = Authorization::new(scheme, credentials)
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Authorization", authorization.header_value())))
+  }
+
+  /// Set bounded `From` request metadata.
+  ///
+  /// The value must be one bare mailbox or name-address accepted by the
+  /// shared protocol parser. The canonical value replaces any existing
+  /// case-insensitive `From` field before a connection is opened. This only
+  /// declares syntax-validated metadata; RTTP does not verify identity,
+  /// ownership, privacy, deliverability, authorization, DNS, or SMTP policy.
+  pub fn from<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let from = From::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("From", from.header_value())))
   }
 
   ///  Add request header

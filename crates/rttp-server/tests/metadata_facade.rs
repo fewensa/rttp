@@ -21,12 +21,12 @@ use rttp_server::server::{
   HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
   HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations,
-  HttpExpiresParseError, HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf,
-  HttpIfCondition, HttpIfList, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
-  HttpIfParseError, HttpIfPredicate, HttpIfResourceTag, HttpIfScheduleTagMatch,
-  HttpIfScheduleTagMatchParseError, HttpIfStateToken, HttpIfUnmodifiedSince,
-  HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter, HttpImParseError,
-  HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
+  HttpExpiresParseError, HttpFrom, HttpFromParseError, HttpHost, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList, HttpIfModifiedSince,
+  HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate, HttpIfResourceTag,
+  HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
+  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter,
+  HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
   HttpNegotiateDirective, HttpNegotiateParseError, HttpNoVarySearch, HttpNoVarySearchParams,
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
@@ -1606,6 +1606,59 @@ fn request_facade_parses_max_forwards_metadata() {
 
   assert_eq!(0, max_forwards.value());
   assert_eq!("0", max_forwards.header_value());
+}
+
+#[test]
+fn request_facade_parses_from_metadata_without_policy() {
+  let bare = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nFrom: ops@example.test\r\n\r\n",
+  )
+  .expect("request should parse");
+  let bare_from: HttpFrom = bare
+    .from()
+    .expect("From should parse")
+    .expect("From should be present");
+  assert_eq!("ops@example.test", bare_from.address());
+  assert_eq!("ops", bare_from.local_part());
+  assert_eq!("example.test", bare_from.domain());
+  assert_eq!(None, bare_from.display_name());
+  assert_eq!("ops@example.test", bare_from.header_value());
+
+  let named = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nFrom: Ops\t Team  <ops@example.test>\r\n\r\n",
+  )
+  .expect("request should parse");
+  let named_from = named
+    .from()
+    .expect("From should parse")
+    .expect("From should be present");
+  assert_eq!(Some("Ops Team"), named_from.display_name());
+  assert_eq!("Ops Team <ops@example.test>", named_from.header_value());
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.from().expect("missing From should be valid"));
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nFrom: Ops Team<ops@example.test>\r\n\r\n",
+  )
+  .expect("malformed metadata should remain available");
+  assert!(malformed.from().is_err());
+  assert_eq!(Some("Ops Team<ops@example.test>"), malformed.header("From"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nFrom: ops@example.test\r\nfrom: other@example.test\r\n\r\n",
+  )
+  .expect("duplicate metadata should remain available");
+  assert!(duplicate.from().is_err());
+  assert_eq!(Some("ops@example.test"), duplicate.header("From"));
+
+  let _: HttpFromParseError = HttpFrom::parse("ops@example.test\0")
+    .expect_err("control-byte From metadata should be rejected");
+  assert!(
+    HttpFrom::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized From metadata should be rejected"
+  );
 }
 
 #[test]

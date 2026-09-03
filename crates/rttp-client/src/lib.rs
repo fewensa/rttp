@@ -140,6 +140,7 @@ pub use rttp_protocol::dnt::{Dnt, DntParseError};
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
+pub use rttp_protocol::from::{From, FromParseError};
 pub use rttp_protocol::if_header::{
   If, IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag, IfStateToken,
 };

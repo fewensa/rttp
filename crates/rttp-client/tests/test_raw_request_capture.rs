@@ -607,6 +607,91 @@ fn raw_headers_remain_an_escape_hatch_for_custom_authorization_schemes() {
 }
 
 #[test]
+fn from_helper_emits_one_canonical_case_insensitive_singleton() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("from", "legacy@example.test"))
+      .from(" Ops\t Team  <ops@example.test> ")
+      .expect("From metadata should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(1, request.matches("\r\nFrom: ").count());
+  assert_eq!(
+    Some("Ops Team <ops@example.test>"),
+    header_value(&request, "FROM")
+  );
+}
+
+#[test]
+fn from_helper_rejects_invalid_and_oversized_metadata_before_connecting() {
+  let oversized = format!("{}@example.test", "a".repeat(64 * 1024));
+  for value in [
+    "".to_string(),
+    "ops".to_string(),
+    "Ops Team<ops@example.test>".to_string(),
+    "ops@example.test\0".to_string(),
+    oversized,
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .from(&value)
+        .expect_err("invalid From metadata should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid metadata must not open a socket"
+    );
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_from_helper_emits_canonical_metadata() {
+  let request = capture_request(|base_url| {
+    block_on(
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .from("ops@example.test")
+        .expect("From metadata should be accepted")
+        .rasync(),
+    )
+    .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("ops@example.test"),
+    header_value(&request_text(&request), "From")
+  );
+}
+
+#[test]
+fn streaming_from_helper_emits_canonical_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/asset", base_url))
+      .from("Ops Team <ops@example.test>")
+      .expect("From metadata should be accepted")
+      .emit_streaming_fixed("hello".as_bytes(), 5)
+      .expect("streaming request should succeed");
+  });
+
+  assert_eq!(
+    Some("Ops Team <ops@example.test>"),
+    header_value(&request_text(&request), "From")
+  );
+}
+
+#[test]
 fn accept_charset_helpers_emit_validated_ranges_and_quality_values() {
   let request = capture_request(|base_url| {
     client()

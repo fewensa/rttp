@@ -446,6 +446,22 @@ credentials, select realms, challenge clients automatically, enforce
 authentication or authorization decisions, verify schemes, store or refresh
 credentials, retry, or forward credentials across redirects.
 
+## Bounded From request metadata
+
+With the client feature, `HttpClient::from(value)` validates and emits one
+canonical `From` request field through the shared protocol `From` type,
+replacing any existing case-insensitive field before a socket is opened.
+`rttp::From` and `rttp::FromParseError` are re-exported for direct parsing.
+On the server facade, `Request::from()` and `HttpRequest::from()` parse all
+received `From` fields into `HttpFrom`, returning `Ok(None)` when absent and a
+parser error for duplicate, malformed, non-ASCII, control-byte, or oversized
+values while raw headers remain available.
+
+The boundary is syntax-only metadata. RTTP does not verify identity or
+ownership, apply privacy or authorization policy, assess deliverability,
+perform DNS or SMTP work, or send email. The client’s raw `header` helper
+remains available for values outside the bounded typed syntax.
+
 ## Bounded Idempotency-Key request metadata
 
 `HttpClient::idempotency_key(value)` validates and emits one opaque

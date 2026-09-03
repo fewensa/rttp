@@ -8,13 +8,14 @@ use rttp::server::{
   HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages,
   HttpContentRange, HttpContentSecurityPolicy, HttpContentSecurityPolicyReportOnly,
   HttpContentType, HttpCriticalCh, HttpDeltaBase, HttpDeprecation, HttpDepth, HttpDocumentPolicy,
-  HttpDocumentPolicyReportOnly, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch,
-  HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel,
-  HttpOriginTrials, HttpOverwrite, HttpPartialContentError, HttpPermissionsPolicy, HttpProxyStatus,
-  HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
-  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
-  HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
-  HttpScheduleTag, HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
+  HttpDocumentPolicyReportOnly, HttpEntityTag, HttpExpectations, HttpFrom, HttpFromParseError,
+  HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
+  HttpMementoDatetime, HttpNel, HttpOriginTrials, HttpOverwrite, HttpPartialContentError,
+  HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
+  HttpResponseContentEncodings, HttpRetryAfter, HttpScheduleTag, HttpServerTiming, HttpTcn,
+  HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
 };
 
 #[test]
@@ -1241,6 +1242,43 @@ fn response_nel_helper_validates_replaces_and_preserves_raw_headers() {
 
 fn parse_request(raw: &str) -> HttpRequest {
   HttpRequest::parse(raw.as_bytes()).expect("request should parse")
+}
+
+#[test]
+fn request_from_metadata_is_available_through_the_compatibility_facade() {
+  let request = parse_request(
+    "GET /asset HTTP/1.1\r\nHost: example.test\r\nFrom: Ops Team <ops@example.test>\r\n\r\n",
+  );
+  let from: HttpFrom = request
+    .from()
+    .expect("From should parse")
+    .expect("From should be present");
+  assert_eq!(Some("Ops Team"), from.display_name());
+  assert_eq!("ops@example.test", from.address());
+  assert_eq!("Ops Team <ops@example.test>", from.header_value());
+
+  let absent = parse_request("GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(None, absent.from().expect("missing From should be valid"));
+
+  let malformed = parse_request(
+    "GET /asset HTTP/1.1\r\nHost: example.test\r\nFrom: Ops Team<ops@example.test>\r\n\r\n",
+  );
+  assert!(malformed.from().is_err());
+  assert_eq!(Some("Ops Team<ops@example.test>"), malformed.header("From"));
+
+  let duplicate = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "From: ops@example.test\r\n",
+    "from: other@example.test\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.from().is_err());
+  assert_eq!(Some("ops@example.test"), duplicate.header("From"));
+
+  let _: HttpFromParseError = HttpFrom::parse("ops@example.test\0")
+    .expect_err("control-byte From metadata should be rejected");
+  assert!(HttpFrom::parse("a".repeat(64 * 1024 + 1)).is_err());
 }
 
 #[test]
