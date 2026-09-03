@@ -8,6 +8,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
+use rttp_client::ByteRangeSpec;
 use rttp_client::DavClass;
 use rttp_client::HttpClient;
 use rttp_server::server::{
@@ -8355,6 +8356,29 @@ fn sync_client_manual_range_header_interoperates_with_server_partial_content_hel
   assert_observed_range(handle, "bytes=5-9", "manual range");
 }
 
+fn expected_multipart_body(boundary: &str, parts: &[(&str, &str)]) -> String {
+  let mut body = String::new();
+  for (index, (content_range, payload)) in parts.iter().enumerate() {
+    if index == 0 {
+      body.push_str("--");
+      body.push_str(boundary);
+      body.push_str("\r\n");
+    } else {
+      body.push_str("\r\n--");
+      body.push_str(boundary);
+      body.push_str("\r\n");
+    }
+    body.push_str("Content-Range: ");
+    body.push_str(content_range);
+    body.push_str("\r\n\r\n");
+    body.push_str(payload);
+  }
+  body.push_str("\r\n--");
+  body.push_str(boundary);
+  body.push_str("--\r\n");
+  body
+}
+
 fn assert_multipart_partial_response(
   name: &str,
   response: rttp_client::response::Response,
@@ -8363,6 +8387,13 @@ fn assert_multipart_partial_response(
   assert_eq!(206, response.code(), "{name}");
   assert!(response.is_partial_content(), "{name}");
   assert!(response.header_value("Content-Range").is_none(), "{name}");
+  assert!(
+    response
+      .content_range()
+      .expect("multipart should not expose Content-Range")
+      .is_none(),
+    "{name}"
+  );
   let content_type = response
     .header_value("Content-Type")
     .expect("multipart Content-Type should be present");
@@ -8375,13 +8406,18 @@ fn assert_multipart_partial_response(
     .map(|(_, boundary)| boundary)
     .expect("multipart boundary should be present");
   let body = response.body().string().unwrap();
-  assert!(body.ends_with(&format!("\r\n--{boundary}--\r\n")), "{name}");
-  for (content_range, payload) in expected_parts {
-    assert!(
-      body.contains(&format!("Content-Range: {content_range}\r\n\r\n{payload}")),
-      "{name}: missing {content_range}"
-    );
-  }
+  let expected = expected_multipart_body(boundary, expected_parts);
+  assert_eq!(expected, body, "{name}");
+  assert_eq!(
+    Some(body.len()),
+    response.content_length().map(|length| length.len()),
+    "{name}"
+  );
+  assert_eq!(
+    Some(&body.len().to_string()),
+    response.header_value("Content-Length"),
+    "{name}"
+  );
 }
 
 #[test]
@@ -8401,6 +8437,118 @@ fn sync_client_multi_range_header_interoperates_with_server_multipart_partial_co
     &[("bytes 0-1/16", "01"), ("bytes 5-9/16", "56789")],
   );
   assert_observed_range(handle, "bytes=0-1,5-9", "two-part range");
+}
+
+#[test]
+fn sync_client_typed_mixed_ranges_interoperate_with_server_multipart_partial_content() {
+  let (addr, handle) = spawn_range_server();
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/range", addr))
+    .ranges([
+      ByteRangeSpec::FromTo {
+        start: 0,
+        end: Some(2),
+      },
+      ByteRangeSpec::FromTo {
+        start: 10,
+        end: None,
+      },
+      ByteRangeSpec::Suffix { length: 4 },
+    ])
+    .expect("mixed ranges should be accepted")
+    .emit()
+    .expect("mixed-range response should parse");
+
+  assert_multipart_partial_response(
+    "typed mixed ranges",
+    response,
+    &[
+      ("bytes 0-2/16", "012"),
+      ("bytes 10-15/16", "abcdef"),
+      ("bytes 12-15/16", "cdef"),
+    ],
+  );
+  assert_observed_range(handle, "bytes=0-2, 10-, -4", "typed mixed ranges");
+}
+
+#[test]
+fn sync_client_typed_partially_unsatisfiable_ranges_omit_unsatisfiable_members() {
+  let (addr, handle) = spawn_range_server();
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/range", addr))
+    .ranges([
+      ByteRangeSpec::FromTo {
+        start: 0,
+        end: Some(1),
+      },
+      ByteRangeSpec::FromTo {
+        start: 99,
+        end: None,
+      },
+      ByteRangeSpec::Suffix { length: 4 },
+    ])
+    .expect("partially unsatisfiable ranges should be accepted")
+    .emit()
+    .expect("partially unsatisfiable range response should parse");
+
+  assert_multipart_partial_response(
+    "typed mixed satisfiable ranges",
+    response,
+    &[("bytes 0-1/16", "01"), ("bytes 12-15/16", "cdef")],
+  );
+  assert_observed_range(
+    handle,
+    "bytes=0-1, 99-, -4",
+    "typed mixed satisfiable ranges",
+  );
+}
+
+#[test]
+fn sync_client_typed_all_unsatisfiable_ranges_map_to_server_416_response() {
+  let (addr, handle) = spawn_range_server();
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/range", addr))
+    .ranges([
+      ByteRangeSpec::FromTo {
+        start: 99,
+        end: None,
+      },
+      ByteRangeSpec::FromTo {
+        start: 16,
+        end: Some(20),
+      },
+    ])
+    .expect("all-unsatisfiable ranges should be accepted")
+    .emit()
+    .expect("all-unsatisfiable range response should parse");
+
+  assert_eq!(416, response.code());
+  assert!(response.is_range_not_satisfiable());
+  assert_eq!(
+    Some(&format!("bytes */{}", RANGE_BODY.len())),
+    response.header_value("Content-Range")
+  );
+  let content_range = response
+    .content_range()
+    .expect("416 Content-Range should parse")
+    .expect("416 Content-Range should be present");
+  assert!(content_range.is_unsatisfied());
+  assert_eq!(
+    Some(RANGE_BODY.len() as u64),
+    content_range.complete_length()
+  );
+  assert_eq!("", response.body().string().unwrap());
+  assert_eq!(
+    Some(0),
+    response.content_length().map(|length| length.len())
+  );
+  assert_observed_range(handle, "bytes=99-, 16-20", "typed all-unsatisfiable ranges");
 }
 
 #[test]

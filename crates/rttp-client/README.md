@@ -362,31 +362,54 @@ use these fields must choose and enforce their own trusted proxies.
 `HttpClient` includes helpers for the single-range `bytes` forms RTTP keeps
 bounded: `range(start, end)` emits `Range: bytes=start-end`,
 `range_from(start)` emits `Range: bytes=start-`, and `range_suffix(length)`
-emits `Range: bytes=-length`. The helpers reject inverted closed ranges and a
-zero suffix length before a socket is opened. They are request-header helpers;
-manual `Range` headers remain available through `header(("Range", "..."))`
-when callers need behavior outside the helper validation.
+emits `Range: bytes=-length`. `ranges` emits one canonical
+`Range: bytes=...` header from closed (`ByteRangeSpec::FromTo { end: Some(...) }`),
+open-ended (`ByteRangeSpec::FromTo { end: None }`), and suffix
+(`ByteRangeSpec::Suffix`) members, replacing any prior `Range` field. The
+helpers reject inverted closed ranges, a zero suffix length, an empty set, and
+more than 32 members before a socket is opened. They are request-header
+helpers; manual `Range` headers remain available through
+`header(("Range", "..."))` when callers need behavior outside the helper
+validation.
 
 ```rust
+use rttp_client::{ByteRangeSpec, HttpClient};
+
 client
   .get()
   .url("http://example.test/archive")
-  .range(1_024, 2_047)?
-  .if_range_etag(r#""revision-42""#)?
+  .ranges([
+    ByteRangeSpec::FromTo {
+      start: 0,
+      end: Some(2),
+    },
+    ByteRangeSpec::FromTo {
+      start: 10,
+      end: None,
+    },
+    ByteRangeSpec::Suffix { length: 4 },
+  ])?
   .emit()?;
 ```
 
 Partial-content responses are exposed through the normal `Response` API.
-`Response::is_partial_content()` identifies `206 Partial Content`, and
-`Response::content_range()` parses a single `Content-Range` field such as
-`bytes 10-19/200` into the shared checked protocol `ContentRange` with `unit`,
-`start`, `end`, and `complete_length` accessors. Invalid or duplicate
-`Content-Range` metadata returns a response error from the typed helper while
-raw headers remain preserved. `Response::is_range_not_satisfiable()` identifies
+`Response::is_partial_content()` identifies `206 Partial Content`. A
+single-range `206` includes a top-level `Content-Range` field such as
+`bytes 10-19/200`; `Response::content_range()` parses that field into the
+shared checked protocol `ContentRange` with `unit`, `start`, `end`, and
+`complete_length` accessors. A multi-range `206` is `multipart/byteranges`:
+there is no top-level `Content-Range`, `Content-Type` carries a boundary,
+`Content-Length` matches the framed body, and the body contains per-part
+`Content-Range` headers plus a closing delimiter in request-member order.
+Unsatisfiable members are omitted by the server; if every member is
+unsatisfiable the response is `416`. Invalid or duplicate `Content-Range`
+metadata returns a response error from the typed helper while raw headers
+remain preserved. `Response::is_range_not_satisfiable()` identifies
 `416 Range Not Satisfiable`; an unsatisfied `Content-Range` such as
 `bytes */200` is exposed with no `start` or `end` and
 `ContentRange::is_unsatisfied() == true`. Response bodies and headers are still
-preserved normally for both `206` and `416`.
+preserved normally for both `206` and `416`. The client does not decode
+multipart parts into structured ranges.
 
 `If-Range` is available as a bounded request helper for the two validator forms
 that compose with these range helpers: `if_range_etag(etag)` emits a single
@@ -411,12 +434,12 @@ any unit is rejected. The original response remains usable: raw
 `Accept-Ranges` fields are still available through `Response::header_value()`,
 `Response::header_values()`, and the other response metadata helpers.
 
-RTTP does not synthesize multipart range requests, generate `Range` requests
+RTTP does not synthesize multipart request bodies, generate `Range` requests
 from `Accept-Ranges`, evaluate `If-Range`, retry range requests, store cached
 responses, apply automatic cache validation policy, resume downloads, slice
-content, or choose status handling on the client side. Multiple ranges can only
-be sent by manually setting the header, and any server response is then parsed
-as an ordinary HTTP response.
+content, or choose status handling on the client side. Multiple ranges are
+emitted by `HttpClient::ranges`; any server response is then parsed as an
+ordinary HTTP response.
 
 ## Bounded HTTP/1.1 conditional requests
 
