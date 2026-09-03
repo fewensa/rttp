@@ -169,6 +169,27 @@ This is metadata-only behavior. RTTP does not route `PATCH` requests, decode
 patch payloads, negotiate media types, choose a method, retry, or automatically
 send a follow-up request.
 
+### Bounded Accept-Post response metadata
+
+`Response::accept_post()` parses one or more `Accept-Post` response fields
+through the shared protocol `AcceptPost` type. Repeated fields are flattened
+in wire order into an ordered bounded list of `MediaType` values, which expose
+`type_()`, `subtype()`, and ordered `parameters()`. The client response module
+and the `rttp` facade re-export `AcceptPost` and
+`AcceptPostParseError` (as well as the media-type inspection types).
+
+Each field value is limited to 64 KiB and the combined list to 256 media
+types. Token and quoted parameters, quoted commas, escaped quotes, and
+control-byte rejection are handled by `rttp-protocol`. Duplicate media types
+are preserved rather than assigned application meaning. Absent metadata
+returns `Ok(None)`. Malformed, empty, control-byte, oversized, or over-limit
+values return a typed response error while raw fields remain available through
+`Response::header_value()` and `Response::header_values()`.
+
+This is metadata-only behavior. RTTP does not route `POST` requests, decode
+payloads, negotiate media types, choose a method, retry, or automatically
+send a follow-up request.
+
 ### Bounded HTTP/1.1 conditional requests
 
 `HttpClient` can emit common conditional validators with
@@ -1828,6 +1849,7 @@ gain additional HTTP/2 header-block handling.
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
 | Accept-Patch | `Response::accept_patch` parses repeated bounded `Accept-Patch` response fields through the shared `AcceptPatch` type into ordered `MediaType` values while preserving raw headers on parse errors | No PATCH routing, payload decoding, media-type negotiation, method selection, retry, or automatic follow-up request |
+| Accept-Post | `Response::accept_post` parses repeated bounded `Accept-Post` response fields through the shared `AcceptPost` type into ordered `MediaType` values while preserving raw headers on parse errors | No POST routing, payload decoding, media-type negotiation, method selection, retry, or automatic follow-up request |
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; the date helpers validate and emit through the shared protocol `IfModifiedSince` and `IfUnmodifiedSince` types; `Response::is_not_modified`, `is_precondition_failed`, typed bounded `etag`, `delta_base`, and `last_modified` expose `304`/`412` and delta-base metadata while preserving raw headers | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no cached-entity lookup, no automatic revalidation, no delta application, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers; server `HttpResponse::early_hints`/`early_hints_with_headers` construct validated bodyless `103` metadata | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, Cache-Status, Date, Age, Expires, Retry-After, and Allow | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw responses on parse errors; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::expires` parses bounded HTTP-date metadata; `Response::retry_after` parses bounded singleton delta-seconds or HTTP-date metadata through the protocol `RetryAfter` type while preserving raw headers on parse errors; `Response::allow` parses bounded ordered method metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, automatic sleep, retry, replay, redirect, backoff, scheduler integration, fallback method selection, or status-code policy engine |
@@ -2145,6 +2167,28 @@ error without removing the raw response headers.
 These helpers only declare and inspect metadata. RTTP does not route `PATCH`
 requests, decode patch payloads, negotiate media types, select a request
 method, or automatically apply or send a patch.
+
+### Bounded Accept-Post response metadata
+
+`HttpResponse::with_accept_post(media_types)` joins an ordered list of
+caller-supplied media-type values, validates and serializes it through the
+shared protocol `HttpAcceptPost` type, and replaces existing
+`Accept-Post` fields with one validated field. `HttpResponse::accept_post()`
+parses attached fields in wire order into the same type. The server facade
+exposes `HttpAcceptPost`, `HttpAcceptPostParseError`, `HttpMediaType`, and
+`HttpMediaTypeParameter` through `rttp::server`.
+
+Each field value is limited to 64 KiB and the combined parsed list to 256 media
+types. Media-type tokens and optional whitespace, token or quoted parameters,
+quoted commas, escaped quotes, and control-byte rejection are owned by
+`rttp-protocol`. Duplicate media types are retained in order; no media-type
+negotiation or duplicate policy is added. Invalid declarations fail before
+replacing existing fields, and malformed attached values return an accessor
+error without removing the raw response headers.
+
+These helpers only declare and inspect metadata. RTTP does not route `POST`
+requests, decode payloads, negotiate media types, select a request method, or
+automatically apply or send a follow-up request.
 
 ### Bounded HTTP/1.1 conditional requests
 
@@ -3029,6 +3073,7 @@ TLS or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` gates it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range`, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, MIME detection, automatic cache validation, automatic static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |
 | Accept-Patch | `HttpResponse::with_accept_patch` and `HttpResponse::accept_patch` declare or parse repeated bounded `Accept-Patch` response fields through shared `HttpAcceptPatch`/`MediaType` types, replacing raw fields on valid declaration and preserving them on parse errors | No PATCH routing, payload decoding, media-type negotiation, method selection, retry, or automatic patch application |
+| Accept-Post | `HttpResponse::with_accept_post` and `HttpResponse::accept_post` declare or parse repeated bounded `Accept-Post` response fields through shared `HttpAcceptPost`/`MediaType` types, replacing raw fields on valid declaration and preserving them on parse errors | No POST routing, payload decoding, media-type negotiation, method selection, retry, or automatic follow-up request |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `Request::if_modified_since`/`if_unmodified_since` and the `HttpRequest` equivalents parse HTTP-date validators through the shared protocol types; `HttpResponse::not_modified`, `precondition_failed`, `with_etag`, and typed bounded `etag` serialize or expose `304`/`412` metadata while preserving raw headers; `with_delta_base`/`delta_base` declare and parse bounded singleton `Delta-Base` metadata through the shared entity-tag primitive; `with_schedule_tag` and `schedule_tag` declare and parse bounded `Schedule-Tag` response metadata through the shared protocol type | No cache storage, static-file serving policy, automatic revalidation, cached-entity lookup, delta application, calendar-version generation, schedule-tag comparison, calendar inspection, scheduling policy, or cache-control engine |
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and protocol-backed `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |

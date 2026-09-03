@@ -463,6 +463,28 @@ This is response metadata only. `rttp_client` does not route `PATCH` requests,
 decode patch payloads, negotiate media types, choose a request method, retry,
 or automatically send a follow-up request.
 
+## Bounded Accept-Post response metadata
+
+`Response::accept_post()` parses one or more `Accept-Post` response fields
+through the shared protocol `AcceptPost` type. Repeated fields are combined
+in wire order into one bounded list of `MediaType` values; each value exposes
+`type_()`, `subtype()`, and ordered `parameters()`. The response module
+re-exports `AcceptPost`, `AcceptPostParseError`, `MediaType`, and
+`MediaTypeParameter` for typed inspection and direct validation.
+
+Each field value is limited to 64 KiB and the combined parsed list is limited
+to 256 media types. Parameters support token or quoted values, including
+quoted commas and escaped quotes. Duplicate media types are preserved in
+order; no duplicate or media-selection policy is applied. Absent metadata
+returns `Ok(None)`. Malformed media types or parameters, empty members,
+control bytes, oversized values, and too many members return a response error
+without discarding the raw `Accept-Post` fields available through
+`Response::header_value()` and `Response::header_values()`.
+
+This is response metadata only. `rttp_client` does not route `POST` requests,
+decode payloads, negotiate media types, choose a request method, retry, or
+automatically send a follow-up request.
+
 ## Bounded HTTP/1.1 conditional requests
 
 `HttpClient` includes bounded helpers for the common conditional request

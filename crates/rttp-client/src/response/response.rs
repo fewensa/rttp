@@ -39,6 +39,7 @@ use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
 use rttp_protocol::accept_patch::AcceptPatch;
+use rttp_protocol::accept_post::AcceptPost;
 use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_allow_credentials::AccessControlAllowCredentials;
 use rttp_protocol::access_control_allow_headers::AccessControlAllowHeaders;
@@ -99,7 +100,6 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
-const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
 const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
@@ -574,7 +574,9 @@ impl Response {
     if values.is_empty() {
       return Ok(None);
     }
-    AcceptPost::parse_values(values.into_iter().map(String::as_str)).map(Some)
+    AcceptPost::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses bounded `Accept-CH` response metadata without applying Client Hints policy.
@@ -1603,58 +1605,6 @@ impl Allow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AcceptPost {
-  media_types: Vec<ContentType>,
-}
-
-impl AcceptPost {
-  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  fn parse_values<'a, I>(values: I) -> error::Result<Self>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    Ok(Self {
-      media_types: parse_accepted_media_types(values, "Accept-Post")?,
-    })
-  }
-
-  pub fn media_types(&self) -> &[ContentType] {
-    &self.media_types
-  }
-}
-
-fn parse_accepted_media_types<'a, I>(values: I, header: &str) -> error::Result<Vec<ContentType>>
-where
-  I: IntoIterator<Item = &'a str>,
-{
-  let mut media_types = Vec::new();
-
-  for value in values {
-    if value.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
-      return Err(error::bad_response(format!(
-        "{header} header value is too large"
-      )));
-    }
-    for member in split_accepted_media_type_members(value)? {
-      if media_types.len() >= MAX_ACCEPT_MEDIA_TYPES {
-        return Err(error::bad_response(format!(
-          "Too many {header} media types"
-        )));
-      }
-      media_types.push(ContentType::parse(member)?);
-    }
-  }
-
-  if media_types.is_empty() {
-    return Err(error::bad_response(format!("Invalid {header} media type")));
-  }
-  Ok(media_types)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContentType {
   type_: String,
   subtype: String,
@@ -1806,52 +1756,6 @@ fn split_content_type_members(value: &str) -> error::Result<Vec<String>> {
   }
   push_content_type_member(&mut members, &current)?;
   Ok(members)
-}
-
-fn split_accepted_media_type_members(value: &str) -> error::Result<Vec<String>> {
-  let mut members = Vec::new();
-  let mut current = String::new();
-  let mut in_quote = false;
-  let mut escaped = false;
-
-  for ch in value.chars() {
-    if escaped {
-      current.push(ch);
-      escaped = false;
-      continue;
-    }
-
-    match ch {
-      '\\' if in_quote => {
-        current.push(ch);
-        escaped = true;
-      }
-      '"' => {
-        current.push(ch);
-        in_quote = !in_quote;
-      }
-      ',' if !in_quote => {
-        push_accepted_media_type_member(&mut members, &current)?;
-        current.clear();
-      }
-      _ => current.push(ch),
-    }
-  }
-
-  if in_quote || escaped {
-    return Err(error::bad_response("Invalid accepted media type"));
-  }
-  push_accepted_media_type_member(&mut members, &current)?;
-  Ok(members)
-}
-
-fn push_accepted_media_type_member(members: &mut Vec<String>, current: &str) -> error::Result<()> {
-  let member = current.trim();
-  if member.is_empty() {
-    return Err(error::bad_response("Invalid accepted media type"));
-  }
-  members.push(member.to_string());
-  Ok(())
 }
 
 fn push_content_type_member(members: &mut Vec<String>, member: &str) -> error::Result<()> {

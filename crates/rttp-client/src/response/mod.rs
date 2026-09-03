@@ -32,6 +32,7 @@ pub use rttp_protocol::accept_encoding::{
 pub use rttp_protocol::accept_patch::{
   AcceptPatch, AcceptPatchParseError, MediaType, MediaTypeParameter,
 };
+pub use rttp_protocol::accept_post::{AcceptPost, AcceptPostParseError};
 pub use rttp_protocol::accept_ranges::{AcceptRanges, AcceptRangesParseError};
 pub use rttp_protocol::access_control_allow_credentials::{
   AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
