@@ -18,21 +18,21 @@ use rttp::server::{
   HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError, HttpNel,
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
-  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
-  HttpSpeculationRulesParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
-  HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpReferer, HttpRefererParseError,
+  HttpRequestAcceptCharsets, HttpResponse, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecGpc,
+  HttpSecGpcParseError, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
+  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn,
+  HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
+  HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
+  HttpUpgradeParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -80,6 +80,24 @@ fn compatibility_facade_exports_from_metadata_types() {
   let from = rttp::From::parse("Ops Team <ops@example.test>").expect("From metadata should parse");
   assert_eq!("Ops Team <ops@example.test>", from.header_value());
   let _: rttp::FromParseError = rttp::From::parse("invalid").expect_err("invalid From should fail");
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_exports_referer_metadata_types() {
+  let absolute =
+    rttp::Referer::parse("https://shop.example/checkout?step=pay").expect("Referer should parse");
+  assert_eq!(
+    "https://shop.example/checkout?step=pay",
+    absolute.header_value()
+  );
+  let relative = rttp::Referer::parse("/checkout?step=pay").expect("relative Referer should parse");
+  assert_eq!("/checkout?step=pay", relative.header_value());
+  let scheme_relative =
+    rttp::Referer::parse("//cdn.example/lib.js").expect("scheme-relative Referer should parse");
+  assert_eq!("//cdn.example/lib.js", scheme_relative.header_value());
+  let _: rttp::RefererParseError = rttp::Referer::parse("https://example.test/path#frag")
+    .expect_err("fragment Referer should fail");
 }
 
 #[test]
@@ -410,6 +428,15 @@ fn compatibility_facade_exports_client_metadata_types() {
   let dnt: rttp::Dnt = rttp_client::Dnt::parse("1").expect("DNT should parse");
   let _: rttp::DntParseError =
     rttp_client::Dnt::parse("on").expect_err("invalid DNT should be rejected");
+  let referer: rttp::Referer =
+    rttp_client::Referer::parse("https://shop.example/checkout?step=pay")
+      .expect("Referer should parse");
+  let _: rttp::RefererParseError = rttp_client::Referer::parse("https://example.test/path#frag")
+    .expect_err("invalid Referer should be rejected");
+  assert_eq!(
+    "https://shop.example/checkout?step=pay",
+    referer.header_value()
+  );
   let sec_purpose: rttp::SecPurpose =
     rttp_client::SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
   let a_im: rttp::AIm =
@@ -1883,6 +1910,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
   let dnt: HttpDnt = HttpDnt::parse("1").expect("DNT should parse");
   let dnt_error: Result<HttpDnt, HttpDntParseError> = HttpDnt::parse("on");
+  let referer: HttpReferer =
+    HttpReferer::parse("https://shop.example/checkout?step=pay").expect("Referer should parse");
+  let referer_error: Result<HttpReferer, HttpRefererParseError> =
+    HttpReferer::parse("https://example.test/path#frag");
   let sec_gpc: HttpSecGpc = HttpSecGpc::parse("1").expect("Sec-GPC should parse");
   let _: HttpSecGpcParseError =
     HttpSecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
@@ -2079,6 +2110,11 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(save_data.header_value(), "on");
   assert_eq!(dnt.header_value(), "1");
   assert!(dnt_error.is_err());
+  assert_eq!(
+    referer.header_value(),
+    "https://shop.example/checkout?step=pay"
+  );
+  assert!(referer_error.is_err());
   assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(authorization.header_value(), "Bearer origin-token");

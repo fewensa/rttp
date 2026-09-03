@@ -1128,6 +1128,22 @@ This is syntax-only metadata. RTTP does not verify identity or ownership,
 apply privacy or authorization policy, assess deliverability, perform DNS or
 SMTP work, or send email.
 
+## Bounded Referer request metadata
+
+`HttpClient::referer(value)` validates and emits one canonical `Referer`
+request field through the shared `rttp_protocol::referer::Referer` type,
+replacing any existing case-insensitive `Referer` field before a socket is
+opened. The value is one RFC 9110 URI reference (`absolute-URI` /
+`partial-URI`), including absolute, relative, and scheme-relative forms,
+bounded to 64 KiB, with optional surrounding HTTP OWS. Fragments, malformed
+percent-encoding, interior whitespace, ASCII controls, empty, duplicate, and
+oversized values are rejected before connecting. `header(("Referer", value))`
+remains available when an application needs raw header control.
+
+This is syntax-only metadata. RTTP does not enforce `Referrer-Policy`, make
+trust decisions, apply CSRF protection, redact values, canonicalize URLs, or
+change redirect behavior.
+
 ## Bounded HTTP request control metadata
 
 `HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a bounded `TE`
@@ -1698,6 +1714,7 @@ header-block model.
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, request blocking, prefetch execution, or cache behavior |
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | DNT | `dnt` emits bounded `DNT: 0`/`DNT: 1` request metadata through the shared protocol `Dnt` type and rejects malformed or oversized input before connecting | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` emission, retries, or privacy-preference policy |
+| Referer | `referer` emits one bounded canonical `Referer` request field through the shared protocol type, replacing existing case-insensitive fields; absolute, relative, and scheme-relative URI references are accepted, and raw `header(("Referer", value))` remains available as a fallback | No `Referrer-Policy` enforcement, trust decisions, CSRF protection, redaction, URL canonicalization, or redirect behavior |
 | Sec-GPC | `sec_gpc` emits bounded `Sec-GPC: 1` request metadata through the shared protocol type | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
