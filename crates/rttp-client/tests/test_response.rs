@@ -55,6 +55,7 @@ fn assert_decoded_plaintext(response: &Response, expected: &[u8]) {
   assert!(response.header("Content-Encoding").is_none());
   assert!(response.header("Content-Length").is_none());
   assert!(response.content_encoding().unwrap().is_none());
+  assert!(response.content_length().is_none());
 }
 
 fn assert_decode_error(error: rttp_client::error::Error) {
@@ -5067,6 +5068,7 @@ fn test_content_encoding_runtime_decodes_only_single_supported_gzip_coding() {
   assert!(response.header("Content-Encoding").is_none());
   assert!(response.header("Content-Length").is_none());
   assert!(response.content_encoding().unwrap().is_none());
+  assert!(response.content_length().is_none());
   assert!(response
     .binary()
     .windows(b"Content-Encoding: gzip".len())
@@ -5145,6 +5147,7 @@ fn test_content_encoding_runtime_decodes_single_deflate_coding_case_insensitivel
   assert!(response.header("Content-Encoding").is_none());
   assert!(response.header("Content-Length").is_none());
   assert!(response.content_encoding().unwrap().is_none());
+  assert!(response.content_length().is_none());
   assert!(response
     .binary()
     .windows(b"Content-Encoding: DEFLATE".len())

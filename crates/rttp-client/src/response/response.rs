@@ -170,12 +170,29 @@ impl Response {
     content_length: Option<HttpContentLength>,
     max_body_bytes: usize,
   ) -> error::Result<Self> {
+    let raw = RawResponse::with_trailers_and_limit(url, binary, trailers, max_body_bytes)?;
+    let content_length = framed_content_length_after_decode(&raw, content_length);
     Ok(Self {
-      raw: RawResponse::with_trailers_and_limit(url, binary, trailers, max_body_bytes)?,
+      raw,
       informational_responses,
       content_length,
     })
   }
+}
+
+fn framed_content_length_after_decode(
+  raw: &RawResponse,
+  framed: Option<HttpContentLength>,
+) -> Option<HttpContentLength> {
+  let value = raw
+    .headers_get()
+    .iter()
+    .find(|header| header.name().eq_ignore_ascii_case("Content-Length"))?
+    .value();
+  framed.or_else(|| {
+    let parsed = value.trim_matches([' ', '\t']).parse().ok()?;
+    (parsed == raw.body_get().binary().len()).then_some(HttpContentLength::new(parsed))
+  })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

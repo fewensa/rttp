@@ -4947,6 +4947,7 @@ fn prior_knowledge_decodes_single_deflate_response() {
   assert_eq!(b"decoded", response.body().binary());
   assert!(response.header("Content-Encoding").is_none());
   assert!(response.header("Content-Length").is_none());
+  assert!(response.content_length().is_none());
 }
 
 #[test]
@@ -4982,6 +4983,7 @@ fn prior_knowledge_decodes_single_gzip_response() {
   assert_eq!(b"decoded", response.body().binary());
   assert!(response.header("Content-Encoding").is_none());
   assert!(response.header("Content-Length").is_none());
+  assert!(response.content_length().is_none());
 }
 
 fn spawn_initial_settings_peer(
