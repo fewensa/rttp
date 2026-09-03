@@ -37,10 +37,24 @@ fn raw_deflate_bytes(bytes: &[u8]) -> Vec<u8> {
 }
 
 fn encoded_response(encoding: &str, body: &[u8]) -> Vec<u8> {
-  let mut raw = format!("HTTP/1.1 200 OK\r\nContent-Encoding: {encoding}\r\n").into_bytes();
+  encoded_response_fields(&[encoding], body)
+}
+
+fn encoded_response_fields(encodings: &[&str], body: &[u8]) -> Vec<u8> {
+  let mut raw = b"HTTP/1.1 200 OK\r\n".to_vec();
+  for encoding in encodings {
+    raw.extend_from_slice(format!("Content-Encoding: {encoding}\r\n").as_bytes());
+  }
   raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
   raw.extend_from_slice(body);
   raw
+}
+
+fn assert_decoded_plaintext(response: &Response, expected: &[u8]) {
+  assert_eq!(expected, response.body().binary());
+  assert!(response.header("Content-Encoding").is_none());
+  assert!(response.header("Content-Length").is_none());
+  assert!(response.content_encoding().unwrap().is_none());
 }
 
 fn assert_decode_error(error: rttp_client::error::Error) {
@@ -5097,18 +5111,13 @@ fn test_content_encoding_runtime_rejects_malformed_single_gzip_body() {
 }
 
 #[test]
-fn test_content_encoding_runtime_leaves_stacked_or_unsupported_codings_undecoded() {
-  let raw = concat!(
-    "HTTP/1.1 200 OK\r\n",
-    "Content-Encoding: gzip, br\r\n",
-    "Content-Length: 7\r\n",
-    "\r\n",
-    "encoded"
-  );
-  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
-    .expect("stacked unsupported content-encoding should remain usable");
+fn test_content_encoding_runtime_leaves_unknown_mixed_codings_undecoded() {
+  let body = gzip_bytes(b"OK");
+  let raw = encoded_response("gzip, br", &body);
+  let response = Response::new(RoUrl::with("https://example.test"), raw)
+    .expect("unknown mixed content-encoding should remain usable");
 
-  assert_eq!("encoded", response.body().string().unwrap());
+  assert_eq!(body, response.body().binary());
   assert_eq!(
     vec!["gzip", "br"],
     response
@@ -5117,32 +5126,8 @@ fn test_content_encoding_runtime_leaves_stacked_or_unsupported_codings_undecoded
       .expect("content-encoding should be present")
       .codings()
   );
-}
-
-#[test]
-fn test_content_encoding_runtime_leaves_duplicate_gzip_fields_undecoded() {
-  let body = gzip_bytes(b"OK");
-  let mut raw = concat!(
-    "HTTP/1.1 200 OK\r\n",
-    "Content-Encoding: gzip\r\n",
-    "Content-Encoding: gzip\r\n"
-  )
-  .as_bytes()
-  .to_vec();
-  raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
-  raw.extend_from_slice(&body);
-
-  let response = Response::new(RoUrl::with("https://example.test"), raw)
-    .expect("duplicate gzip fields should remain usable");
-  let content_length = body.len().to_string();
-
-  assert_eq!(body, response.body().binary());
   assert_eq!(
-    vec![&"gzip".to_string(), &"gzip".to_string()],
-    response.header_values("Content-Encoding")
-  );
-  assert_eq!(
-    Some(content_length.as_str()),
+    Some(body.len().to_string().as_str()),
     response.header_value("Content-Length").map(String::as_str)
   );
 }
@@ -5232,25 +5217,168 @@ fn test_content_encoding_runtime_limits_decoded_deflate_body() {
 }
 
 #[test]
-fn test_content_encoding_runtime_leaves_stacked_deflate_undecoded() {
-  let body = zlib_bytes(b"OK");
-  let mut raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Encoding: deflate, gzip\r\n")
-    .as_bytes()
-    .to_vec();
-  raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
-  raw.extend_from_slice(&body);
+fn test_content_encoding_runtime_decodes_gzip_then_deflate_comma_list() {
+  let body = zlib_bytes(&gzip_bytes(b"OK"));
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("gzip, deflate", &body),
+  )
+  .expect("gzip then deflate stack should decode");
 
+  assert_decoded_plaintext(&response, b"OK");
+  assert!(response
+    .binary()
+    .windows(b"Content-Encoding: gzip, deflate".len())
+    .any(|window| window == b"Content-Encoding: gzip, deflate"));
+}
+
+#[test]
+fn test_content_encoding_runtime_decodes_deflate_then_gzip_comma_list() {
+  let body = gzip_bytes(&zlib_bytes(b"OK"));
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("deflate, gzip", &body),
+  )
+  .expect("deflate then gzip stack should decode");
+
+  assert_decoded_plaintext(&response, b"OK");
+}
+
+#[test]
+fn test_content_encoding_runtime_decodes_repeated_gzip_codings() {
+  let body = gzip_bytes(&gzip_bytes(b"OK"));
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("gzip, gzip", &body),
+  )
+  .expect("repeated gzip stack should decode");
+
+  assert_decoded_plaintext(&response, b"OK");
+}
+
+#[test]
+fn test_content_encoding_runtime_decodes_repeated_deflate_codings() {
+  let body = zlib_bytes(&zlib_bytes(b"OK"));
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("deflate, DEFLATE", &body),
+  )
+  .expect("repeated deflate stack should decode");
+
+  assert_decoded_plaintext(&response, b"OK");
+}
+
+#[test]
+fn test_content_encoding_runtime_decodes_repeated_gzip_header_fields() {
+  let body = gzip_bytes(&gzip_bytes(b"OK"));
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response_fields(&["gzip", "gzip"], &body),
+  )
+  .expect("repeated gzip fields should decode");
+
+  assert_decoded_plaintext(&response, b"OK");
+}
+
+#[test]
+fn test_content_encoding_runtime_decodes_mixed_header_fields_in_wire_order() {
+  let gzip_then_deflate = zlib_bytes(&gzip_bytes(b"OK"));
+  let gzip_then_deflate_response = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response_fields(&["gzip", "deflate"], &gzip_then_deflate),
+  )
+  .expect("gzip then deflate fields should decode");
+  assert_decoded_plaintext(&gzip_then_deflate_response, b"OK");
+
+  let deflate_then_gzip = gzip_bytes(&zlib_bytes(b"OK"));
+  let deflate_then_gzip_response = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response_fields(&["deflate", "gzip"], &deflate_then_gzip),
+  )
+  .expect("deflate then gzip fields should decode");
+  assert_decoded_plaintext(&deflate_then_gzip_response, b"OK");
+}
+
+#[test]
+fn test_content_encoding_runtime_rejects_malformed_outer_stacked_layer() {
+  let error = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("gzip, deflate", b"not-zlib"),
+  )
+  .expect_err("malformed outer stacked layer should fail");
+
+  assert_decode_error(error);
+}
+
+#[test]
+fn test_content_encoding_runtime_rejects_malformed_inner_stacked_layer() {
+  let error = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("gzip, deflate", &zlib_bytes(b"not-gzip")),
+  )
+  .expect_err("malformed inner stacked layer should fail");
+
+  assert_decode_error(error);
+}
+
+#[test]
+fn test_content_encoding_runtime_limits_decoded_stacked_body() {
+  let decoded = vec![b'a'; rttp_client::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES + 1];
+  let error = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("gzip, gzip", &gzip_bytes(&gzip_bytes(&decoded))),
+  )
+  .expect_err("oversized stacked decoded body should fail");
+
+  assert!(error.is_body_too_large(), "unexpected error: {error}");
+  assert_eq!(
+    Some(rttp_client::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES),
+    error.body_limit()
+  );
+}
+
+#[test]
+fn test_content_encoding_runtime_limits_intermediate_stacked_layer() {
+  let intermediate = vec![b'a'; rttp_client::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES + 1];
+  let error = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("deflate, gzip", &gzip_bytes(&intermediate)),
+  )
+  .expect_err("oversized intermediate stacked layer should fail");
+
+  assert!(error.is_body_too_large(), "unexpected error: {error}");
+  assert_eq!(
+    Some(rttp_client::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES),
+    error.body_limit()
+  );
+}
+
+#[test]
+fn test_content_encoding_runtime_accepts_exact_stacked_decoded_body_limit() {
+  let decoded = vec![b'a'; rttp_client::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES];
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    encoded_response("deflate, gzip", &gzip_bytes(&zlib_bytes(&decoded))),
+  )
+  .expect("exact stacked decoded body should decode");
+
+  assert_decoded_plaintext(&response, &decoded);
+}
+
+#[test]
+fn test_content_encoding_runtime_leaves_parse_invalid_stack_untouched() {
+  let body = gzip_bytes(b"OK");
+  let raw = encoded_response("gzip,", &body);
   let response = Response::new(RoUrl::with("https://example.test"), raw)
-    .expect("stacked deflate content-encoding should remain usable");
+    .expect("parse-invalid content-encoding should remain usable");
 
   assert_eq!(body, response.body().binary());
+  assert!(response.content_encoding().is_err());
   assert_eq!(
-    vec!["deflate", "gzip"],
+    Some("gzip,"),
     response
-      .content_encoding()
-      .expect("content-encoding should parse")
-      .expect("content-encoding should be present")
-      .codings()
+      .header_value("Content-Encoding")
+      .map(String::as_str)
   );
   assert_eq!(
     Some(body.len().to_string().as_str()),
