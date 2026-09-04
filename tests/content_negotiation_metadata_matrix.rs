@@ -670,14 +670,10 @@ fn sync_and_async_clients_parse_shared_vary_fixture_matrix() {
 #[test]
 fn sync_and_async_clients_parse_shared_content_language_fixture_matrix() {
   for case in fixtures::content_language::response_cases() {
-    let response = HttpResponse::ok("OK")
-      .with_content_language(case.languages)
-      .unwrap_or_else(|err| {
-        panic!(
-          "{} Content-Language declaration should be accepted: {err}",
-          case.name
-        )
-      });
+    let mut response = HttpResponse::ok("OK");
+    for value in case.values {
+      response = response.header("Content-Language", *value);
+    }
     let (addr, _observed_rx, handle) =
       spawn_observed_facade_server(|_| (), move |_| response.clone());
 
@@ -693,14 +689,10 @@ fn sync_and_async_clients_parse_shared_content_language_fixture_matrix() {
 
     #[cfg(feature = "async")]
     {
-      let response = HttpResponse::ok("OK")
-        .with_content_language(case.languages)
-        .unwrap_or_else(|err| {
-          panic!(
-            "{} Content-Language declaration should be accepted: {err}",
-            case.name
-          )
-        });
+      let mut response = HttpResponse::ok("OK");
+      for value in case.values {
+        response = response.header("Content-Language", *value);
+      }
       let (addr, _observed_rx, handle) =
         spawn_observed_facade_server(|_| (), move |_| response.clone());
       let async_response = block_on(async {
