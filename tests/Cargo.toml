@@ -37,5 +37,9 @@ name = "metadata_http11_interoperability_matrix"
 path = "metadata_http11_interoperability_matrix.rs"
 
 [[test]]
+name = "content_negotiation_metadata_matrix"
+path = "content_negotiation_metadata_matrix.rs"
+
+[[test]]
 name = "response_decoding_transport_matrix"
 path = "response_decoding_transport_matrix.rs"
