@@ -42,6 +42,7 @@ pub use rttp_protocol::alternates::{
 };
 pub use rttp_protocol::authentication_info::{
   AuthenticationInfo as HttpAuthenticationInfo,
+  AuthenticationInfoParameter as HttpAuthenticationInfoParameter,
   AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
 };
 pub use rttp_protocol::cache_status::{
@@ -172,8 +173,15 @@ pub use rttp_protocol::priority::{
   Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
   PriorityParseError as HttpPriorityParseError,
 };
+pub use rttp_protocol::proxy_authenticate::{
+  ProxyAuthenticate as HttpProxyAuthenticate,
+  ProxyAuthenticateChallenge as HttpProxyAuthenticateChallenge,
+  ProxyAuthenticateParameter as HttpProxyAuthenticateParameter,
+  ProxyAuthenticateParseError as HttpProxyAuthenticateParseError,
+};
 pub use rttp_protocol::proxy_authentication_info::{
   ProxyAuthenticationInfo as HttpProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParameter as HttpProxyAuthenticationInfoParameter,
   ProxyAuthenticationInfoParseError as HttpProxyAuthenticationInfoParseError,
 };
 pub use rttp_protocol::proxy_status::{
@@ -1782,6 +1790,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Proxy-Authenticate` response metadata.
+  pub fn with_proxy_authenticate(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpProxyAuthenticateParseError> {
+    let challenges = HttpProxyAuthenticate::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Proxy-Authenticate"));
+    self.headers.push(HttpHeader::new(
+      "Proxy-Authenticate",
+      challenges.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Authentication-Info` response metadata.
   pub fn with_authentication_info(
     mut self,
@@ -3159,6 +3183,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpWwwAuthenticate::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Proxy-Authenticate` response metadata without changing
+  /// raw headers or selecting a proxy authentication challenge.
+  pub fn proxy_authenticate(
+    &self,
+  ) -> Result<Option<HttpProxyAuthenticate>, HttpProxyAuthenticateParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Proxy-Authenticate"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpProxyAuthenticate::parse_values(values).map(Some)
   }
 
   /// Parses attached `Authentication-Info` response metadata without changing

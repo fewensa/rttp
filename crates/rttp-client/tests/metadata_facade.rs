@@ -4,35 +4,38 @@ use rttp_client::response::{
   AccessControlAllowHeadersParseError, AccessControlAllowMethods,
   AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AltUsed, AltUsedParseError,
-  AuthenticationInfo, AuthenticationInfoParseError, CacheStatus, CacheStatusParseError, Connection,
-  ConnectionParseError, ContentDpr, ContentDprParseError, ContentRange, ContentRangeParseError,
-  ContentSecurityPolicy, ContentSecurityPolicyParseError, ContentSecurityPolicyReportOnly,
-  ContentSecurityPolicyReportOnlyParseError, CrossOriginEmbedderPolicy,
-  CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginOpenerPolicyReportOnly,
-  CrossOriginResourcePolicy, DeltaBase, DeltaBaseParseError, Digest, DocumentPolicy,
-  DocumentPolicyParseError, DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError,
-  DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag, HttpClearSiteData,
-  HttpContentLength, HttpCookieParseError, HttpSameSite, HttpSetCookie, HttpSetCookies, Im,
-  ImMember, ImParameter, ImParseError, KeepAlive, LinkValues, Location, LocationParseError,
-  LockToken, LockTokenParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
-  NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
-  PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
-  Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
-  ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, RateLimitLimit,
-  RateLimitLimitItem, RateLimitLimitParseError, RateLimitParseError, RateLimitRemaining,
-  RateLimitRemainingParseError, RateLimitReset, RateLimitResetParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ResponseDate, ResponseDateParseError, ResponseExpires,
-  ResponseExpiresParseError, ResponseLastModified, ResponseLastModifiedParseError, RetryAfter,
-  RetryAfterParseError, ScheduleTag, SecWebSocketAccept, SecWebSocketAcceptParseError,
-  SecWebSocketExtensions, SecWebSocketExtensionsParseError, SecWebSocketProtocol,
-  SecWebSocketProtocolParseError, SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming,
-  Signature, SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
-  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  SupportsLoadingMode, SupportsLoadingModeParseError, SurrogateControl, SurrogateControlParseError,
-  Trailer, TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary,
+  AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError, CacheStatus,
+  CacheStatusParseError, Connection, ConnectionParseError, ContentDpr, ContentDprParseError,
+  ContentRange, ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
+  ContentSecurityPolicyReportOnly, ContentSecurityPolicyReportOnlyParseError,
+  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
+  CrossOriginOpenerPolicyReportOnly, CrossOriginResourcePolicy, DeltaBase, DeltaBaseParseError,
+  Digest, DocumentPolicy, DocumentPolicyParseError, DocumentPolicyReportOnly,
+  DocumentPolicyReportOnlyParseError, DocumentPolicyReportOnlyValue, DocumentPolicyValue,
+  EntityTag, HttpClearSiteData, HttpContentLength, HttpCookieParseError, HttpSameSite,
+  HttpSetCookie, HttpSetCookies, Im, ImMember, ImParameter, ImParseError, KeepAlive, LinkValues,
+  Location, LocationParseError, LockToken, LockTokenParseError, MementoDatetime,
+  MementoDatetimeParseError, Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
+  OriginTrialParseError, OriginTrials, PermissionsPolicy, PermissionsPolicyParseError, Pragma,
+  PragmaParseError, PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateChallenge,
+  ProxyAuthenticateParameter, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParameter, ProxyAuthenticationInfoParseError, ProxyStatus,
+  ProxyStatusParseError, RateLimitLimit, RateLimitLimitItem, RateLimitLimitParseError,
+  RateLimitParseError, RateLimitRemaining, RateLimitRemainingParseError, RateLimitReset,
+  RateLimitResetParseError, ReferrerPolicy, ReferrerPolicyToken, ResponseDate,
+  ResponseDateParseError, ResponseExpires, ResponseExpiresParseError, ResponseLastModified,
+  ResponseLastModifiedParseError, RetryAfter, RetryAfterParseError, ScheduleTag,
+  SecWebSocketAccept, SecWebSocketAcceptParseError, SecWebSocketExtensions,
+  SecWebSocketExtensionsParseError, SecWebSocketProtocol, SecWebSocketProtocolParseError,
+  SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput,
+  SignatureInputParseError, SignatureParseError, SpeculationRules, SpeculationRulesParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
+  SupportsLoadingModeParseError, SurrogateControl, SurrogateControlParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary,
   VariantVaryParseError, Vary, VaryParseError, Via, ViaParseError, WantContentDigest,
-  WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter,
+  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
+  XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -415,19 +418,25 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Authentication-Info should parse");
   let _: AuthenticationInfoParseError =
     AuthenticationInfo::parse("").expect_err("empty Authentication-Info should be rejected");
+  let _: &[AuthenticationInfoParameter] = authentication_info.parameters();
   let proxy_authentication_info =
     ProxyAuthenticationInfo::parse(r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth"#)
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let _: &[ProxyAuthenticationInfoParameter] = proxy_authentication_info.parameters();
   let www_authenticate =
     WwwAuthenticate::parse("Basic realm=\"users\"").expect("WWW-Authenticate should parse");
   let _: WwwAuthenticateParseError = WwwAuthenticate::parse("Basic realm=\"")
     .expect_err("malformed WWW-Authenticate should be rejected");
+  let _: &[WwwAuthenticateChallenge] = www_authenticate.challenges();
+  let _: &[WwwAuthenticateParameter] = www_authenticate.challenges()[0].parameters();
   let proxy_authenticate =
     ProxyAuthenticate::parse(r#"Basic realm="corp""#).expect("Proxy-Authenticate should parse");
   let _: ProxyAuthenticateParseError =
     ProxyAuthenticate::parse("").expect_err("empty Proxy-Authenticate should be rejected");
+  let _: &[ProxyAuthenticateChallenge] = proxy_authenticate.challenges();
+  let _: &[ProxyAuthenticateParameter] = proxy_authenticate.challenges()[0].parameters();
   let proxy_status =
     ProxyStatus::parse("ExampleCDN; error=connection_timeout").expect("Proxy-Status should parse");
   let _: ProxyStatusParseError =
