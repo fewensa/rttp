@@ -45,18 +45,17 @@ use rttp_client::response::{
 use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, AcceptDatetime, AcceptDatetimeParseError, Baggage,
   BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
-  DestinationParseError, Dnt, DntParseError, From, FromParseError, HttpClient, If, IfCondition,
-  IfList, IfParseError, IfPredicate, IfResourceTag, IfScheduleTagMatch,
-  IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective, NegotiateParseError,
-  Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc,
-  SecGpcParseError, SecPurpose, Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError,
-  TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
-  TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
-  Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError,
-  XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  DestinationParseError, Dnt, DntParseError, Expect, ExpectParseError, From, FromParseError,
+  HttpClient, If, IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag,
+  IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective,
+  NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, SecWebSocketKey, SecWebSocketKeyParseError,
+  Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError, TimeoutType, TraceParent,
+  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
+  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, Via as ClientVia,
+  ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError, XForwardedHost,
+  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
-use rttp_protocol::expect::Expect;
-use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_test_support as support;
 
 #[test]
@@ -88,6 +87,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: AgeParseError = Age::parse("").expect_err("empty Age should be rejected");
   let sec_websocket_key =
     SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+  let _: SecWebSocketKeyParseError = SecWebSocketKey::parse("the sample nonce")
+    .expect_err("invalid Sec-WebSocket-Key should be rejected");
   let sec_websocket_accept = SecWebSocketAccept::derive_from_key(&sec_websocket_key);
   let _: SecWebSocketAcceptParseError =
     SecWebSocketAccept::parse("the accept value").expect_err("invalid accept should be rejected");
@@ -1476,8 +1477,10 @@ fn client_expect_continue_uses_the_shared_protocol_singleton() {
   assert!(mixed.expects_continue());
   assert_eq!(["preview"], mixed.unsupported());
 
-  assert!(Expect::parse("100-continue, 100-CONTINUE").is_err());
-  assert!(Expect::parse("not a token").is_err());
+  let _: ExpectParseError = Expect::parse("100-continue, 100-CONTINUE")
+    .expect_err("duplicate Expect continue should be rejected");
+  let _: ExpectParseError =
+    Expect::parse("not a token").expect_err("invalid Expect token should be rejected");
   assert!(
     Expect::parse("tea-time")
       .expect("unsupported names parse")

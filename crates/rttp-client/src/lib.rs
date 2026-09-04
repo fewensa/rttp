@@ -137,6 +137,7 @@ pub use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};
 pub use rttp_protocol::depth::{Depth, DepthParseError};
 pub use rttp_protocol::destination::{Destination, DestinationParseError};
 pub use rttp_protocol::dnt::{Dnt, DntParseError};
+pub use rttp_protocol::expect::{Expect, ExpectParseError};
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
@@ -155,6 +156,7 @@ pub use rttp_protocol::sec_websocket_extensions::{
   SecWebSocketExtension, SecWebSocketExtensionParameter, SecWebSocketExtensionParameterValue,
   SecWebSocketExtensions, SecWebSocketExtensionsParseError,
 };
+pub use rttp_protocol::sec_websocket_key::{SecWebSocketKey, SecWebSocketKeyParseError};
 pub use rttp_protocol::sec_websocket_protocol::{
   SecWebSocketProtocol, SecWebSocketProtocolParseError,
 };
