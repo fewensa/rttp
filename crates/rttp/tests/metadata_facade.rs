@@ -1,7 +1,8 @@
 use rttp::server::{
   HttpAIm, HttpAImParseError, HttpAccept, HttpAcceptCh, HttpAcceptCharsetParseError,
   HttpAcceptDatetime, HttpAcceptDatetimeParseError, HttpAcceptLanguageParseError,
-  HttpAcceptLanguages, HttpAcceptParseError, HttpAccessControlRequestMethod,
+  HttpAcceptLanguages, HttpAcceptParseError, HttpAcceptPatch, HttpAcceptPatchParseError,
+  HttpAcceptPost, HttpAcceptPostParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestPrivateNetwork, HttpAltUsed, HttpAltUsedParseError, HttpAlternates,
   HttpAlternatesParseError, HttpAuthorization, HttpBaggage, HttpBaggageMember,
   HttpBaggageParseError, HttpBaggageProperty, HttpCdnLoop, HttpCdnLoopParseError,
@@ -11,14 +12,15 @@ use rttp::server::{
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeltaBase, HttpDeltaBaseParseError, HttpDeprecation,
   HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDestination,
-  HttpDestinationParseError, HttpDnt, HttpDntParseError, HttpEntityTag, HttpExpectations,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfModifiedSince,
-  HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken,
-  HttpLockTokenParseError, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError, HttpNel,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpDestinationParseError, HttpDnt, HttpDntParseError, HttpEntityTag, HttpExpectations, HttpFrom,
+  HttpFromParseError, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf,
+  HttpIfModifiedSince, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError,
+  HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards, HttpMediaType,
+  HttpMediaTypeParameter, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
+  HttpNegotiateDirective, HttpNegotiateParseError, HttpNel, HttpOriginTrialParseError,
+  HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError,
+  HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSameSite, HttpSaveData,
@@ -1869,6 +1871,19 @@ fn client_accept_encoding_helpers_parse_through_shared_server_type() {
 
 #[test]
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
+  let _: HttpFrom = HttpFrom::parse("Ops Team <ops@example.test>").expect("From should parse");
+  let _: HttpFromParseError = HttpFrom::parse("invalid").expect_err("invalid From should fail");
+  let accept_patch: HttpAcceptPatch =
+    HttpAcceptPatch::parse("text/plain; charset=utf-8").expect("Accept-Patch should parse");
+  let _: &[HttpMediaType] = accept_patch.media_types();
+  let _: &[HttpMediaTypeParameter] = accept_patch.media_types()[0].parameters();
+  let _: HttpAcceptPatchParseError =
+    HttpAcceptPatch::parse("application/json,").expect_err("invalid Accept-Patch should fail");
+  let _: HttpAcceptPost =
+    HttpAcceptPost::parse("application/json").expect("Accept-Post should parse");
+  let _: HttpAcceptPostParseError =
+    HttpAcceptPost::parse("application/json,").expect_err("invalid Accept-Post should fail");
+
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let a_im: HttpAIm =
     HttpAIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
