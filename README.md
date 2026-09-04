@@ -190,6 +190,29 @@ This is metadata-only behavior. RTTP does not route `POST` requests, decode
 payloads, negotiate media types, choose a method, retry, or automatically
 send a follow-up request.
 
+### Bounded RateLimit response metadata
+
+`Response::rate_limit_limit()` parses repeated `RateLimit-Limit` response
+fields through the shared `RateLimitLimit` type, flattening structured-field
+list items in wire order. Each `RateLimitLimitItem` exposes its numeric limit
+and optional `w` window. `Response::rate_limit_remaining()` and
+`Response::rate_limit_reset()` parse the singleton `RateLimit-Remaining` and
+`RateLimit-Reset` fields into their corresponding bounded typed values. The
+client response module and the `rttp` facade re-export all three value types,
+their item type, and their typed parse-error aliases.
+
+Each raw field value is limited to 64 KiB, and every limit, window, remaining,
+and reset integer must fit in `u64`. Repeated limit fields and duplicate limit
+items are retained in order; duplicate singleton fields, malformed structured
+fields, controls, and overflow return a typed response error. Absent fields
+return `Ok(None)`, and raw fields remain available through
+`Response::header_value()` and `Response::header_values()` after a parse
+failure.
+
+These helpers expose response metadata only. RTTP does not select a limit
+window, enforce quotas, sleep, retry, schedule work, or apply rate-limit
+policy.
+
 ### Bounded HTTP/1.1 conditional requests
 
 `HttpClient` can emit common conditional validators with
@@ -2189,6 +2212,29 @@ error without removing the raw response headers.
 These helpers only declare and inspect metadata. RTTP does not route `POST`
 requests, decode payloads, negotiate media types, select a request method, or
 automatically apply or send a follow-up request.
+
+### Bounded RateLimit response metadata
+
+`HttpResponse::with_rate_limit_limit(value)`,
+`with_rate_limit_remaining(value)`, and `with_rate_limit_reset(value)` declare
+the three typed `RateLimit-*` response fields through the shared protocol
+values. Each helper removes existing same-name fields case-insensitively and
+adds one canonical field. `HttpResponse::rate_limit_limit()`,
+`rate_limit_remaining()`, and `rate_limit_reset()` inspect attached fields
+through the same typed values and parse-error aliases exposed as
+`HttpRateLimitLimit`, `HttpRateLimitRemaining`, `HttpRateLimitReset`, and
+their related item and error names.
+
+Each raw field value is limited to 64 KiB, and limit, window, remaining, and
+reset integers must fit in `u64`. Repeated `RateLimit-Limit` fields are
+flattened in wire order; duplicate `RateLimit-Remaining` or
+`RateLimit-Reset` fields are rejected. Malformed structured fields, controls,
+overflow, and oversized values return typed errors while raw response fields
+remain available.
+
+These helpers only declare and inspect response metadata. RTTP does not
+enforce quotas, select a limit window, sleep, retry, schedule work, or apply
+rate-limit policy.
 
 ### Bounded HTTP/1.1 conditional requests
 

@@ -33,23 +33,26 @@ use rttp_server::server::{
   HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpReferer, HttpRefererParseError, HttpRequest,
-  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpResponseDate,
-  HttpResponseDateParseError, HttpResponseExpires, HttpResponseLastModified,
-  HttpResponseLastModifiedParseError, HttpRetryAfter, HttpRetryAfterParseError, HttpSameSite,
-  HttpSaveData, HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
-  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
-  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
-  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
-  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
-  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
+  HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
+  HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
+  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
+  HttpRetryAfterParseError, HttpSameSite, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag,
+  HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
+  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
+  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
+  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
   HttpVariantVaryParseError, HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest,
   HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
@@ -359,6 +362,25 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpRetryAfterParseError =
     HttpRetryAfter::parse("").expect_err("empty Retry-After should be rejected");
   let retry_after_response = HttpResponse::ok("").with_retry_after_delta(120);
+  let rate_limit_limit = HttpRateLimitLimit::new([
+    HttpRateLimitLimitItem::new(100),
+    HttpRateLimitLimitItem::new(50).with_window(3_600),
+  ]);
+  let _: HttpRateLimitLimitParseError =
+    HttpRateLimitLimit::parse("100, (50)").expect_err("malformed RateLimit-Limit should fail");
+  let _: HttpRateLimitRemainingParseError =
+    HttpRateLimitRemaining::parse("1, 2").expect_err("duplicate RateLimit-Remaining should fail");
+  let _: HttpRateLimitResetParseError =
+    HttpRateLimitReset::parse("1, 2").expect_err("duplicate RateLimit-Reset should fail");
+  let _: HttpRateLimitParseError =
+    HttpRateLimitLimit::parse("100, (50)").expect_err("shared RateLimit parse error should fail");
+  let rate_limit_response = HttpResponse::ok("")
+    .with_rate_limit_limit(rate_limit_limit)
+    .expect("RateLimit-Limit declaration should parse")
+    .with_rate_limit_remaining(HttpRateLimitRemaining::new(0))
+    .expect("RateLimit-Remaining declaration should parse")
+    .with_rate_limit_reset(HttpRateLimitReset::new(0))
+    .expect("RateLimit-Reset declaration should parse");
   let response_date =
     HttpResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Date should parse");
   let _: HttpResponseDateParseError =
@@ -848,6 +870,24 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("Retry-After should be present"),
     HttpRetryAfter::DeltaSeconds(120)
   );
+  assert_eq!(
+    rate_limit_response
+      .rate_limit_limit()
+      .expect("RateLimit-Limit should parse")
+      .expect("RateLimit-Limit should be present")
+      .header_value(),
+    "100, 50;w=3600"
+  );
+  assert!(rate_limit_response
+    .rate_limit_remaining()
+    .expect("RateLimit-Remaining should parse")
+    .expect("RateLimit-Remaining should be present")
+    .is_exhausted());
+  assert!(rate_limit_response
+    .rate_limit_reset()
+    .expect("RateLimit-Reset should parse")
+    .expect("RateLimit-Reset should be present")
+    .is_immediate());
   assert_eq!(
     Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777)),
     http_date_response.date().expect("Date should parse")

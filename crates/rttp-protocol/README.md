@@ -297,6 +297,28 @@ dates, unsupported time zones, and forbidden ASCII control bytes are errors.
 The client and server facades reuse this shared primitive as metadata only;
 they do not sleep, retry, replay, back off, schedule work, calculate cache
 freshness, or decide status-code retry policy.
+
+## RateLimit
+
+`rate_limit` owns the bounded, policy-free syntax for the
+`RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` response
+fields. `RateLimitLimit::parse_values` combines repeated fields in wire order
+as a structured-field list. Each item contains a non-negative `u64` limit and
+may contain a non-negative `u64` `w` window; `RateLimitLimitItem::new` and
+`with_window` construct the same representation. Duplicate limit items are
+retained, and `header_value()` emits the canonical list form.
+
+`RateLimitRemaining` and `RateLimitReset` parse one structured integer field
+each. Their `parse_values` methods reject duplicate fields, while their
+`new`, `value`, and `header_value` methods provide typed construction and
+canonical decimal serialization. All three field values are limited to 64
+KiB, integer overflow and malformed structured fields are rejected, and the
+typed aliases `RateLimitLimitParseError`, `RateLimitRemainingParseError`, and
+`RateLimitResetParseError` share `RateLimitParseError`.
+
+These types report response metadata only. They do not select a window,
+enforce quotas, sleep, retry, schedule work, or apply rate-limit policy.
+
 ## Response HTTP-date metadata
 
 `http_date` parses singleton `Date`, `Expires`, and `Last-Modified` response

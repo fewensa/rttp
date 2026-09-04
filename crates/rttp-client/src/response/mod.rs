@@ -162,6 +162,10 @@ pub use rttp_protocol::proxy_status::{
   ProxyStatusParseError,
 };
 pub use rttp_protocol::range::{ContentRange, ContentRangeParseError};
+pub use rttp_protocol::rate_limit::{
+  RateLimitLimit, RateLimitLimitItem, RateLimitLimitParseError, RateLimitParseError,
+  RateLimitRemaining, RateLimitRemainingParseError, RateLimitReset, RateLimitResetParseError,
+};
 pub use rttp_protocol::referrer_policy::{
   ReferrerPolicy, ReferrerPolicyParseError, ReferrerPolicyToken,
 };

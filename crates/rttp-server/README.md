@@ -666,6 +666,30 @@ These helpers only declare and inspect response metadata. RTTP does not route
 `POST` requests, decode payloads, negotiate media types, select a method, or
 automatically apply or send a follow-up request.
 
+## RateLimit response metadata
+
+`HttpResponse::with_rate_limit_limit(value)`,
+`with_rate_limit_remaining(value)`, and `with_rate_limit_reset(value)` declare
+typed `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` response
+fields through the shared protocol values. Each helper removes existing
+same-name fields case-insensitively and adds one canonical field.
+`HttpResponse::rate_limit_limit()`, `rate_limit_remaining()`, and
+`rate_limit_reset()` inspect attached fields through the same values. The
+server module exposes `HttpRateLimitLimit`, `HttpRateLimitLimitItem`,
+`HttpRateLimitRemaining`, `HttpRateLimitReset`, and their typed parse-error
+aliases, including the shared `HttpRateLimitParseError` name.
+
+Each raw field value is limited to 64 KiB, and limit, window, remaining, and
+reset integers must fit in `u64`. Repeated `RateLimit-Limit` fields are
+flattened in wire order; duplicate `RateLimit-Remaining` or
+`RateLimit-Reset` fields are rejected. Malformed structured fields, controls,
+overflow, and oversized values return typed errors without removing raw
+response fields.
+
+These helpers only declare and inspect metadata. `rttp-server` does not
+enforce quotas, select a limit window, sleep, retry, schedule work, or apply
+rate-limit policy.
+
 ## Content-Disposition response metadata
 
 `HttpResponse::with_content_disposition(value)` validates one
