@@ -2509,6 +2509,46 @@ fn via_compatibility_facade_exports_client_type() {
   assert_eq!(Some("HTTP"), member.protocol_name());
 }
 
+#[cfg(feature = "client")]
+#[test]
+fn cache_metadata_compatibility_facade_exports_public_types() {
+  let age: rttp::Age = rttp::Age::parse("0").expect("Age should parse");
+  let _: rttp::AgeParseError = rttp::Age::parse("").expect_err("invalid Age should be rejected");
+  assert_eq!("0", age.header_value());
+
+  let cache_control: rttp::CacheControl =
+    rttp_client::response::CacheControl::parse("extension=\"quoted value\"")
+      .expect("Cache-Control should parse");
+  let _: &rttp::CacheControlExtension = &cache_control.extensions()[0];
+  let cache_status: rttp::CacheStatus =
+    rttp_client::response::CacheStatus::parse("OriginCache").expect("Cache-Status should parse");
+  let _: &rttp::CacheStatusMember = &cache_status.members()[0];
+  let cdn_cache_control: rttp::CdnCacheControl =
+    rttp_client::response::CdnCacheControl::parse("max-age=0")
+      .expect("CDN-Cache-Control should parse");
+  assert_eq!("max-age=0", cdn_cache_control.header_value());
+  let warning: rttp::Warning =
+    rttp::Warning::parse(r#"000 - "zero""#).expect("Warning should parse");
+  let _: &rttp::WarningValue = &warning.items()[0];
+
+  let response = HttpResponse::ok("")
+    .header("Cache-Control", "max-age=0")
+    .header("CDN-Cache-Control", "max-age=0")
+    .header("Cache-Status", "OriginCache")
+    .with_age(0);
+  let _: Result<
+    Option<rttp::server::HttpResponseCacheControl>,
+    rttp::server::HttpCacheControlParseError,
+  > = response.cache_control();
+  let _: Result<
+    Option<rttp::server::HttpCdnCacheControl>,
+    rttp::server::HttpCdnCacheControlParseError,
+  > = response.cdn_cache_control();
+  let _: Result<Option<rttp::server::HttpCacheStatus>, rttp::server::HttpCacheStatusParseError> =
+    response.cache_status();
+  let _: Result<Option<u64>, rttp::server::HttpAgeParseError> = response.age();
+}
+
 #[test]
 fn set_cookie_facade_reuses_protocol_type_across_server_and_client() {
   let session = HttpSetCookie::new("session", "abc def")
