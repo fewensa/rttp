@@ -2418,35 +2418,49 @@ impl HttpResponse {
     self
   }
 
-  pub fn with_rate_limit_limit(mut self, limit: HttpRateLimitLimit) -> Self {
+  pub fn with_rate_limit_limit(
+    mut self,
+    limit: HttpRateLimitLimit,
+  ) -> Result<Self, HttpRateLimitLimitParseError> {
+    let header_value = limit.header_value();
+    HttpRateLimitLimit::parse(&header_value)?;
     self
       .headers
       .retain(|header| !header.name.eq_ignore_ascii_case("RateLimit-Limit"));
     self
       .headers
-      .push(HttpHeader::new("RateLimit-Limit", limit.header_value()));
-    self
+      .push(HttpHeader::new("RateLimit-Limit", header_value));
+    Ok(self)
   }
 
-  pub fn with_rate_limit_remaining(mut self, remaining: HttpRateLimitRemaining) -> Self {
+  pub fn with_rate_limit_remaining(
+    mut self,
+    remaining: HttpRateLimitRemaining,
+  ) -> Result<Self, HttpRateLimitRemainingParseError> {
+    let header_value = remaining.header_value();
+    HttpRateLimitRemaining::parse(&header_value)?;
     self
       .headers
       .retain(|header| !header.name.eq_ignore_ascii_case("RateLimit-Remaining"));
-    self.headers.push(HttpHeader::new(
-      "RateLimit-Remaining",
-      remaining.header_value(),
-    ));
     self
+      .headers
+      .push(HttpHeader::new("RateLimit-Remaining", header_value));
+    Ok(self)
   }
 
-  pub fn with_rate_limit_reset(mut self, reset: HttpRateLimitReset) -> Self {
+  pub fn with_rate_limit_reset(
+    mut self,
+    reset: HttpRateLimitReset,
+  ) -> Result<Self, HttpRateLimitResetParseError> {
+    let header_value = reset.header_value();
+    HttpRateLimitReset::parse(&header_value)?;
     self
       .headers
       .retain(|header| !header.name.eq_ignore_ascii_case("RateLimit-Reset"));
     self
       .headers
-      .push(HttpHeader::new("RateLimit-Reset", reset.header_value()));
-    self
+      .push(HttpHeader::new("RateLimit-Reset", header_value));
+    Ok(self)
   }
 
   pub fn trailers(&self) -> &[HttpHeader] {

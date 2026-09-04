@@ -1,8 +1,11 @@
+use rttp_protocol::rate_limit::MAX_RATE_LIMIT_VALUE_BYTES;
 use rttp_server::server::{
   HttpRateLimitLimit, HttpRateLimitLimitItem, HttpRateLimitLimitParseError,
   HttpRateLimitParseError, HttpRateLimitRemaining, HttpRateLimitRemainingParseError,
   HttpRateLimitReset, HttpRateLimitResetParseError, HttpResponse,
 };
+
+const MAX_STRUCTURED_INTEGER: u64 = 999_999_999_999_999;
 
 fn header_values<'a>(message: &'a str, name: &str) -> Vec<&'a str> {
   message
@@ -29,8 +32,12 @@ fn response_rate_limit_builders_serialize_typed_values_and_replace_fields() {
       HttpRateLimitLimitItem::new(100),
       HttpRateLimitLimitItem::new(50).with_window(3_600),
     ]))
+    .expect("RateLimit-Limit declaration should parse")
     .with_rate_limit_remaining(HttpRateLimitRemaining::new(0))
-    .with_rate_limit_reset(HttpRateLimitReset::new(0));
+    .expect("RateLimit-Remaining declaration should parse")
+    .with_rate_limit_reset(HttpRateLimitReset::new(0))
+    .expect("RateLimit-Reset declaration should parse");
+
   let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
 
   assert_eq!(
@@ -83,6 +90,116 @@ fn response_rate_limit_accessors_flatten_list_fields_and_keep_duplicates() {
       .map(|item| (item.value(), item.window()))
       .collect::<Vec<_>>()
   );
+}
+
+#[test]
+fn response_rate_limit_builders_round_trip_at_structured_field_boundaries() {
+  let response = HttpResponse::ok("")
+    .with_rate_limit_limit(HttpRateLimitLimit::new([HttpRateLimitLimitItem::new(
+      MAX_STRUCTURED_INTEGER,
+    )
+    .with_window(MAX_STRUCTURED_INTEGER)]))
+    .expect("maximum RateLimit-Limit integers should parse")
+    .with_rate_limit_remaining(HttpRateLimitRemaining::new(MAX_STRUCTURED_INTEGER))
+    .expect("maximum RateLimit-Remaining integer should parse")
+    .with_rate_limit_reset(HttpRateLimitReset::new(MAX_STRUCTURED_INTEGER))
+    .expect("maximum RateLimit-Reset integer should parse");
+
+  assert_eq!(
+    Some(HttpRateLimitLimit::new([HttpRateLimitLimitItem::new(
+      MAX_STRUCTURED_INTEGER,
+    )
+    .with_window(MAX_STRUCTURED_INTEGER)])),
+    response
+      .rate_limit_limit()
+      .expect("RateLimit-Limit should parse")
+  );
+  assert_eq!(
+    Some(HttpRateLimitRemaining::new(MAX_STRUCTURED_INTEGER)),
+    response
+      .rate_limit_remaining()
+      .expect("RateLimit-Remaining should parse")
+  );
+  assert_eq!(
+    Some(HttpRateLimitReset::new(MAX_STRUCTURED_INTEGER)),
+    response
+      .rate_limit_reset()
+      .expect("RateLimit-Reset should parse")
+  );
+
+  let max_items = MAX_RATE_LIMIT_VALUE_BYTES.div_ceil(3);
+  let limit = HttpRateLimitLimit::new(std::iter::repeat_n(
+    HttpRateLimitLimitItem::new(0),
+    max_items,
+  ));
+  assert_eq!(MAX_RATE_LIMIT_VALUE_BYTES, limit.header_value().len());
+  let response = HttpResponse::ok("")
+    .with_rate_limit_limit(limit)
+    .expect("maximum RateLimit-Limit field value should parse");
+  assert_eq!(
+    max_items,
+    response
+      .rate_limit_limit()
+      .expect("RateLimit-Limit should parse")
+      .expect("RateLimit-Limit should be present")
+      .items()
+      .len()
+  );
+}
+
+#[test]
+fn response_rate_limit_builders_reject_invalid_values_without_replacing_fields() {
+  let over_limit = MAX_STRUCTURED_INTEGER + 1;
+  assert!(HttpResponse::ok("")
+    .with_rate_limit_limit(HttpRateLimitLimit::new([HttpRateLimitLimitItem::new(
+      over_limit,
+    )]))
+    .is_err());
+  assert!(HttpResponse::ok("")
+    .with_rate_limit_limit(HttpRateLimitLimit::new([
+      HttpRateLimitLimitItem::new(1).with_window(over_limit)
+    ]))
+    .is_err());
+  assert!(HttpResponse::ok("")
+    .with_rate_limit_limit(HttpRateLimitLimit::new([]))
+    .is_err());
+
+  let max_items = MAX_RATE_LIMIT_VALUE_BYTES.div_ceil(3);
+  assert!(HttpResponse::ok("")
+    .with_rate_limit_limit(HttpRateLimitLimit::new(std::iter::repeat_n(
+      HttpRateLimitLimitItem::new(0),
+      max_items + 1
+    ),))
+    .is_err());
+
+  assert!(HttpResponse::ok("")
+    .with_rate_limit_remaining(HttpRateLimitRemaining::new(over_limit))
+    .is_err());
+  assert!(HttpResponse::ok("")
+    .with_rate_limit_reset(HttpRateLimitReset::new(over_limit))
+    .is_err());
+
+  let original = HttpResponse::ok("")
+    .header("RateLimit-Limit", "1")
+    .header("RateLimit-Remaining", "2")
+    .header("RateLimit-Reset", "3");
+  assert!(original
+    .clone()
+    .with_rate_limit_limit(HttpRateLimitLimit::new([]))
+    .is_err());
+  assert!(original
+    .clone()
+    .with_rate_limit_remaining(HttpRateLimitRemaining::new(over_limit))
+    .is_err());
+  assert!(original
+    .clone()
+    .with_rate_limit_reset(HttpRateLimitReset::new(over_limit))
+    .is_err());
+
+  let serialized = String::from_utf8(original.to_bytes()).expect("response should serialize");
+  assert_eq!(vec!["1"], header_values(&serialized, "RateLimit-Limit"));
+  assert_eq!(vec!["2"], header_values(&serialized, "RateLimit-Remaining"));
+  assert_eq!(vec!["3"], header_values(&serialized, "RateLimit-Reset"));
 }
 
 #[test]

@@ -376,8 +376,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpRateLimitLimit::parse("100, (50)").expect_err("shared RateLimit parse error should fail");
   let rate_limit_response = HttpResponse::ok("")
     .with_rate_limit_limit(rate_limit_limit)
+    .expect("RateLimit-Limit declaration should parse")
     .with_rate_limit_remaining(HttpRateLimitRemaining::new(0))
-    .with_rate_limit_reset(HttpRateLimitReset::new(0));
+    .expect("RateLimit-Remaining declaration should parse")
+    .with_rate_limit_reset(HttpRateLimitReset::new(0))
+    .expect("RateLimit-Reset declaration should parse");
   let response_date =
     HttpResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Date should parse");
   let _: HttpResponseDateParseError =

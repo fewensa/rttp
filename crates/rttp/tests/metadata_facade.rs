@@ -2344,8 +2344,11 @@ fn compatibility_facade_exposes_rate_limit_response_metadata() {
       HttpRateLimitLimitItem::new(100),
       HttpRateLimitLimitItem::new(50).with_window(3_600),
     ]))
+    .expect("RateLimit-Limit declaration should parse")
     .with_rate_limit_remaining(HttpRateLimitRemaining::new(0))
-    .with_rate_limit_reset(HttpRateLimitReset::new(0));
+    .expect("RateLimit-Remaining declaration should parse")
+    .with_rate_limit_reset(HttpRateLimitReset::new(0))
+    .expect("RateLimit-Reset declaration should parse");
 
   assert_eq!(
     "100, 50;w=3600",
