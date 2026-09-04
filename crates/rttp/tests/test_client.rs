@@ -50,6 +50,8 @@ fn compatibility_facade_reexports_accept_response_metadata() {
     .accept_post()
     .expect("Accept-Post should parse")
     .expect("Accept-Post should be present");
+  let _: rttp::AcceptPostParseError = rttp_client::response::AcceptPost::parse("application/json,")
+    .expect_err("malformed Accept-Post should fail");
 }
 
 #[test]
@@ -84,6 +86,41 @@ fn compatibility_facade_roundtrips_accept_patch_metadata_over_http11() {
   assert_eq!("merge-patch+json", metadata.media_types()[0].subtype());
   assert_eq!("utf-8", metadata.media_types()[0].parameters()[0].value());
   handle.join().expect("Accept-Patch server thread");
+}
+
+#[test]
+#[cfg(any(feature = "all", feature = "client"))]
+fn compatibility_facade_roundtrips_accept_post_metadata_over_http11() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind Accept-Post server");
+  let addr = server.local_addr().expect("Accept-Post server address");
+  let handle = std::thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        rttp::server::HttpResponse::ok("OK")
+          .with_accept_post([
+            r#"Text/Plain; title="a,b\"c""#,
+            "application/json; profile=summary",
+          ])
+          .expect("Accept-Post declaration should parse")
+      })
+      .expect("serve Accept-Post response");
+  });
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/accept-post"))
+    .emit()
+    .expect("Accept-Post response should parse");
+  let metadata = response
+    .accept_post()
+    .expect("Accept-Post metadata should parse")
+    .expect("Accept-Post metadata should be present");
+  assert_eq!(2, metadata.len());
+  assert_eq!("Text", metadata.media_types()[0].type_());
+  assert_eq!("Plain", metadata.media_types()[0].subtype());
+  assert_eq!("a,b\"c", metadata.media_types()[0].parameters()[0].value());
+  assert_eq!("summary", metadata.media_types()[1].parameters()[0].value());
+  handle.join().expect("Accept-Post server thread");
 }
 
 #[test]

@@ -143,3 +143,82 @@ fn accept_patch_bounds_canonical_serialization_at_exact_value_limit() {
   assert_eq!(parsed.header_value(), canonical_at_limit);
   assert_eq!(parsed.header_value().len(), MAX_ACCEPT_PATCH_VALUE_BYTES);
 }
+
+#[test]
+fn accept_post_preserves_duplicates_order_and_quoted_parameters() {
+  let parsed =
+    AcceptPost::parse_values([r#"Text/Plain; title="a,b\"c""#, "text/plain; charset=utf-8"])
+      .expect("Accept-Post should parse quoted commas and escapes");
+
+  assert_eq!(parsed.len(), 2);
+  assert_eq!(parsed.media_types()[0].type_(), "Text");
+  assert_eq!(parsed.media_types()[0].subtype(), "Plain");
+  assert_eq!(parsed.media_types()[0].parameters()[0].name(), "title");
+  assert_eq!(parsed.media_types()[0].parameters()[0].value(), "a,b\"c");
+  assert_eq!(parsed.media_types()[1].type_(), "text");
+  assert_eq!(parsed.media_types()[1].subtype(), "plain");
+  assert_eq!(
+    parsed.header_value(),
+    r#"Text/Plain; title="a,b\"c", text/plain; charset=utf-8"#
+  );
+}
+
+#[test]
+fn accept_post_rejects_control_bytes_and_accepts_exact_value_bound() {
+  for value in [
+    "application/json\0",
+    "application/json\r",
+    "application/json\n",
+    "application/json\u{7f}",
+  ] {
+    assert!(AcceptPost::parse(value).is_err(), "{value:?} should fail");
+  }
+
+  let prefix = "application/";
+  let exact = format!(
+    "{prefix}{}",
+    "x".repeat(MAX_ACCEPT_POST_VALUE_BYTES - prefix.len())
+  );
+  assert_eq!(exact.len(), MAX_ACCEPT_POST_VALUE_BYTES);
+  assert!(AcceptPost::parse(&exact).is_ok());
+  assert!(AcceptPost::parse(format!("{exact}x")).is_err());
+}
+
+#[test]
+fn accept_post_bounds_canonical_serialization_at_exact_value_limit() {
+  let raw_prefix = "a/b;foo=";
+  let raw_at_limit = format!(
+    "{raw_prefix}{}",
+    "x".repeat(MAX_ACCEPT_POST_VALUE_BYTES - raw_prefix.len())
+  );
+  assert_eq!(raw_at_limit.len(), MAX_ACCEPT_POST_VALUE_BYTES);
+  assert!(AcceptPost::parse(&raw_at_limit).is_err());
+  assert!(AcceptPost::from_media_types([raw_at_limit.as_str()]).is_err());
+
+  let canonical_prefix = "a/b; foo=";
+  let canonical_at_limit = format!(
+    "{canonical_prefix}{}",
+    "x".repeat(MAX_ACCEPT_POST_VALUE_BYTES - canonical_prefix.len())
+  );
+  let parsed = AcceptPost::parse(&canonical_at_limit).expect("canonical value should parse");
+  assert_eq!(parsed.header_value(), canonical_at_limit);
+  assert_eq!(parsed.header_value().len(), MAX_ACCEPT_POST_VALUE_BYTES);
+}
+
+#[test]
+fn accept_post_parse_values_bounds_canonical_size_per_input_field() {
+  let field = format!("a/{}", "x".repeat(40_000));
+  assert!(field.len() < MAX_ACCEPT_POST_VALUE_BYTES);
+  let parsed = AcceptPost::parse_values([field.as_str(), field.as_str()])
+    .expect("repeated fields should use a per-field canonical bound");
+  assert_eq!(parsed.len(), 2);
+  assert!(parsed.header_value().len() > MAX_ACCEPT_POST_VALUE_BYTES);
+  assert!(AcceptPost::from_media_types([field.as_str(), field.as_str()]).is_err());
+
+  let raw_prefix = "a/b;foo=";
+  let raw_at_limit = format!(
+    "{raw_prefix}{}",
+    "x".repeat(MAX_ACCEPT_POST_VALUE_BYTES - raw_prefix.len())
+  );
+  assert!(AcceptPost::parse_values([raw_at_limit.as_str(), "text/plain"]).is_err());
+}

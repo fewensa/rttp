@@ -7275,20 +7275,20 @@ fn test_parse_accept_post_response_helper_preserves_parameters_across_header_fie
     .expect("Accept-Post header should be present");
 
   assert_eq!(
-    vec!["text/plain", "application/json"],
+    vec![("text", "plain"), ("application", "json")],
     accept_post
       .media_types()
       .iter()
-      .map(|media_type| media_type.essence())
+      .map(|media_type| (media_type.type_(), media_type.subtype()))
       .collect::<Vec<_>>()
   );
   assert_eq!(
-    Some("utf-8"),
-    accept_post.media_types()[0].parameter("charset")
+    "utf-8",
+    accept_post.media_types()[0].parameters()[0].value()
   );
   assert_eq!(
-    Some("https://example.test/v1"),
-    accept_post.media_types()[1].parameter("profile")
+    "https://example.test/v1",
+    accept_post.media_types()[1].parameters()[0].value()
   );
 }
 

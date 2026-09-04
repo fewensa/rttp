@@ -165,6 +165,8 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Accept-Patch should parse");
   let accept_post: rttp::AcceptPost =
     rttp_client::response::AcceptPost::parse("application/json").expect("Accept-Post should parse");
+  let _: rttp::AcceptPostParseError = rttp_client::response::AcceptPost::parse("application/json,")
+    .expect_err("malformed Accept-Post should fail");
   let content_range_window: rttp::ContentRange =
     rttp_client::response::ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
   let _: rttp::ContentRangeParseError = rttp_client::response::ContentRange::parse("bytes */*")

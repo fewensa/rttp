@@ -977,16 +977,16 @@ fn server_response_accept_patch_and_accept_post_helpers_declare_and_parse_media_
     .expect("Accept-Post should parse")
     .expect("Accept-Post should be present");
   assert_eq!(
-    vec!["application/json", "text/plain"],
+    vec![("application", "json"), ("text", "plain")],
     accept_post
       .media_types()
       .iter()
-      .map(|media_type| media_type.media_type())
+      .map(|media_type| (media_type.type_(), media_type.subtype()))
       .collect::<Vec<_>>()
   );
   assert_eq!(
-    Some("summary"),
-    accept_post.media_types()[1].parameter("profile")
+    "summary",
+    accept_post.media_types()[1].parameters()[0].value()
   );
 }
 

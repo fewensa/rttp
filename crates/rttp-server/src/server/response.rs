@@ -4,6 +4,9 @@ pub use rttp_protocol::accept_patch::{
   AcceptPatch as HttpAcceptPatch, AcceptPatchParseError as HttpAcceptPatchParseError,
   MediaType as HttpMediaType, MediaTypeParameter as HttpMediaTypeParameter,
 };
+pub use rttp_protocol::accept_post::{
+  AcceptPost as HttpAcceptPost, AcceptPostParseError as HttpAcceptPostParseError,
+};
 pub use rttp_protocol::accept_ranges::{
   AcceptRanges as HttpAcceptRanges, AcceptRangesParseError as HttpAcceptRangesParseError,
 };
@@ -415,8 +418,6 @@ pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 pub(crate) const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_VARY_FIELDS: usize = 256;
-pub(crate) const MAX_ACCEPT_POST_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_ACCEPT_POST_MEDIA_TYPES: usize = 32;
 pub(crate) const MAX_EARLY_HINTS_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_LINK_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_LINK_VALUES: usize = 256;
@@ -2209,12 +2210,13 @@ impl HttpResponse {
     M: AsRef<str>,
   {
     let accept_post = HttpAcceptPost::from_media_types(media_types)?;
+    let header_value = accept_post.header_value();
     self
       .headers
       .retain(|header| !header.name.eq_ignore_ascii_case("Accept-Post"));
     self
       .headers
-      .push(HttpHeader::new("Accept-Post", accept_post.header_value()));
+      .push(HttpHeader::new("Accept-Post", header_value));
     Ok(self)
   }
 
@@ -4573,184 +4575,6 @@ impl IntoHttpContentType for &String {
     HttpContentType::parse(self)
   }
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct HttpAcceptedMediaTypes {
-  media_types: Vec<HttpContentType>,
-}
-
-impl HttpAcceptedMediaTypes {
-  fn parse_values<'a, I>(
-    values: I,
-    header_name: &str,
-    max_value_bytes: usize,
-    max_media_types: usize,
-  ) -> Result<Self, String>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut media_types = Vec::new();
-    for value in values {
-      if value.len() > max_value_bytes {
-        return Err(format!("{header_name} header value is too large"));
-      }
-      for member in split_accept_capability_members(value)? {
-        if media_types.len() >= max_media_types {
-          return Err(format!("too many {header_name} media types"));
-        }
-        media_types.push(
-          HttpContentType::parse(member)
-            .map_err(|_| format!("invalid {header_name} media type"))?,
-        );
-      }
-    }
-    if media_types.is_empty() {
-      return Err(format!("invalid {header_name} media type"));
-    }
-    Ok(Self { media_types })
-  }
-
-  fn from_media_types<I, M>(
-    media_types: I,
-    header_name: &str,
-    max_value_bytes: usize,
-    max_media_types: usize,
-  ) -> Result<Self, String>
-  where
-    I: IntoIterator<Item = M>,
-    M: AsRef<str>,
-  {
-    let mut value = String::new();
-    for (index, media_type) in media_types.into_iter().enumerate() {
-      if index > 0 {
-        value.push_str(", ");
-      }
-      value.push_str(media_type.as_ref());
-      if value.len() > max_value_bytes {
-        return Err(format!("{header_name} header value is too large"));
-      }
-    }
-    Self::parse_values(
-      [value.as_str()],
-      header_name,
-      max_value_bytes,
-      max_media_types,
-    )
-  }
-
-  fn media_types(&self) -> &[HttpContentType] {
-    &self.media_types
-  }
-
-  fn header_value(&self) -> String {
-    self
-      .media_types
-      .iter()
-      .map(HttpContentType::header_value)
-      .collect::<Vec<_>>()
-      .join(", ")
-  }
-}
-
-fn split_accept_capability_members(value: &str) -> Result<Vec<&str>, String> {
-  let mut members = Vec::new();
-  let mut start = 0usize;
-  let mut quoted = false;
-  let mut escaped = false;
-  for (index, byte) in value.bytes().enumerate() {
-    if escaped {
-      escaped = false;
-      continue;
-    }
-    match byte {
-      b'\\' if quoted => escaped = true,
-      b'"' => quoted = !quoted,
-      b',' if !quoted => {
-        let member = value[start..index].trim();
-        if member.is_empty() {
-          return Err("empty media type".to_string());
-        }
-        members.push(member);
-        start = index + 1;
-      }
-      _ => {}
-    }
-  }
-  if quoted || escaped {
-    return Err("unterminated media type parameter".to_string());
-  }
-  let member = value[start..].trim();
-  if member.is_empty() {
-    return Err("empty media type".to_string());
-  }
-  members.push(member);
-  Ok(members)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptPost(HttpAcceptedMediaTypes);
-
-impl HttpAcceptPost {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptPostParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptPostParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    HttpAcceptedMediaTypes::parse_values(
-      values,
-      "Accept-Post",
-      MAX_ACCEPT_POST_VALUE_BYTES,
-      MAX_ACCEPT_POST_MEDIA_TYPES,
-    )
-    .map(Self)
-    .map_err(HttpAcceptPostParseError::new)
-  }
-
-  pub fn from_media_types<I, M>(media_types: I) -> Result<Self, HttpAcceptPostParseError>
-  where
-    I: IntoIterator<Item = M>,
-    M: AsRef<str>,
-  {
-    HttpAcceptedMediaTypes::from_media_types(
-      media_types,
-      "Accept-Post",
-      MAX_ACCEPT_POST_VALUE_BYTES,
-      MAX_ACCEPT_POST_MEDIA_TYPES,
-    )
-    .map(Self)
-    .map_err(HttpAcceptPostParseError::new)
-  }
-
-  pub fn media_types(&self) -> &[HttpContentType] {
-    self.0.media_types()
-  }
-
-  pub fn header_value(&self) -> String {
-    self.0.header_value()
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptPostParseError {
-  message: String,
-}
-
-impl HttpAcceptPostParseError {
-  fn new(message: String) -> Self {
-    Self { message }
-  }
-}
-
-impl fmt::Display for HttpAcceptPostParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpAcceptPostParseError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HttpRequestCacheControl {
