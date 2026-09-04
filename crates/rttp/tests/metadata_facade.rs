@@ -333,6 +333,14 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Authentication-Info should parse");
   let _: rttp::AuthenticationInfoParseError = rttp_client::response::AuthenticationInfo::parse("")
     .expect_err("empty Authentication-Info should be rejected");
+  let _: &[rttp::AuthenticationInfoParameter] = authentication_info.parameters();
+  let proxy_authentication_info: rttp::ProxyAuthenticationInfo =
+    rttp_client::response::ProxyAuthenticationInfo::parse("nextnonce=\"p-2\"")
+      .expect("Proxy-Authentication-Info should parse");
+  let _: rttp::ProxyAuthenticationInfoParseError =
+    rttp_client::response::ProxyAuthenticationInfo::parse("")
+      .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let _: &[rttp::ProxyAuthenticationInfoParameter] = proxy_authentication_info.parameters();
   let no_vary_search: rttp::NoVarySearch =
     rttp_client::response::NoVarySearch::parse(r#"params=("utm_source")"#)
       .expect("No-Vary-Search should parse");
@@ -380,6 +388,15 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::WwwAuthenticateParseError =
     rttp_client::response::WwwAuthenticate::parse("Basic realm=\"")
       .expect_err("malformed WWW-Authenticate should be rejected");
+  let _: &[rttp::WwwAuthenticateChallenge] = www_authenticate.challenges();
+  let _: &[rttp::WwwAuthenticateParameter] = www_authenticate.challenges()[0].parameters();
+  let proxy_authenticate: rttp::ProxyAuthenticate =
+    rttp_client::response::ProxyAuthenticate::parse("Basic realm=\"proxy\"")
+      .expect("Proxy-Authenticate should parse");
+  let _: rttp::ProxyAuthenticateParseError = rttp_client::response::ProxyAuthenticate::parse("")
+    .expect_err("empty Proxy-Authenticate should be rejected");
+  let _: &[rttp::ProxyAuthenticateChallenge] = proxy_authenticate.challenges();
+  let _: &[rttp::ProxyAuthenticateParameter] = proxy_authenticate.challenges()[0].parameters();
   let upgrade: rttp::Upgrade =
     rttp_client::response::Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: rttp::UpgradeParseError =
@@ -647,6 +664,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   );
   assert!(!format!("{speculation_rules:?}").contains("speculation-rules.json"));
   assert_eq!(authentication_info.parameter("nextnonce"), Some("n-2"));
+  assert_eq!(
+    proxy_authentication_info.parameter("nextnonce"),
+    Some("p-2")
+  );
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(
@@ -676,6 +697,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(
     www_authenticate.challenges()[0].parameter("realm"),
     Some("users")
+  );
+  assert_eq!(
+    proxy_authenticate.challenges()[0].parameter("realm"),
+    Some("proxy")
   );
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert!(pragma.no_cache());

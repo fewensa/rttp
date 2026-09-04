@@ -7,6 +7,7 @@ use rttp_server::server::{
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpAltUsed, HttpAltUsedParseError,
+  HttpAuthenticationInfo, HttpAuthenticationInfoParameter, HttpAuthenticationInfoParseError,
   HttpAuthorization, HttpAuthorizationParseError, HttpBaggage, HttpBaggageMember,
   HttpBaggageParseError, HttpBaggageProperty, HttpCacheStatus, HttpCacheStatusParseError,
   HttpCdnCacheControl, HttpCdnLoop, HttpCdnLoopMember, HttpCdnLoopParseError,
@@ -32,32 +33,36 @@ use rttp_server::server::{
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
   HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
-  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
-  HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
-  HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
-  HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
-  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
-  HttpRetryAfterParseError, HttpSameSite, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag,
-  HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
-  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
-  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthenticate, HttpProxyAuthenticateChallenge,
+  HttpProxyAuthenticateParameter, HttpProxyAuthenticateParseError, HttpProxyAuthenticationInfo,
+  HttpProxyAuthenticationInfoParameter, HttpProxyAuthenticationInfoParseError,
+  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit,
+  HttpRateLimitLimitItem, HttpRateLimitLimitParseError, HttpRateLimitParseError,
+  HttpRateLimitRemaining, HttpRateLimitRemainingParseError, HttpRateLimitReset,
+  HttpRateLimitResetParseError, HttpReferer, HttpRefererParseError, HttpRequest,
+  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpResponseDate,
+  HttpResponseDateParseError, HttpResponseExpires, HttpResponseLastModified,
+  HttpResponseLastModifiedParseError, HttpRetryAfter, HttpRetryAfterParseError, HttpSameSite,
+  HttpSaveData, HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
+  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
+  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
   HttpVariantVaryParseError, HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest,
-  HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
-  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpWantReprDigest, HttpWwwAuthenticate, HttpWwwAuthenticateChallenge,
+  HttpWwwAuthenticateParameter, HttpWwwAuthenticateParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -3114,4 +3119,82 @@ fn response_facade_builds_and_parses_variant_vary_metadata() {
   assert!(HttpResponse::ok("body")
     .with_variant_vary(&oversized)
     .is_err());
+}
+
+#[test]
+fn response_authentication_metadata_facade_aliases_build_and_parse() {
+  let www_authenticate: HttpWwwAuthenticate =
+    HttpWwwAuthenticate::parse(r#"Digest realm="apps", nonce="a\\b", Basic"#)
+      .expect("WWW-Authenticate should parse");
+  let _: &[HttpWwwAuthenticateChallenge] = www_authenticate.challenges();
+  let _: &[HttpWwwAuthenticateParameter] = www_authenticate.challenges()[0].parameters();
+  let _: HttpWwwAuthenticateParseError = HttpWwwAuthenticate::parse("Basic @")
+    .expect_err("malformed WWW-Authenticate should be rejected");
+
+  let authentication_info: HttpAuthenticationInfo =
+    HttpAuthenticationInfo::parse(r#"nextnonce="n-2", qop=auth"#)
+      .expect("Authentication-Info should parse");
+  let _: &[HttpAuthenticationInfoParameter] = authentication_info.parameters();
+  let _: HttpAuthenticationInfoParseError = HttpAuthenticationInfo::parse("nextnonce")
+    .expect_err("malformed Authentication-Info should be rejected");
+
+  let proxy_authenticate: HttpProxyAuthenticate =
+    HttpProxyAuthenticate::parse(r#"Basic realm="proxy", Bearer token"#)
+      .expect("Proxy-Authenticate should parse");
+  let _: &[HttpProxyAuthenticateChallenge] = proxy_authenticate.challenges();
+  let _: &[HttpProxyAuthenticateParameter] = proxy_authenticate.challenges()[0].parameters();
+  let _: HttpProxyAuthenticateParseError = HttpProxyAuthenticate::parse("Basic @")
+    .expect_err("malformed Proxy-Authenticate should be rejected");
+
+  let proxy_authentication_info: HttpProxyAuthenticationInfo =
+    HttpProxyAuthenticationInfo::parse(r#"nextnonce="p-2", qop=auth"#)
+      .expect("Proxy-Authentication-Info should parse");
+  let _: &[HttpProxyAuthenticationInfoParameter] = proxy_authentication_info.parameters();
+  let _: HttpProxyAuthenticationInfoParseError = HttpProxyAuthenticationInfo::parse("nextnonce")
+    .expect_err("malformed Proxy-Authentication-Info should be rejected");
+
+  let response = HttpResponse::ok("")
+    .with_www_authenticate(r#"Basic realm="apps""#)
+    .expect("WWW-Authenticate builder should accept metadata")
+    .with_authentication_info("nextnonce=n-2")
+    .expect("Authentication-Info builder should accept metadata")
+    .with_proxy_authenticate(r#"Basic realm="proxy""#)
+    .expect("Proxy-Authenticate builder should accept metadata")
+    .with_proxy_authentication_info("nextnonce=p-2")
+    .expect("Proxy-Authentication-Info builder should accept metadata");
+
+  assert_eq!(
+    Some("apps"),
+    response
+      .www_authenticate()
+      .expect("WWW-Authenticate should parse")
+      .expect("WWW-Authenticate should be present")
+      .challenges()[0]
+      .parameter("realm")
+  );
+  assert_eq!(
+    Some("n-2"),
+    response
+      .authentication_info()
+      .expect("Authentication-Info should parse")
+      .expect("Authentication-Info should be present")
+      .parameter("nextnonce")
+  );
+  assert_eq!(
+    Some("proxy"),
+    response
+      .proxy_authenticate()
+      .expect("Proxy-Authenticate should parse")
+      .expect("Proxy-Authenticate should be present")
+      .challenges()[0]
+      .parameter("realm")
+  );
+  assert_eq!(
+    Some("p-2"),
+    response
+      .proxy_authentication_info()
+      .expect("Proxy-Authentication-Info should parse")
+      .expect("Proxy-Authentication-Info should be present")
+      .parameter("nextnonce")
+  );
 }
