@@ -738,6 +738,146 @@ pub mod cache_control {
   }
 }
 
+pub mod cache_status {
+  pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+  pub const MAX_MEMBERS: usize = 256;
+  pub const MAX_PARAMETERS: usize = 256;
+
+  pub struct ResponseCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const RESPONSE_CASES: &[ResponseCase] = &[ResponseCase {
+    name: "ordered members with quoted and zero metadata",
+    values: &[
+      r#"OriginCache; hit; ttl=0; detail="origin-miss"; trace="edge, warm""#,
+      r#""CDN Company Here"; fwd=stale; fwd-status=0; stored=?0; key="/asset"; ext-token"#,
+    ],
+  }];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "duplicate parameter",
+      value: "OriginCache; hit; hit",
+    },
+    InvalidCase {
+      name: "invalid boolean parameter",
+      value: "OriginCache; hit=yes",
+    },
+    InvalidCase {
+      name: "trailing member",
+      value: "OriginCache,",
+    },
+    InvalidCase {
+      name: "wrong key bare item",
+      value: "OriginCache; key=asset",
+    },
+  ];
+
+  pub fn response_cases() -> &'static [ResponseCase] {
+    RESPONSE_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+
+  pub fn too_many_members_value() -> String {
+    (0..=MAX_MEMBERS)
+      .map(|index| format!("cache{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+
+  pub fn too_many_parameters_value() -> String {
+    format!(
+      "OriginCache{}",
+      (0..=MAX_PARAMETERS)
+        .map(|index| format!("; ext{index}"))
+        .collect::<String>()
+    )
+  }
+
+  pub fn oversized_value() -> String {
+    format!("cache=\"{}\"", "a".repeat(MAX_VALUE_BYTES))
+  }
+}
+
+pub mod warning {
+  pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+  pub const MAX_ITEMS: usize = 256;
+
+  pub struct ResponseCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+    pub codes: &'static [u16],
+    pub agents: &'static [&'static str],
+    pub texts: &'static [&'static str],
+    pub dated: &'static [bool],
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const RESPONSE_CASES: &[ResponseCase] = &[ResponseCase {
+    name: "ordered warning values with quoted text, zero code, and date",
+    values: &[
+      r#"110 - "Response is Stale", 000 edge-cache "zero warning""#,
+      r#"299 proxy.example:80 "Deprecated \"API\"" "Wed, 21 Oct 2015 07:28:00 GMT""#,
+    ],
+    codes: &[110, 0, 299],
+    agents: &["-", "edge-cache", "proxy.example:80"],
+    texts: &["Response is Stale", "zero warning", "Deprecated \"API\""],
+    dated: &[false, false, true],
+  }];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "short warning code",
+      value: r#"11 - "short code""#,
+    },
+    InvalidCase {
+      name: "unterminated warning text",
+      value: r#"110 - "unterminated"#,
+    },
+    InvalidCase {
+      name: "trailing warning data",
+      value: r#"110 - "bad" trailing"#,
+    },
+    InvalidCase {
+      name: "invalid warning date",
+      value: r#"110 - "bad" "not-a-date""#,
+    },
+  ];
+
+  pub fn response_cases() -> &'static [ResponseCase] {
+    RESPONSE_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+
+  pub fn too_many_items_value() -> String {
+    (0..=MAX_ITEMS)
+      .map(|index| format!("000 edge-{index} \"warning\""))
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+
+  pub fn oversized_value() -> String {
+    format!("110 - \"{}\"", "a".repeat(MAX_VALUE_BYTES))
+  }
+}
+
 pub mod age_expires {
   pub const EXPIRES_UNIX_SECONDS: u64 = 784_111_777;
   pub const EXPIRES_IMF_FIXDATE: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
