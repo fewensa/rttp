@@ -18,21 +18,24 @@ use rttp::server::{
   HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError, HttpNel,
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpReferer, HttpRefererParseError,
-  HttpRequestAcceptCharsets, HttpResponse, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecGpc,
-  HttpSecGpcParseError, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn,
-  HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
-  HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
-  HttpUpgradeParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
+  HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
+  HttpRefererParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSameSite, HttpSaveData,
+  HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
+  HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
+  HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -251,6 +254,18 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Retry-After date should parse");
   let _: rttp::RetryAfterParseError =
     rttp_client::response::RetryAfter::parse("").expect_err("empty Retry-After should be rejected");
+  let rate_limit_limit: rttp::RateLimitLimit =
+    rttp_client::response::RateLimitLimit::parse("100, 50;w=3600")
+      .expect("RateLimit-Limit should parse");
+  let _: &[rttp::RateLimitLimitItem] = rate_limit_limit.items();
+  let _: rttp::RateLimitLimitParseError =
+    rttp::RateLimitLimit::parse("100, (50)").expect_err("malformed RateLimit-Limit should fail");
+  let _: rttp::RateLimitRemainingParseError =
+    rttp::RateLimitRemaining::parse("1, 2").expect_err("duplicate RateLimit-Remaining should fail");
+  let _: rttp::RateLimitResetParseError =
+    rttp::RateLimitReset::parse("1, 2").expect_err("duplicate RateLimit-Reset should fail");
+  let _: rttp::RateLimitParseError =
+    rttp::RateLimitLimit::parse("100, (50)").expect_err("shared RateLimit parse error should fail");
   let response_date: rttp::ResponseDate =
     rttp_client::response::ResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("Date should parse");
@@ -586,6 +601,7 @@ fn compatibility_facade_exports_client_metadata_types() {
     retry_after_date.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
+  assert_eq!(rate_limit_limit.header_value(), "100, 50;w=3600");
   assert_eq!(
     response_date.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -2310,6 +2326,45 @@ fn compatibility_facade_exposes_deprecation_response_metadata() {
     Some(HttpDeprecation::Boolean(true)),
     response.deprecation().expect("Deprecation should parse")
   );
+}
+
+#[test]
+fn compatibility_facade_exposes_rate_limit_response_metadata() {
+  let _: HttpRateLimitLimitParseError =
+    HttpRateLimitLimit::parse("100, (50)").expect_err("malformed RateLimit-Limit should fail");
+  let _: HttpRateLimitRemainingParseError =
+    HttpRateLimitRemaining::parse("1, 2").expect_err("duplicate RateLimit-Remaining should fail");
+  let _: HttpRateLimitResetParseError =
+    HttpRateLimitReset::parse("1, 2").expect_err("duplicate RateLimit-Reset should fail");
+  let _: HttpRateLimitParseError =
+    HttpRateLimitLimit::parse("100, (50)").expect_err("shared RateLimit parse error should fail");
+
+  let response = HttpResponse::ok("")
+    .with_rate_limit_limit(HttpRateLimitLimit::new([
+      HttpRateLimitLimitItem::new(100),
+      HttpRateLimitLimitItem::new(50).with_window(3_600),
+    ]))
+    .with_rate_limit_remaining(HttpRateLimitRemaining::new(0))
+    .with_rate_limit_reset(HttpRateLimitReset::new(0));
+
+  assert_eq!(
+    "100, 50;w=3600",
+    response
+      .rate_limit_limit()
+      .expect("RateLimit-Limit should parse")
+      .expect("RateLimit-Limit should be present")
+      .header_value()
+  );
+  assert!(response
+    .rate_limit_remaining()
+    .expect("RateLimit-Remaining should parse")
+    .expect("RateLimit-Remaining should be present")
+    .is_exhausted());
+  assert!(response
+    .rate_limit_reset()
+    .expect("RateLimit-Reset should parse")
+    .expect("RateLimit-Reset should be present")
+    .is_immediate());
 }
 
 #[test]

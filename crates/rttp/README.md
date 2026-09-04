@@ -119,6 +119,28 @@ This metadata is informational only. The facade does not route `POST`
 requests, decode payloads, negotiate media types, select a method, retry, or
 automatically apply or send a follow-up request.
 
+## Bounded RateLimit response metadata
+
+The facade exposes `HttpResponse::with_rate_limit_limit(value)`,
+`with_rate_limit_remaining(value)`, and `with_rate_limit_reset(value)` through
+`rttp::server`, plus the matching accessors. The server aliases
+`HttpRateLimitLimit`, `HttpRateLimitLimitItem`, `HttpRateLimitRemaining`,
+`HttpRateLimitReset`, and their typed parse-error names. With the `client`
+feature, the facade also re-exports `RateLimitLimit`,
+`RateLimitLimitItem`, `RateLimitRemaining`, `RateLimitReset`, and their parse
+errors for `Response` inspection.
+
+`RateLimit-Limit` repeated fields are flattened in wire order, retaining each
+limit and optional `w` window. `RateLimit-Remaining` and `RateLimit-Reset`
+are singleton fields. Every raw field is limited to 64 KiB and every integer
+must fit in `u64`; malformed structured fields, duplicate singletons,
+controls, overflow, and oversized values return typed errors while raw fields
+remain available. Server declarations replace matching fields
+case-insensitively and serialize one canonical field per helper.
+
+This is field-level metadata only. RTTP does not enforce quotas, choose a
+limit window, sleep, retry, schedule work, or apply rate-limit policy.
+
 ## Bounded HTTP/1.1 byte ranges
 
 The server exposes byte-range primitives, not an automatic static-file server.

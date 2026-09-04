@@ -18,7 +18,9 @@ use rttp_client::response::{
   NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
   PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
-  ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
+  ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, RateLimitLimit,
+  RateLimitLimitItem, RateLimitLimitParseError, RateLimitParseError, RateLimitRemaining,
+  RateLimitRemainingParseError, RateLimitReset, RateLimitResetParseError, ReferrerPolicy,
   ReferrerPolicyToken, ResponseDate, ResponseDateParseError, ResponseExpires,
   ResponseExpiresParseError, ResponseLastModified, ResponseLastModifiedParseError, RetryAfter,
   RetryAfterParseError, ScheduleTag, SecWebSocketAccept, SecWebSocketAcceptParseError,
@@ -204,6 +206,19 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     RetryAfter::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Retry-After date should parse");
   let _: RetryAfterParseError =
     RetryAfter::parse("").expect_err("empty Retry-After should be rejected");
+  let rate_limit_limit =
+    RateLimitLimit::parse("100, 50;w=3600").expect("RateLimit-Limit should parse");
+  let _: &[RateLimitLimitItem] = rate_limit_limit.items();
+  let _: RateLimitLimitParseError =
+    RateLimitLimit::parse("100, (50)").expect_err("malformed RateLimit-Limit should fail");
+  let _: RateLimitRemainingParseError =
+    RateLimitRemaining::parse("1, 2").expect_err("duplicate RateLimit-Remaining should fail");
+  let _: RateLimitResetParseError =
+    RateLimitReset::parse("1, 2").expect_err("duplicate RateLimit-Reset should fail");
+  let _: RateLimitParseError =
+    RateLimitLimit::parse("100, (50)").expect_err("shared RateLimit parse error should fail");
+  let rate_limit_remaining = RateLimitRemaining::new(0);
+  let rate_limit_reset = RateLimitReset::new(0);
   let accept_datetime =
     AcceptDatetime::parse("Sunday, 06-Nov-94 08:49:37 GMT").expect("Accept-Datetime should parse");
   let _: AcceptDatetimeParseError =
@@ -534,6 +549,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     retry_after_date.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
+  assert_eq!(rate_limit_limit.header_value(), "100, 50;w=3600");
+  assert!(rate_limit_remaining.is_exhausted());
+  assert!(rate_limit_reset.is_immediate());
   assert_eq!(
     accept_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT",

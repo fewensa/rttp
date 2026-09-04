@@ -485,6 +485,29 @@ This is response metadata only. `rttp_client` does not route `POST` requests,
 decode payloads, negotiate media types, choose a request method, retry, or
 automatically send a follow-up request.
 
+## Bounded RateLimit response metadata
+
+`Response::rate_limit_limit()` parses repeated `RateLimit-Limit` response
+fields through the shared `RateLimitLimit` type and flattens their structured
+list items in wire order. Each `RateLimitLimitItem` exposes its numeric limit
+and optional `w` window. `Response::rate_limit_remaining()` and
+`Response::rate_limit_reset()` parse singleton `RateLimit-Remaining` and
+`RateLimit-Reset` fields into `RateLimitRemaining` and `RateLimitReset`.
+The response module re-exports all three value types, the limit item type, and
+their typed parse-error aliases.
+
+Each raw field value is limited to 64 KiB, and every limit, window, remaining,
+and reset integer must fit in `u64`. Repeated limit fields and duplicate limit
+items are retained in order. Duplicate singleton fields, malformed structured
+fields, controls, overflow, and oversized values return a response error;
+absent fields return `Ok(None)`, and raw fields remain available through
+`Response::header_value()` and `Response::header_values()` after a parse
+failure.
+
+These helpers expose metadata only. `rttp_client` does not select a limit
+window, enforce quotas, sleep, retry, schedule work, or apply rate-limit
+policy.
+
 ## Bounded HTTP/1.1 conditional requests
 
 `HttpClient` includes bounded helpers for the common conditional request

@@ -185,6 +185,13 @@ pub use rttp_protocol::proxy_status::{
 pub use rttp_protocol::range::{
   ContentRange as HttpContentRange, ContentRangeParseError as HttpContentRangeParseError,
 };
+pub use rttp_protocol::rate_limit::{
+  RateLimitLimit as HttpRateLimitLimit, RateLimitLimitItem as HttpRateLimitLimitItem,
+  RateLimitLimitParseError as HttpRateLimitLimitParseError,
+  RateLimitParseError as HttpRateLimitParseError, RateLimitRemaining as HttpRateLimitRemaining,
+  RateLimitRemainingParseError as HttpRateLimitRemainingParseError,
+  RateLimitReset as HttpRateLimitReset, RateLimitResetParseError as HttpRateLimitResetParseError,
+};
 pub use rttp_protocol::reporting_endpoints::{
   ReportingEndpoints as HttpReportingEndpoints,
   ReportingEndpointsParseError as HttpReportingEndpointsParseError,
@@ -2411,6 +2418,37 @@ impl HttpResponse {
     self
   }
 
+  pub fn with_rate_limit_limit(mut self, limit: HttpRateLimitLimit) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("RateLimit-Limit"));
+    self
+      .headers
+      .push(HttpHeader::new("RateLimit-Limit", limit.header_value()));
+    self
+  }
+
+  pub fn with_rate_limit_remaining(mut self, remaining: HttpRateLimitRemaining) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("RateLimit-Remaining"));
+    self.headers.push(HttpHeader::new(
+      "RateLimit-Remaining",
+      remaining.header_value(),
+    ));
+    self
+  }
+
+  pub fn with_rate_limit_reset(mut self, reset: HttpRateLimitReset) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("RateLimit-Reset"));
+    self
+      .headers
+      .push(HttpHeader::new("RateLimit-Reset", reset.header_value()));
+    self
+  }
+
   pub fn trailers(&self) -> &[HttpHeader] {
     &self.trailers
   }
@@ -3753,6 +3791,51 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpRetryAfter::parse_values(values).map(Some)
+  }
+
+  pub fn rate_limit_limit(
+    &self,
+  ) -> Result<Option<HttpRateLimitLimit>, HttpRateLimitLimitParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("RateLimit-Limit"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRateLimitLimit::parse_values(values).map(Some)
+  }
+
+  pub fn rate_limit_remaining(
+    &self,
+  ) -> Result<Option<HttpRateLimitRemaining>, HttpRateLimitRemainingParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("RateLimit-Remaining"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRateLimitRemaining::parse_values(values).map(Some)
+  }
+
+  pub fn rate_limit_reset(
+    &self,
+  ) -> Result<Option<HttpRateLimitReset>, HttpRateLimitResetParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("RateLimit-Reset"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRateLimitReset::parse_values(values).map(Some)
   }
 
   pub fn body<B: AsRef<[u8]>>(mut self, body: B) -> Self {

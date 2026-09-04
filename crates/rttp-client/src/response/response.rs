@@ -77,6 +77,7 @@ use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::permissions_policy::PermissionsPolicy;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
+use rttp_protocol::rate_limit::{RateLimitLimit, RateLimitRemaining, RateLimitReset};
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::retry_after::RetryAfter;
@@ -509,6 +510,42 @@ impl Response {
       return Ok(None);
     }
     RetryAfter::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `RateLimit-Limit` response metadata without selecting a
+  /// limit window or applying quota policy.
+  pub fn rate_limit_limit(&self) -> error::Result<Option<RateLimitLimit>> {
+    let values = self.header_values("ratelimit-limit");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    RateLimitLimit::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `RateLimit-Remaining` response metadata without applying
+  /// quota policy.
+  pub fn rate_limit_remaining(&self) -> error::Result<Option<RateLimitRemaining>> {
+    let values = self.header_values("ratelimit-remaining");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    RateLimitRemaining::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `RateLimit-Reset` response metadata without applying
+  /// timing or retry policy.
+  pub fn rate_limit_reset(&self) -> error::Result<Option<RateLimitReset>> {
+    let values = self.header_values("ratelimit-reset");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    RateLimitReset::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
