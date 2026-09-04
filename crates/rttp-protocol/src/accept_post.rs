@@ -42,20 +42,27 @@ impl AcceptPost {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let media_types = crate::media_type::parse_values(
-      values,
-      "Accept-Post",
-      MAX_ACCEPT_POST_VALUE_BYTES,
-      MAX_ACCEPT_POST_MEDIA_TYPES,
-    )
-    .map_err(|message| AcceptPostParseError { message })?;
-    let accept_post = Self { media_types };
-    if accept_post.header_value().len() > MAX_ACCEPT_POST_VALUE_BYTES {
-      return Err(AcceptPostParseError::new(
-        "Accept-Post header value is too large",
-      ));
+    let mut media_types = Vec::new();
+    for value in values {
+      let field = crate::media_type::parse_values(
+        [value],
+        "Accept-Post",
+        MAX_ACCEPT_POST_VALUE_BYTES,
+        MAX_ACCEPT_POST_MEDIA_TYPES - media_types.len(),
+      )
+      .map_err(|message| AcceptPostParseError { message })?;
+      let accept_post = Self { media_types: field };
+      if accept_post.header_value().len() > MAX_ACCEPT_POST_VALUE_BYTES {
+        return Err(AcceptPostParseError::new(
+          "Accept-Post header value is too large",
+        ));
+      }
+      media_types.extend(accept_post.media_types);
     }
-    Ok(accept_post)
+    if media_types.is_empty() {
+      return Err(AcceptPostParseError::new("invalid Accept-Post media type"));
+    }
+    Ok(Self { media_types })
   }
 
   /// Validates supplied media types as one bounded `Accept-Post` field value.
