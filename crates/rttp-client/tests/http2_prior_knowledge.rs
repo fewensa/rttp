@@ -145,6 +145,29 @@ fn prior_knowledge_emits_typed_from_metadata() {
 }
 
 #[test]
+fn prior_knowledge_emits_typed_user_agent_metadata() {
+  let (addr, handle) = spawn_h2_prior_knowledge_peer();
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/hello", addr))
+    .user_agent("  Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) ")
+    .expect("User-Agent metadata should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("single h2 GET response");
+
+  assert_eq!(200, response.code());
+  let request_header_block = handle.join().expect("h2 peer thread");
+  assert_eq!(
+    b"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko)",
+    find_header_value(&request_header_block, b"user-agent")
+      .expect("User-Agent request metadata")
+      .value
+      .as_slice()
+  );
+}
+
+#[test]
 fn prior_knowledge_client_acks_ping_and_ignores_ping_ack_during_response() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");

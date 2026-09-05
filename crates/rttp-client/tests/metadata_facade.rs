@@ -52,9 +52,10 @@ use rttp_client::{
   SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, SecWebSocketKey, SecWebSocketKeyParseError,
   Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError, TimeoutType, TraceParent,
   TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
-  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, Via as ClientVia,
-  ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError, XForwardedHost,
-  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, UserAgent, UserAgentMember,
+  UserAgentParseError, Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor,
+  XForwardedForParseError, XForwardedHost, XForwardedHostParseError, XForwardedProto,
+  XForwardedProtoParseError,
 };
 use rttp_test_support as support;
 
@@ -63,6 +64,15 @@ fn client_facade_exports_from_metadata_types() {
   let from: From = From::parse("Ops Team <ops@example.test>").expect("From metadata should parse");
   assert_eq!("Ops Team <ops@example.test>", from.header_value());
   let _: FromParseError = From::parse("invalid").expect_err("invalid From should fail");
+}
+
+#[test]
+fn client_facade_exports_user_agent_metadata_types() {
+  let user_agent: UserAgent =
+    UserAgent::parse("Mozilla/5.0 (compatible)").expect("User-Agent metadata should parse");
+  assert_eq!("Mozilla/5.0 (compatible)", user_agent.header_value());
+  let _: &UserAgentMember = &user_agent.members()[0];
+  let _: UserAgentParseError = UserAgent::parse("").expect_err("invalid User-Agent should fail");
 }
 
 #[test]
