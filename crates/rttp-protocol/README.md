@@ -711,6 +711,23 @@ over-limit protocol lists are rejected. This parser validates declared
 metadata only; callers own `Connection: Upgrade`, h2c negotiation, socket
 handoff, and any upgraded protocol bytes.
 
+## User-Agent
+
+`user_agent` parses exactly one bounded RFC 9110 `User-Agent` request field
+value as an ordered sequence whose first member is a product and whose later
+members are products or parenthesized comments. The field is limited to 64 KiB,
+the member list to 256 entries, and nested comments to 128 levels. Product and
+product-version values are RFC 9110 tokens; required RWS separates members and
+leading or trailing OWS is accepted. Comment validation is iterative, accepts
+RFC quoted-pairs and obs-text, and rejects malformed or unterminated comments,
+forbidden controls, empty values, invalid products, and duplicate field lines.
+
+`UserAgent::members()` exposes read-only product, version, and comment
+accessors. `header_value()` preserves accepted product/version and comment
+spelling while emitting deterministic single-space member separators. This
+primitive reports request metadata only; it does not fingerprint clients,
+normalize product policy, synthesize defaults, or select application behavior.
+
 ## Content-Encoding
 
 `content_encoding` parses one or more `Content-Encoding` field values into an
