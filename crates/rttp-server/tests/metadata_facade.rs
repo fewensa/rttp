@@ -56,11 +56,11 @@ use rttp_server::server::{
   HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
   HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
   HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
-  HttpVariantVaryParseError, HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest,
-  HttpWantReprDigest, HttpWwwAuthenticate, HttpWwwAuthenticateChallenge,
-  HttpWwwAuthenticateParameter, HttpWwwAuthenticateParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
+  HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
+  HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpWwwAuthenticate,
+  HttpWwwAuthenticateChallenge, HttpWwwAuthenticateParameter, HttpWwwAuthenticateParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
   SecFetchUser, SecPurpose,
 };
@@ -208,6 +208,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpReferer::parse("https://shop.example/checkout?step=pay").expect("Referer should parse");
   let referer_error: Result<HttpReferer, HttpRefererParseError> =
     HttpReferer::parse("https://example.test/path#frag");
+  let user_agent: HttpUserAgent =
+    HttpUserAgent::parse("Mozilla/5.0 (KHTML, like Gecko)").expect("User-Agent should parse");
+  let _: &[HttpUserAgentMember] = user_agent.members();
+  let user_agent_error: Result<HttpUserAgent, HttpUserAgentParseError> =
+    HttpUserAgent::parse("product/");
   let sec_gpc: HttpSecGpc = HttpSecGpc::parse("1").expect("Sec-GPC should parse");
   let sec_gpc_error: Result<HttpSecGpc, HttpSecGpcParseError> = HttpSecGpc::parse("0");
   let upgrade_insecure_requests: HttpUpgradeInsecureRequests =
@@ -535,6 +540,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     "https://shop.example/checkout?step=pay"
   );
   assert!(referer_error.is_err());
+  assert_eq!(user_agent.header_value(), "Mozilla/5.0 (KHTML, like Gecko)");
+  assert_eq!(Some("Mozilla"), user_agent.members()[0].product());
+  assert_eq!(Some("5.0"), user_agent.members()[0].version());
+  assert_eq!(Some("KHTML, like Gecko"), user_agent.members()[1].comment());
+  assert!(user_agent_error.is_err());
   assert_eq!(sec_gpc.header_value(), "1");
   assert!(sec_gpc_error.is_err());
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
@@ -1801,6 +1811,60 @@ fn request_facade_parses_referer_metadata_without_policy() {
   );
   let _: HttpRefererParseError = HttpReferer::parse("https://example.test/path\0")
     .expect_err("control-byte Referer metadata should be rejected");
+}
+
+#[test]
+fn request_facade_parses_user_agent_metadata_without_policy() {
+  let valid = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nUser-Agent: Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko)\r\n\r\n",
+  )
+  .expect("request should parse");
+  let user_agent: HttpUserAgent = valid
+    .user_agent()
+    .expect("User-Agent should parse")
+    .expect("User-Agent should be present");
+  assert_eq!(
+    "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko)",
+    user_agent.header_value()
+  );
+  assert_eq!(3, user_agent.len());
+  assert_eq!(Some("Mozilla"), user_agent.members()[0].product());
+  assert_eq!(Some("5.0"), user_agent.members()[0].version());
+  assert_eq!(Some("AppleWebKit"), user_agent.members()[1].product());
+  assert_eq!(Some("537.36"), user_agent.members()[1].version());
+  assert_eq!(Some("KHTML, like Gecko"), user_agent.members()[2].comment());
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .user_agent()
+      .expect("missing User-Agent should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nUser-Agent: product/\r\n\r\n",
+  )
+  .expect("malformed metadata should remain available");
+  assert!(malformed.user_agent().is_err());
+  assert_eq!(Some("product/"), malformed.header("User-Agent"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nUser-Agent: client/1\r\nuser-agent: client/2\r\n\r\n",
+  )
+  .expect("duplicate metadata should remain available");
+  assert!(duplicate.user_agent().is_err());
+  assert_eq!(Some("client/1"), duplicate.header("User-Agent"));
+
+  let _: HttpUserAgentParseError =
+    HttpUserAgent::parse("product/").expect_err("malformed User-Agent metadata should be rejected");
+  assert!(
+    HttpUserAgent::parse("p".repeat(64 * 1024 + 1)).is_err(),
+    "oversized User-Agent metadata should be rejected"
+  );
+  let _: HttpUserAgentParseError = HttpUserAgent::parse("client/1\0")
+    .expect_err("control-byte User-Agent metadata should be rejected");
 }
 
 #[test]
