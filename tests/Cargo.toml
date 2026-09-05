@@ -37,6 +37,10 @@ name = "metadata_http11_interoperability_matrix"
 path = "metadata_http11_interoperability_matrix.rs"
 
 [[test]]
+name = "user_agent_http11_interoperability_matrix"
+path = "user_agent_http11_interoperability_matrix.rs"
+
+[[test]]
 name = "cache_metadata_http11_interoperability_matrix"
 path = "cache_metadata_http11_interoperability_matrix.rs"
 

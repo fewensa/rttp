@@ -62,9 +62,10 @@ pub use rttp_client::{
   NegotiateDirective, NegotiateParseError, Overwrite, OverwriteParseError, Referer,
   RefererParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
   SecWebSocketKey, SecWebSocketKeyParseError, Timeout, TimeoutParseError, TimeoutType, TraceParent,
-  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError, Via, ViaMember,
-  ViaParseError, XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError,
-  XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError, UserAgent,
+  UserAgentMember, UserAgentParseError, Via, ViaMember, ViaParseError, XForwardedFor,
+  XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError, XForwardedHost,
+  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 
 impl Http {
