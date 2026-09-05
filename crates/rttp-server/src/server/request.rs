@@ -184,6 +184,10 @@ pub use rttp_protocol::upgrade_insecure_requests::{
   UpgradeInsecureRequests as HttpUpgradeInsecureRequests,
   UpgradeInsecureRequestsParseError as HttpUpgradeInsecureRequestsParseError,
 };
+pub use rttp_protocol::user_agent::{
+  UserAgent as HttpUserAgent, UserAgentMember as HttpUserAgentMember,
+  UserAgentParseError as HttpUserAgentParseError,
+};
 pub use rttp_protocol::via::{
   Via as HttpVia, ViaMember as HttpViaMember, ViaParseError as HttpViaParseError,
 };
@@ -643,6 +647,18 @@ impl Request {
       return Ok(None);
     }
     HttpReferer::parse_values(values).map(Some)
+  }
+
+  /// Parses one bounded `User-Agent` request field without fingerprinting
+  /// clients, applying product policy, synthesizing defaults, or selecting
+  /// application behavior. Duplicate or malformed fields return a parser error
+  /// while the raw request header remains available through [`Self::header`].
+  pub fn user_agent(&self) -> Result<Option<HttpUserAgent>, HttpUserAgentParseError> {
+    let values: Vec<&str> = self.headers_named("User-Agent").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUserAgent::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed
@@ -2347,6 +2363,23 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpReferer::parse_values(values).map(Some)
+  }
+
+  /// Parses one bounded `User-Agent` request field without fingerprinting
+  /// clients, applying product policy, synthesizing defaults, or selecting
+  /// application behavior. Duplicate or malformed fields return a parser error
+  /// while the raw request header remains available through [`Self::header`].
+  pub fn user_agent(&self) -> Result<Option<HttpUserAgent>, HttpUserAgentParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("User-Agent"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUserAgent::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed

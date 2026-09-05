@@ -171,6 +171,22 @@ This boundary is syntax-only metadata. RTTP does not enforce `Referrer-Policy`,
 make trust decisions, apply CSRF protection, redact values, canonicalize URLs,
 or change redirect behavior.
 
+## User-Agent request metadata
+
+`Request::user_agent()` and `HttpRequest::user_agent()` parse all
+case-insensitive `User-Agent` request fields through the shared
+`rttp_protocol::user_agent::UserAgent` type as `HttpUserAgent`. They return
+`Ok(None)` when the field is absent and expose ordered product and comment
+members through `members()`, `len()`, `is_empty()`, and canonical
+`header_value()`. Duplicate field lines, malformed products or comments,
+forbidden controls, empty values, and oversized or over-limit fields return
+`HttpUserAgentParseError`; raw values remain available through
+`Request::header()` or `HttpRequest::header()` after typed parsing fails.
+
+This boundary is syntax-only metadata. RTTP does not fingerprint clients,
+apply product policy, synthesize defaults, make routing, authentication,
+logging, or request-acceptance decisions, or select application behavior.
+
 ## Request representation metadata
 
 Handlers can call `Request::content_type()`, `content_encoding()`, and

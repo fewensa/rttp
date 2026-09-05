@@ -5954,6 +5954,317 @@ hello\r\n\
   }
 
   #[test]
+  fn user_agent_helpers_parse_bounded_metadata_without_policy() {
+    let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse");
+    assert_eq!(
+      None,
+      absent
+        .user_agent()
+        .expect("missing User-Agent should be valid")
+    );
+    let absent_http = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse");
+    assert_eq!(
+      None,
+      absent_http
+        .user_agent()
+        .expect("missing User-Agent should be valid")
+    );
+    let absent_http2 = DecodedHttp2RequestHeaders {
+      method: Some("GET".to_string()),
+      target: Some("/asset".to_string()),
+      scheme: Some("https".to_string()),
+      authority: Some("example.test".to_string()),
+      extended_connect_protocol: None,
+      headers: Vec::new(),
+    }
+    .into_request(Vec::new(), Vec::new())
+    .expect("HTTP/2 request should build");
+    assert_eq!(
+      None,
+      absent_http2
+        .user_agent()
+        .expect("missing HTTP/2 User-Agent should be valid")
+    );
+
+    for value in [
+      "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko)",
+      "  Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) ",
+      "Acme/01.0",
+      "product ()",
+    ] {
+      let expected = match value {
+        "  Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) " => {
+          "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko)"
+        }
+        other => other,
+      };
+      let raw = format!(
+        "GET / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: {value}\r\n\r\n"
+      );
+      let request = Request::from_raw_frame(raw.as_bytes()).expect("request should parse");
+      let user_agent = request
+        .user_agent()
+        .expect("User-Agent should parse")
+        .expect("User-Agent should be present");
+      assert_eq!(expected, user_agent.header_value());
+
+      let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+      let http_user_agent = http_request
+        .user_agent()
+        .expect("User-Agent should parse")
+        .expect("User-Agent should be present");
+      assert_eq!(expected, http_user_agent.header_value());
+
+      let http2_request = DecodedHttp2RequestHeaders {
+        method: Some("GET".to_string()),
+        target: Some("/asset".to_string()),
+        scheme: Some("https".to_string()),
+        authority: Some("example.test".to_string()),
+        extended_connect_protocol: None,
+        headers: vec![("user-agent".to_string(), value.to_string())],
+      }
+      .into_request(Vec::new(), Vec::new())
+      .expect("HTTP/2 request should build");
+      let http2_user_agent = http2_request
+        .user_agent()
+        .expect("HTTP/2 User-Agent should parse")
+        .expect("HTTP/2 User-Agent should be present");
+      assert_eq!(expected, http2_user_agent.header_value());
+    }
+
+    let valid = Request::from_raw_frame(
+      b"GET / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko)\r\n\r\n",
+    )
+    .expect("request should parse");
+    let members = valid
+      .user_agent()
+      .expect("User-Agent should parse")
+      .expect("User-Agent should be present");
+    assert_eq!(3, members.len());
+    assert_eq!(Some("Mozilla"), members.members()[0].product());
+    assert_eq!(Some("5.0"), members.members()[0].version());
+    assert_eq!(Some("AppleWebKit"), members.members()[1].product());
+    assert_eq!(Some("537.36"), members.members()[1].version());
+    assert_eq!(Some("KHTML, like Gecko"), members.members()[2].comment());
+
+    for value in [
+      "",
+      "product/",
+      "(comment) product",
+      "product(comment)",
+      "product;parameter",
+    ] {
+      let raw = format!(
+        "GET / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: {value}\r\n\r\n"
+      );
+      let request = Request::from_raw_frame(raw.as_bytes()).expect("request should be retained");
+      assert!(
+        request.user_agent().is_err(),
+        "User-Agent should reject {value:?}"
+      );
+      assert_eq!(Some(value), request.header("User-Agent"));
+
+      let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should be retained");
+      assert!(
+        http_request.user_agent().is_err(),
+        "User-Agent should reject {value:?}"
+      );
+      assert_eq!(Some(value), http_request.header("User-Agent"));
+
+      let http2_request = DecodedHttp2RequestHeaders {
+        method: Some("GET".to_string()),
+        target: Some("/asset".to_string()),
+        scheme: Some("https".to_string()),
+        authority: Some("example.test".to_string()),
+        extended_connect_protocol: None,
+        headers: vec![("user-agent".to_string(), value.to_string())],
+      }
+      .into_request(Vec::new(), Vec::new())
+      .expect("HTTP/2 request should be retained");
+      assert!(
+        http2_request.user_agent().is_err(),
+        "HTTP/2 User-Agent should reject {value:?}"
+      );
+      assert_eq!(Some(value), http2_request.header("User-Agent"));
+    }
+
+    let duplicate_raw = concat!(
+      "GET / HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "User-Agent: client/1\r\n",
+      "user-agent: client/2\r\n",
+      "\r\n"
+    );
+    let duplicate = Request::from_raw_frame(duplicate_raw.as_bytes())
+      .expect("duplicate metadata should be retained");
+    assert!(duplicate.user_agent().is_err());
+    assert_eq!(Some("client/1"), duplicate.header("User-Agent"));
+    let duplicate_http = HttpRequest::parse(duplicate_raw.as_bytes())
+      .expect("duplicate metadata should be retained");
+    assert!(duplicate_http.user_agent().is_err());
+    assert_eq!(Some("client/1"), duplicate_http.header("User-Agent"));
+
+    let duplicate_http2 = DecodedHttp2RequestHeaders {
+      method: Some("GET".to_string()),
+      target: Some("/asset".to_string()),
+      scheme: Some("https".to_string()),
+      authority: Some("example.test".to_string()),
+      extended_connect_protocol: None,
+      headers: vec![
+        ("user-agent".to_string(), "client/1".to_string()),
+        ("User-Agent".to_string(), "client/2".to_string()),
+      ],
+    }
+    .into_request(Vec::new(), Vec::new())
+    .expect("duplicate HTTP/2 metadata should be retained");
+    assert!(duplicate_http2.user_agent().is_err());
+    assert_eq!(Some("client/1"), duplicate_http2.header("User-Agent"));
+    assert_eq!(
+      vec!["client/1", "client/2"],
+      duplicate_http2.headers_named("User-Agent").collect::<Vec<_>>()
+    );
+
+    let control = Request {
+      method: "GET".to_string(),
+      target: "/".to_string(),
+      version: "HTTP/1.1".to_string(),
+      headers: vec![
+        ("Host".to_string(), "example.test".to_string()),
+        ("User-Agent".to_string(), "client/1\0".to_string()),
+      ],
+      trailers: Vec::new(),
+      body: Vec::new(),
+      content_length: None,
+      extended_connect_protocol: None,
+    };
+    assert!(control.user_agent().is_err());
+    assert_eq!(Some("client/1\0"), control.header("User-Agent"));
+
+    let control_http = HttpRequest {
+      method: "GET".to_string(),
+      path: "/".to_string(),
+      query: None,
+      version: "HTTP/1.1".to_string(),
+      headers: vec![HttpHeader::new("User-Agent", "client/1\0")],
+      body: Vec::new(),
+      content_length: None,
+    };
+    assert!(control_http.user_agent().is_err());
+    assert_eq!(Some("client/1\0"), control_http.header("User-Agent"));
+
+    let control_http2 = DecodedHttp2RequestHeaders {
+      method: Some("GET".to_string()),
+      target: Some("/asset".to_string()),
+      scheme: Some("https".to_string()),
+      authority: Some("example.test".to_string()),
+      extended_connect_protocol: None,
+      headers: vec![("user-agent".to_string(), "client/1\0".to_string())],
+    }
+    .into_request(Vec::new(), Vec::new())
+    .expect("HTTP/2 request should be retained");
+    assert!(control_http2.user_agent().is_err());
+    assert_eq!(Some("client/1\0"), control_http2.header("User-Agent"));
+
+    let oversized = "p".repeat(64 * 1024 + 1);
+    let oversized_request = Request {
+      method: "GET".to_string(),
+      target: "/".to_string(),
+      version: "HTTP/1.1".to_string(),
+      headers: vec![("User-Agent".to_string(), oversized.clone())],
+      trailers: Vec::new(),
+      body: Vec::new(),
+      content_length: None,
+      extended_connect_protocol: None,
+    };
+    assert!(oversized_request.user_agent().is_err());
+    assert_eq!(
+      Some(oversized.as_str()),
+      oversized_request.header("User-Agent")
+    );
+
+    let oversized_http = HttpRequest {
+      method: "GET".to_string(),
+      path: "/".to_string(),
+      query: None,
+      version: "HTTP/1.1".to_string(),
+      headers: vec![HttpHeader::new("User-Agent", oversized.clone())],
+      body: Vec::new(),
+      content_length: None,
+    };
+    assert!(oversized_http.user_agent().is_err());
+    assert_eq!(Some(oversized.as_str()), oversized_http.header("User-Agent"));
+
+    let oversized_http2 = DecodedHttp2RequestHeaders {
+      method: Some("GET".to_string()),
+      target: Some("/asset".to_string()),
+      scheme: Some("https".to_string()),
+      authority: Some("example.test".to_string()),
+      extended_connect_protocol: None,
+      headers: vec![("user-agent".to_string(), oversized.clone())],
+    }
+    .into_request(Vec::new(), Vec::new())
+    .expect("HTTP/2 request should be retained");
+    assert!(oversized_http2.user_agent().is_err());
+    assert_eq!(Some(oversized.as_str()), oversized_http2.header("User-Agent"));
+
+    let too_many_members = (0..=256)
+      .map(|index| format!("p{index}"))
+      .collect::<Vec<_>>()
+      .join(" ");
+    let too_many_request = Request {
+      method: "GET".to_string(),
+      target: "/".to_string(),
+      version: "HTTP/1.1".to_string(),
+      headers: vec![("User-Agent".to_string(), too_many_members.clone())],
+      trailers: Vec::new(),
+      body: Vec::new(),
+      content_length: None,
+      extended_connect_protocol: None,
+    };
+    assert!(too_many_request.user_agent().is_err());
+    assert_eq!(
+      Some(too_many_members.as_str()),
+      too_many_request.header("User-Agent")
+    );
+
+    let too_many_http = HttpRequest {
+      method: "GET".to_string(),
+      path: "/".to_string(),
+      query: None,
+      version: "HTTP/1.1".to_string(),
+      headers: vec![HttpHeader::new("User-Agent", too_many_members.clone())],
+      body: Vec::new(),
+      content_length: None,
+    };
+    assert!(too_many_http.user_agent().is_err());
+    assert_eq!(
+      Some(too_many_members.as_str()),
+      too_many_http.header("User-Agent")
+    );
+
+    let too_many_http2 = DecodedHttp2RequestHeaders {
+      method: Some("GET".to_string()),
+      target: Some("/asset".to_string()),
+      scheme: Some("https".to_string()),
+      authority: Some("example.test".to_string()),
+      extended_connect_protocol: None,
+      headers: vec![("user-agent".to_string(), too_many_members.clone())],
+    }
+    .into_request(Vec::new(), Vec::new())
+    .expect("HTTP/2 request should be retained");
+    assert!(too_many_http2.user_agent().is_err());
+    assert_eq!(
+      Some(too_many_members.as_str()),
+      too_many_http2.header("User-Agent")
+    );
+
+    let _: HttpUserAgentParseError = HttpUserAgent::parse("client/1\0")
+      .expect_err("control-byte User-Agent metadata should be rejected");
+  }
+
+  #[test]
   fn authentication_helpers_parse_bounded_metadata_without_authentication_policy() {
     let raw = concat!(
       "GET / HTTP/1.1\r\n",
