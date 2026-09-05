@@ -550,6 +550,32 @@ make trust decisions, apply CSRF protection, redact values, canonicalize URLs,
 or change redirect behavior. The client’s raw `header` helper remains
 available for values outside the bounded typed syntax.
 
+## Bounded User-Agent request metadata
+
+With the client feature, `HttpClient::user_agent(value)` validates and emits
+one canonical `User-Agent` request field through the shared
+`rttp_protocol::user_agent::UserAgent` type. The typed value replaces existing
+case-insensitive `User-Agent` fields before a socket is opened, so it wins over
+a raw `header(("User-Agent", value))` and over the automatic default without
+duplicating the field. Product/version members and comments are preserved in
+wire order, with one canonical space between members. Each value is limited to
+64 KiB and to 256 members, with bounded comment nesting; malformed, control-byte,
+oversized, and empty values are rejected as builder errors before connecting.
+`rttp::UserAgent`, `rttp::UserAgentMember`, and `rttp::UserAgentParseError` are
+re-exported for direct parsing.
+
+When no typed or raw `User-Agent` is supplied, the existing automatic
+`Mozilla/5.0 rttp/{version}` request default is unchanged. The raw `header`
+helper remains available for values outside the typed syntax. On the server
+facade, `Request::user_agent()` and `HttpRequest::user_agent()` parse the
+singleton field into `HttpUserAgent`; an absent field returns `Ok(None)`, while
+malformed, duplicate, control-byte, oversized, or over-limit values return
+`HttpUserAgentParseError` and leave the raw header visible.
+
+This is syntax-only metadata. RTTP does not fingerprint clients, discover
+platform details, apply product policy, synthesize a default through the typed
+accessor, or change behavior based on the declared user agent.
+
 ## Bounded Idempotency-Key request metadata
 
 `HttpClient::idempotency_key(value)` validates and emits one opaque

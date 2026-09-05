@@ -23,8 +23,8 @@ use rttp::server::{
   HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
-  HttpRefererParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSameSite, HttpSaveData,
-  HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpSameSite,
+  HttpSaveData, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
   HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
@@ -35,9 +35,9 @@ use rttp::server::{
   HttpSpeculationRulesParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
   HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
   HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
-  HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
+  HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -103,6 +103,60 @@ fn compatibility_facade_exports_referer_metadata_types() {
   assert_eq!("//cdn.example/lib.js", scheme_relative.header_value());
   let _: rttp::RefererParseError = rttp::Referer::parse("https://example.test/path#frag")
     .expect_err("fragment Referer should fail");
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_exports_user_agent_metadata_types() {
+  let user_agent: rttp::UserAgent =
+    rttp::UserAgent::parse("Mozilla/5.0 Acme/2.1 (compatible; facade)")
+      .expect("User-Agent metadata should parse");
+  let _: &rttp::UserAgentMember = &user_agent.members()[0];
+  let server_user_agent: HttpUserAgent = HttpUserAgent::parse(user_agent.header_value())
+    .expect("server User-Agent alias should parse the client value");
+  let _: &HttpUserAgentMember = &server_user_agent.members()[0];
+
+  assert_eq!(user_agent, server_user_agent);
+  assert_eq!(
+    "Mozilla/5.0 Acme/2.1 (compatible; facade)",
+    server_user_agent.header_value()
+  );
+  assert_eq!(Some("Mozilla"), server_user_agent.members()[0].product());
+  assert_eq!(Some("5.0"), server_user_agent.members()[0].version());
+  assert_eq!(
+    Some("compatible; facade"),
+    server_user_agent.members()[2].comment()
+  );
+
+  let _: rttp::UserAgentParseError =
+    rttp::UserAgent::parse("product/").expect_err("malformed User-Agent should fail");
+  let _: HttpUserAgentParseError =
+    HttpUserAgent::parse("p".repeat(64 * 1024 + 1)).expect_err("oversized User-Agent should fail");
+}
+
+#[test]
+fn compatibility_facade_user_agent_server_aliases_preserve_absence_and_raw_errors() {
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without User-Agent should parse");
+  assert_eq!(
+    None,
+    absent
+      .user_agent()
+      .expect("absence at the server protocol boundary should be valid")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: product/\r\n\r\n")
+      .expect("malformed User-Agent should remain a parseable request");
+  assert!(malformed.user_agent().is_err());
+  assert_eq!(Some("product/"), malformed.header("User-Agent"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: client/1\r\nuser-agent: client/2\r\n\r\n",
+  )
+  .expect("duplicate User-Agent fields should remain a parseable request");
+  assert!(duplicate.user_agent().is_err());
+  assert_eq!(Some("client/1"), duplicate.header("User-Agent"));
 }
 
 #[test]
