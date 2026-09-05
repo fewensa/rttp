@@ -171,6 +171,7 @@ pub use rttp_protocol::trace_context::{
 pub use rttp_protocol::upgrade_insecure_requests::{
   UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
+pub use rttp_protocol::user_agent::{UserAgent, UserAgentMember, UserAgentParseError};
 pub use rttp_protocol::variant_vary::{VariantVary, VariantVaryParseError};
 pub use rttp_protocol::via::{Via, ViaMember, ViaParseError};
 pub use rttp_protocol::x_forwarded_for::{

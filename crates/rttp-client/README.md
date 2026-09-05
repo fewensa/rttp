@@ -1189,6 +1189,25 @@ This is syntax-only metadata. RTTP does not enforce `Referrer-Policy`, make
 trust decisions, apply CSRF protection, redact values, canonicalize URLs, or
 change redirect behavior.
 
+## Bounded User-Agent request metadata
+
+`HttpClient::user_agent(value)` validates and emits one canonical
+`User-Agent` request field through the shared
+`rttp_protocol::user_agent::UserAgent` type, replacing any existing
+case-insensitive `User-Agent` field before a socket is opened. The value is
+one ordered sequence of products and comments, bounded to 64 KiB, with
+canonical single-space member separators. Malformed, duplicate, control-byte,
+and oversized values are rejected before connecting. A typed explicit value
+wins over a raw `header(("User-Agent", value))` and over the automatic
+default without duplicating the field. When no typed or raw `User-Agent` is
+set, the existing automatic `Mozilla/5.0 rttp/{version}` default remains.
+`header(("User-Agent", value))` remains available when an application needs
+raw header control.
+
+This is syntax-only metadata. RTTP does not fingerprint clients, discover
+platform details, apply product policy, introduce global or environment-based
+defaults, or add automatic policy beyond the existing default header.
+
 ## Bounded HTTP request control metadata
 
 `HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a bounded `TE`
@@ -1760,6 +1779,7 @@ header-block model.
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | DNT | `dnt` emits bounded `DNT: 0`/`DNT: 1` request metadata through the shared protocol `Dnt` type and rejects malformed or oversized input before connecting | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` emission, retries, or privacy-preference policy |
 | Referer | `referer` emits one bounded canonical `Referer` request field through the shared protocol type, replacing existing case-insensitive fields; absolute, relative, and scheme-relative URI references are accepted, and raw `header(("Referer", value))` remains available as a fallback | No `Referrer-Policy` enforcement, trust decisions, CSRF protection, redaction, URL canonicalization, or redirect behavior |
+| User-Agent | `user_agent` emits one bounded canonical `User-Agent` request field through the shared protocol type, replacing existing case-insensitive fields so typed values win over raw headers and the automatic default; absent typed/raw values retain `Mozilla/5.0 rttp/{version}` | No fingerprinting, platform discovery, product policy, global or environment-based defaults, or automatic policy beyond the existing default header |
 | Sec-GPC | `sec_gpc` emits bounded `Sec-GPC: 1` request metadata through the shared protocol type | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |

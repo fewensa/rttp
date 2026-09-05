@@ -58,6 +58,7 @@ use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::trailer::Trailer;
 use rttp_protocol::upgrade::Upgrade;
 use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
+use rttp_protocol::user_agent::UserAgent;
 use rttp_protocol::via::{Via, MAX_VIA_VALUE_BYTES};
 use rttp_protocol::x_forwarded_for::{XForwardedFor, MAX_X_FORWARDED_FOR_VALUE_BYTES};
 use rttp_protocol::x_forwarded_host::{XForwardedHost, MAX_X_FORWARDED_HOST_VALUE_BYTES};
@@ -258,6 +259,23 @@ impl HttpClient {
     let referer = Referer::parse(value.as_ref())
       .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
     Ok(self.header(Header::new("Referer", referer.header_value())))
+  }
+
+  /// Set bounded `User-Agent` request metadata.
+  ///
+  /// The value must be one RFC 9110 `User-Agent` field accepted by the shared
+  /// protocol parser. The canonical value replaces any existing
+  /// case-insensitive `User-Agent` field before a connection is opened, so a
+  /// typed explicit value wins over a raw header and over the automatic
+  /// default. When this helper is not used and no raw `User-Agent` is set,
+  /// the existing automatic `Mozilla/5.0 rttp/{version}` default remains.
+  /// This only declares syntax-validated metadata; RTTP does not fingerprint,
+  /// discover platform details, apply product policy, or change defaults
+  /// beyond that existing automatic header.
+  pub fn user_agent<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let user_agent = UserAgent::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("User-Agent", user_agent.header_value())))
   }
 
   ///  Add request header

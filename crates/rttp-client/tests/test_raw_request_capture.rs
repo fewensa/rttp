@@ -3,7 +3,7 @@ use rttp_test_support as support;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
 use rttp_client::types::{Auth, Header, Proxy};
-use rttp_client::{ByteRangeSpec, HttpClient, SecPurpose};
+use rttp_client::{ByteRangeSpec, Config, HttpClient, SecPurpose};
 use rttp_protocol::authorization::MAX_AUTHORIZATION_VALUE_BYTES;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -720,6 +720,135 @@ fn referer_helper_rejects_invalid_and_oversized_metadata_before_connecting() {
       "invalid metadata must not open a socket"
     );
   }
+}
+
+#[test]
+fn user_agent_helper_emits_one_canonical_case_insensitive_singleton() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("user-agent", "legacy-agent/1.0"))
+      .user_agent("  Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) ")
+      .expect("User-Agent metadata should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(1, request.matches("\r\nUser-Agent: ").count());
+  assert_eq!(
+    Some("Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko)"),
+    header_value(&request, "USER-AGENT")
+  );
+}
+
+#[test]
+fn user_agent_helper_second_call_replaces_prior_typed_value() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .user_agent("first-agent/1.0")
+      .expect("first User-Agent should be accepted")
+      .user_agent("second-agent/2.0 (comment)")
+      .expect("second User-Agent should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(1, request.matches("\r\nUser-Agent: ").count());
+  assert_eq!(
+    Some("second-agent/2.0 (comment)"),
+    header_value(&request, "User-Agent")
+  );
+}
+
+#[test]
+fn user_agent_default_remains_when_typed_value_is_absent() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  let expected = format!("Mozilla/5.0 rttp/{}", env!("CARGO_PKG_VERSION"));
+
+  assert_eq!(1, request.matches("\r\nUser-Agent: ").count());
+  assert_eq!(
+    Some(expected.as_str()),
+    header_value(&request, "User-Agent")
+  );
+}
+
+#[test]
+fn user_agent_helper_rejects_invalid_and_oversized_metadata_before_connecting() {
+  let oversized = "p".repeat(64 * 1024 + 1);
+  for value in [
+    "".to_string(),
+    "Mozilla/5.0\0".to_string(),
+    "product=bad".to_string(),
+    "Mozilla/5.0(".to_string(),
+    oversized,
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .user_agent(&value)
+        .expect_err("invalid User-Agent metadata should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid metadata must not open a socket"
+    );
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_user_agent_helper_emits_canonical_metadata() {
+  let request = capture_request(|base_url| {
+    block_on(
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .user_agent("async-agent/1.0")
+        .expect("User-Agent metadata should be accepted")
+        .rasync(),
+    )
+    .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("async-agent/1.0"),
+    header_value(&request_text(&request), "User-Agent")
+  );
+}
+
+#[test]
+fn same_authority_redirect_preserves_typed_user_agent() {
+  let (addr, handle) = support::spawn_status_redirect_request_capture_server(302, "Found");
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/redirect", addr))
+    .user_agent("redirect-agent/1.0 (same-authority)")
+    .expect("User-Agent metadata should be accepted")
+    .emit()
+    .expect("redirected request should succeed");
+
+  assert_eq!(200, response.code());
+  let redirected = request_text(&handle.join().expect("redirect capture thread"));
+  assert_eq!(1, redirected.matches("\r\nUser-Agent: ").count());
+  assert_eq!(
+    Some("redirect-agent/1.0 (same-authority)"),
+    header_value(&redirected, "User-Agent")
+  );
 }
 
 #[cfg(feature = "async")]
