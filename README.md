@@ -3215,6 +3215,7 @@ The complete acceptance loop reviews the pull request, requests or applies a
 revision when the reviewed candidate misses a sealed requirement, runs the
 landing preflight checks, merges the clean pull request, and closes the linked
 issue after landing is confirmed.
+Docs-only changes still go through the same acceptance loop.
 
 ### Examples
 
