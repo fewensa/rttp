@@ -4,7 +4,7 @@ rttp
 Codeon publishes completed implementation through a pull request.
 
 Revision fixture status: CORRECT.
-Codeon full-flow smoke status: READY.
+Codeon full-flow smoke status: COMPLETE.
 Downstream agent matrix fixture status: CORRECT.
 Alternate downstream matrix fixture status: CORRECT.
 
