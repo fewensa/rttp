@@ -54,6 +54,54 @@ fn bounded_h2c_prior_knowledge_round_trip_reaches_the_server() {
 }
 
 #[test]
+fn bounded_h2c_prior_knowledge_round_trip_receives_response_body_larger_than_initial_window() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let response_body = (0..65_535 + 4_096)
+    .map(|idx| b'0' + (idx % 10) as u8)
+    .collect::<Vec<_>>();
+  let expected_body = response_body.clone();
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |request| {
+        tx.send((
+          request.version().to_string(),
+          request.method().to_string(),
+          request.target().to_string(),
+        ))
+        .expect("record large h2c request");
+        HttpResponse::ok(response_body)
+      })
+      .expect("serve large h2c response");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/workspace/h2c-large-body"))
+    .emit_http2_prior_knowledge()
+    .expect("receive large h2c response");
+
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "GET".to_string(),
+      "/workspace/h2c-large-body".to_string()
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded large h2c request")
+  );
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(expected_body.len(), response.body().binary().len());
+  assert_eq!(expected_body.as_slice(), response.body().binary());
+  handle.join().expect("large h2c server thread");
+}
+
+#[test]
 fn h2c_prior_knowledge_round_trip_preserves_accept_charset_metadata() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c server")
