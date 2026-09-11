@@ -5,6 +5,7 @@ pub struct HttpServer {
   pub(crate) read_timeout: Option<Duration>,
   pub(crate) write_timeout: Option<Duration>,
   pub(crate) max_request_body_bytes: usize,
+  pub(crate) max_request_head_bytes: usize,
   pub(crate) http2_policy: Http2ServerPolicy,
 }
 
@@ -42,6 +43,7 @@ impl HttpServer {
         read_timeout: None,
         write_timeout: None,
         max_request_body_bytes: MAX_REQUEST_BODY_BYTES,
+        max_request_head_bytes: MAX_REQUEST_HEAD_BYTES,
         http2_policy: Http2ServerPolicy::default(),
       });
     }
@@ -72,6 +74,21 @@ impl HttpServer {
   pub fn with_max_request_body_bytes(mut self, max_request_body_bytes: usize) -> Self {
     self.max_request_body_bytes = max_request_body_bytes;
     self
+  }
+
+  /// Sets the maximum number of HTTP request-head bytes accepted per request.
+  ///
+  /// The default is 64 KiB. The same limit is enforced for HTTP/1 parsing and
+  /// h2c upgrade request-head parsing. Zero is rejected before serving.
+  pub fn with_max_request_head_bytes(mut self, max_request_head_bytes: usize) -> io::Result<Self> {
+    if max_request_head_bytes == 0 {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "max request head bytes must be greater than zero",
+      ));
+    }
+    self.max_request_head_bytes = max_request_head_bytes;
+    Ok(self)
   }
 
   /// Sets the fixed bounds advertised and enforced for accepted h2c connections.
@@ -139,6 +156,7 @@ impl HttpServer {
       let request = match self.normalize_connection_error(Request::read_next_from_with_continue(
         &mut reader,
         self.max_request_body_bytes,
+        self.max_request_head_bytes,
       )) {
         Ok(Some(request)) => request,
         Ok(None) => break,
@@ -234,12 +252,14 @@ impl HttpServer {
     };
     let mut reader = BufReader::new(stream);
     let request = match self.normalize_connection_error(
-      Request::read_next_from_with_continue(&mut reader, self.max_request_body_bytes).and_then(
-        |request| {
-          request
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
-        },
-      ),
+      Request::read_next_from_with_continue(
+        &mut reader,
+        self.max_request_body_bytes,
+        self.max_request_head_bytes,
+      )
+      .and_then(|request| {
+        request.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+      }),
     ) {
       Ok(request) => request,
       Err(err) if is_expectation_failed_error(&err) => {
@@ -296,11 +316,14 @@ impl HttpServer {
     self.configure_stream(&stream)?;
     let mut reader = BufReader::new(stream);
     let (request, body_kind) = match self.normalize_connection_error(
-      Request::read_next_head_from_with_continue(&mut reader, self.max_request_body_bytes)
-        .and_then(|request| {
-          request
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
-        }),
+      Request::read_next_head_from_with_continue(
+        &mut reader,
+        self.max_request_body_bytes,
+        self.max_request_head_bytes,
+      )
+      .and_then(|request| {
+        request.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+      }),
     ) {
       Ok(request) => request,
       Err(err) if is_expectation_failed_error(&err) => {
@@ -342,12 +365,16 @@ impl HttpServer {
     self.configure_stream(&stream)?;
     let mut reader = BufReader::new(stream);
     let request = match self.normalize_connection_error(
-      Request::read_next_head_from_with_continue(&mut reader, self.max_request_body_bytes)
-        .and_then(|request| {
-          request
-            .map(|(request, _)| request)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
-        }),
+      Request::read_next_head_from_with_continue(
+        &mut reader,
+        self.max_request_body_bytes,
+        self.max_request_head_bytes,
+      )
+      .and_then(|request| {
+        request
+          .map(|(request, _)| request)
+          .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+      }),
     ) {
       Ok(request) => request,
       Err(err) if is_expectation_failed_error(&err) => {

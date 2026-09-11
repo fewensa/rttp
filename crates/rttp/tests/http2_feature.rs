@@ -520,6 +520,109 @@ fn complete_h2c_upgrade(stream: &mut TcpStream, authority: &str, settings_payloa
   write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
 }
 
+fn h2c_upgrade_request_head_exactly(authority: &str, size: usize) -> Vec<u8> {
+  let settings = base64url_encode_unpadded(&[]);
+  let prefix = format!(
+    "GET /upgrade HTTP/1.1\r\n\
+     Host: {authority}\r\n\
+     Connection: keep-alive, HTTP2-Settings, Upgrade\r\n\
+     Upgrade: h2c\r\n\
+     HTTP2-Settings: {settings}\r\n\
+     X-Pad: "
+  );
+  let suffix = b"\r\n\r\n";
+  assert!(
+    size >= prefix.len() + suffix.len(),
+    "h2c request-head size must cover the framing prefix"
+  );
+  let mut raw = prefix.into_bytes();
+  raw.resize(size - suffix.len(), b'x');
+  raw.extend_from_slice(suffix);
+  raw
+}
+
+fn send_h2c_upgrade_request(server: rttp::server::HttpServer, raw: &[u8]) -> (String, bool) {
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|_| {
+      tx.send(()).expect("send unexpected handler call");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2c upgrade server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  stream.write_all(raw).expect("write h2c upgrade request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown client write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+  let result = handle.join().expect("server thread");
+  assert!(
+    result.is_ok(),
+    "h2c upgrade request should be handled: {result:?}"
+  );
+  (response, rx.try_recv().is_ok())
+}
+
+fn serve_h2c_upgrade_after_head(server: rttp::server::HttpServer, raw: &[u8]) -> String {
+  let addr = server.local_addr().expect("server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("HTTP/2", request.version());
+        HttpResponse::ok("h2c accepted")
+      })
+      .expect("serve h2c upgrade request")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2c upgrade server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  stream.write_all(raw).expect("write h2c upgrade request");
+
+  let mut response = Vec::new();
+  let mut byte = [0; 1];
+  while !response.ends_with(b"\r\n\r\n") {
+    stream
+      .read_exact(&mut byte)
+      .expect("read h2c upgrade response");
+    response.push(byte[0]);
+  }
+  let response = String::from_utf8(response).expect("utf8 upgrade response");
+  assert!(response.starts_with("HTTP/1.1 101 Switching Protocols\r\n"));
+
+  stream
+    .write_all(H2_PREFACE)
+    .expect("write h2c upgraded client preface");
+  let settings = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings.frame_type);
+  write_h2_frame(&mut stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/settings", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(b"h2c accepted", response_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+  response
+}
+
 fn assert_malformed_settings_rejected_before_handler(
   initial_payload: &[u8],
   initial_flags: u8,
@@ -2042,6 +2145,126 @@ fn h2c_upgrade_rejects_malformed_http2_settings_before_handler_dispatch() {
     H2_SETTINGS_ENABLE_PUSH,
     2,
   )));
+}
+
+#[test]
+fn h2c_upgrade_enforces_configured_request_head_limit_boundaries() {
+  let bind = || {
+    rttp::Http::server("127.0.0.1:0")
+      .expect("bind server")
+      .with_max_request_head_bytes(512)
+      .expect("set request-head limit")
+  };
+
+  let server = bind();
+  let below =
+    h2c_upgrade_request_head_exactly(&server.local_addr().expect("server addr").to_string(), 511);
+  let response = serve_h2c_upgrade_after_head(server, &below);
+  assert!(response.starts_with("HTTP/1.1 101 Switching Protocols\r\n"));
+
+  let server = bind();
+  let exact =
+    h2c_upgrade_request_head_exactly(&server.local_addr().expect("server addr").to_string(), 512);
+  let response = serve_h2c_upgrade_after_head(server, &exact);
+  assert!(response.starts_with("HTTP/1.1 101 Switching Protocols\r\n"));
+
+  let server = bind();
+  let oversized =
+    h2c_upgrade_request_head_exactly(&server.local_addr().expect("server addr").to_string(), 513);
+  let (response, handler_called) = send_h2c_upgrade_request(server, &oversized);
+  assert!(
+    !handler_called,
+    "oversized h2c request must not reach handler"
+  );
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn h2c_upgrade_rejects_malformed_request_head_within_configured_limit() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_head_bytes(512)
+    .expect("set request-head limit");
+  let (response, handler_called) = send_h2c_upgrade_request(
+    server,
+    b"GET /too many parts HTTP/1.1\r\nHost: localhost\r\nUpgrade: h2c\r\n\r\n",
+  );
+  assert!(
+    !handler_called,
+    "malformed h2c request must not reach handler"
+  );
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn h2c_upgrade_request_head_limit_is_independent_of_request_body_limit() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_body_bytes(1_048_576)
+    .with_max_request_head_bytes(512)
+    .expect("set request-head limit");
+  let oversized =
+    h2c_upgrade_request_head_exactly(&server.local_addr().expect("server addr").to_string(), 513);
+  let (response, handler_called) = send_h2c_upgrade_request(server, &oversized);
+  assert!(
+    !handler_called,
+    "oversized h2c request head must not reach handler"
+  );
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_body_bytes(4)
+    .with_max_request_head_bytes(512)
+    .expect("set request-head limit");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request.body().to_vec())
+        .expect("record unexpected handler call");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2c upgrade server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2c_upgrade(&mut stream, &addr.to_string(), &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    3,
+    &h2_post_headers(b"/upload", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 3, b"abc");
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 3, b"de");
+  stream.flush().expect("flush oversized h2 request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 request write side");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("oversized h2c request body must fail before dispatch");
+  assert_eq!(io::ErrorKind::InvalidData, error.kind());
+  assert_eq!("request body is too large", error.to_string());
+  assert!(
+    rx.try_recv().is_err(),
+    "oversized request must not reach handler"
+  );
 }
 
 #[test]

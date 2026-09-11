@@ -749,6 +749,46 @@ fn assert_bad_request_without_handler(raw: &[u8]) {
   );
 }
 
+fn http1_request_head_exactly(size: usize) -> Vec<u8> {
+  let prefix = b"GET /limit HTTP/1.1\r\nHost: localhost\r\nX-Pad: ";
+  let suffix = b"\r\n\r\n";
+  assert!(
+    size >= prefix.len() + suffix.len(),
+    "request-head size must cover the framing prefix"
+  );
+  let mut raw = prefix.to_vec();
+  raw.resize(size - suffix.len(), b'x');
+  raw.extend_from_slice(suffix);
+  raw
+}
+
+fn send_configured_raw_request(
+  server: rttp::server::HttpServer,
+  raw: &[u8],
+) -> (String, Option<Request>, io::Result<()>) {
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send parsed request");
+      HttpResponse::ok("accepted")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream.write_all(raw).expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let serve_result = handle.join().expect("server thread");
+  (response, rx.try_recv().ok(), serve_result)
+}
+
 fn reserve_local_addr() -> (TcpListener, SocketAddr) {
   let listener = TcpListener::bind("127.0.0.1:0").expect("reserve local addr");
   let addr = listener.local_addr().expect("reserved addr");
@@ -5887,6 +5927,140 @@ fn server_returns_bad_request_for_oversized_request_head() {
   assert!(!handler_called);
   assert_eq!(
     "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn server_accepts_default_request_head_exactly_at_64kib() {
+  let raw = http1_request_head_exactly(64 * 1024);
+  let (response, handler_called) = send_raw_request(&raw);
+
+  assert!(handler_called);
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    response
+  );
+}
+
+#[test]
+fn with_max_request_head_bytes_rejects_zero_before_serving() {
+  let error = match rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_head_bytes(0)
+  {
+    Ok(_) => panic!("zero request-head limit must fail"),
+    Err(error) => error,
+  };
+  assert_eq!(io::ErrorKind::InvalidInput, error.kind());
+  assert_eq!(
+    "max request head bytes must be greater than zero",
+    error.to_string()
+  );
+}
+
+#[test]
+fn server_enforces_configured_request_head_limit_boundaries() {
+  let below = http1_request_head_exactly(255);
+  let exact = http1_request_head_exactly(256);
+  let oversized = http1_request_head_exactly(257);
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_head_bytes(256)
+    .expect("set request-head limit");
+  let (response, request, serve_result) = send_configured_raw_request(server, &below);
+  serve_result.expect("serve below-limit request");
+  assert!(request.is_some());
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    response
+  );
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_head_bytes(256)
+    .expect("set request-head limit");
+  let (response, request, serve_result) = send_configured_raw_request(server, &exact);
+  serve_result.expect("serve exact-limit request");
+  assert!(request.is_some());
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    response
+  );
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_head_bytes(256)
+    .expect("set request-head limit");
+  let (response, request, serve_result) = send_configured_raw_request(server, &oversized);
+  serve_result.expect("serve oversized request-head rejection");
+  assert!(
+    request.is_none(),
+    "oversized request must not reach handler"
+  );
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn server_rejects_malformed_request_head_within_configured_limit() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_head_bytes(256)
+    .expect("set request-head limit");
+  let (response, request, serve_result) = send_configured_raw_request(
+    server,
+    b"GET /too many parts HTTP/1.1\r\nHost: localhost\r\n\r\n",
+  );
+  serve_result.expect("serve malformed request-head rejection");
+  assert!(
+    request.is_none(),
+    "malformed request must not reach handler"
+  );
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn configured_request_head_limit_is_independent_of_request_body_limit() {
+  let oversized_head = http1_request_head_exactly(257);
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_body_bytes(1_048_576)
+    .with_max_request_head_bytes(256)
+    .expect("set request-head limit");
+  let (response, request, serve_result) = send_configured_raw_request(server, &oversized_head);
+  serve_result.expect("serve oversized request-head rejection");
+  assert!(
+    request.is_none(),
+    "oversized request head must not reach handler"
+  );
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_body_bytes(4)
+    .with_max_request_head_bytes(256)
+    .expect("set request-head limit");
+  let (response, request, serve_result) = send_configured_raw_request(
+    server,
+    b"POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nabcde",
+  );
+  serve_result.expect("serve oversized request-body rejection");
+  assert!(
+    request.is_none(),
+    "oversized request body must not reach handler"
+  );
+  assert_eq!(
+    "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large",
     response
   );
 }

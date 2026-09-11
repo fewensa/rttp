@@ -1167,6 +1167,7 @@ impl Request {
   pub(crate) fn read_next_from_with_continue<S>(
     reader: &mut BufReader<S>,
     max_request_body_bytes: usize,
+    max_request_head_bytes: usize,
   ) -> io::Result<Option<Self>>
   where
     S: Read + Write,
@@ -1183,6 +1184,7 @@ impl Request {
           return Ok(Some(Self::from_raw_frame_with_body_kind(
             &raw,
             RequestBodyKind::ContentLength(content_length),
+            max_request_head_bytes,
           )?));
         }
       }
@@ -1225,7 +1227,7 @@ impl Request {
       match find_header_end(&combined) {
         Some(header_end) => {
           let take = header_end + 4 - raw.len();
-          reject_oversized_request_head(header_end + 4)?;
+          reject_oversized_request_head(header_end + 4, max_request_head_bytes)?;
           raw.extend_from_slice(&available[..take]);
           reader.consume(take);
           let head = parse_request_head(&raw[..header_end])?;
@@ -1256,7 +1258,7 @@ impl Request {
         }
         None => {
           let take = available.len();
-          reject_oversized_request_head(raw.len().saturating_add(take))?;
+          reject_oversized_request_head(raw.len().saturating_add(take), max_request_head_bytes)?;
           raw.extend_from_slice(available);
           reader.consume(take);
         }
@@ -1267,24 +1269,28 @@ impl Request {
   pub(crate) fn read_next_head_from_with_continue<S>(
     reader: &mut BufReader<S>,
     max_request_body_bytes: usize,
+    max_request_head_bytes: usize,
   ) -> io::Result<Option<(Self, RequestBodyKind)>>
   where
     S: Read + Write,
   {
-    Self::read_next_head_and_body_kind_from_with_continue(reader, max_request_body_bytes)?.map_or(
-      Ok(None),
-      |(head, kind)| {
-        Ok(Some((
-          Self::from_head_body_kind_and_trailers(head, Vec::new(), kind, Vec::new()),
-          kind,
-        )))
-      },
-    )
+    Self::read_next_head_and_body_kind_from_with_continue(
+      reader,
+      max_request_body_bytes,
+      max_request_head_bytes,
+    )?
+    .map_or(Ok(None), |(head, kind)| {
+      Ok(Some((
+        Self::from_head_body_kind_and_trailers(head, Vec::new(), kind, Vec::new()),
+        kind,
+      )))
+    })
   }
 
   pub(crate) fn read_next_head_and_body_kind_from_with_continue<S>(
     reader: &mut BufReader<S>,
     max_request_body_bytes: usize,
+    max_request_head_bytes: usize,
   ) -> io::Result<Option<(RequestHead, RequestBodyKind)>>
   where
     S: Read + Write,
@@ -1308,7 +1314,7 @@ impl Request {
       match find_header_end(&combined) {
         Some(header_end) => {
           let take = header_end + 4 - raw.len();
-          reject_oversized_request_head(header_end + 4)?;
+          reject_oversized_request_head(header_end + 4, max_request_head_bytes)?;
           raw.extend_from_slice(&available[..take]);
           reader.consume(take);
           let head = parse_request_head(&raw[..header_end])?;
@@ -1323,7 +1329,7 @@ impl Request {
         }
         None => {
           let take = available.len();
-          reject_oversized_request_head(raw.len().saturating_add(take))?;
+          reject_oversized_request_head(raw.len().saturating_add(take), max_request_head_bytes)?;
           raw.extend_from_slice(available);
           reader.consume(take);
         }
@@ -1348,6 +1354,7 @@ impl Request {
           return Ok(Some(Self::from_raw_frame_with_body_kind(
             &raw,
             RequestBodyKind::ContentLength(content_length),
+            MAX_REQUEST_HEAD_BYTES,
           )?));
         }
       }
@@ -1390,7 +1397,7 @@ impl Request {
       match find_header_end(&combined) {
         Some(header_end) => {
           let take = header_end + 4 - raw.len();
-          reject_oversized_request_head(header_end + 4)?;
+          reject_oversized_request_head(header_end + 4, MAX_REQUEST_HEAD_BYTES)?;
           raw.extend_from_slice(&available[..take]);
           reader.consume(take);
           let head = parse_request_head(&raw[..header_end])?;
@@ -1421,7 +1428,7 @@ impl Request {
         }
         None => {
           let take = available.len();
-          reject_oversized_request_head(raw.len().saturating_add(take))?;
+          reject_oversized_request_head(raw.len().saturating_add(take), MAX_REQUEST_HEAD_BYTES)?;
           raw.extend_from_slice(available);
           reader.consume(take);
         }
@@ -1433,16 +1440,20 @@ impl Request {
   pub(crate) fn from_raw_frame(raw: &[u8]) -> io::Result<Self> {
     let header_end = find_header_end(raw)
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
-    reject_oversized_request_head(header_end + 4)?;
+    reject_oversized_request_head(header_end + 4, MAX_REQUEST_HEAD_BYTES)?;
     let head = parse_request_head(&raw[..header_end])?;
     let body_kind = request_body_kind(&head.headers)?;
     Self::from_raw_frame_with_head_and_body_kind(raw, header_end, head, body_kind)
   }
 
-  fn from_raw_frame_with_body_kind(raw: &[u8], body_kind: RequestBodyKind) -> io::Result<Self> {
+  fn from_raw_frame_with_body_kind(
+    raw: &[u8],
+    body_kind: RequestBodyKind,
+    max_request_head_bytes: usize,
+  ) -> io::Result<Self> {
     let header_end = find_header_end(raw)
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
-    reject_oversized_request_head(header_end + 4)?;
+    reject_oversized_request_head(header_end + 4, max_request_head_bytes)?;
     let head = parse_request_head(&raw[..header_end])?;
     Self::from_raw_frame_with_head_and_body_kind(raw, header_end, head, body_kind)
   }
@@ -2057,7 +2068,8 @@ impl HttpRequest {
   pub fn parse(raw: &[u8]) -> Result<Self, HttpParseError> {
     let header_end = find_header_end(raw)
       .ok_or_else(|| HttpParseError::new("request is missing header terminator"))?;
-    reject_oversized_request_head(header_end + 4).map_err(HttpParseError::from_io_error)?;
+    reject_oversized_request_head(header_end + 4, MAX_REQUEST_HEAD_BYTES)
+      .map_err(HttpParseError::from_io_error)?;
     let head = parse_request_head(&raw[..header_end]).map_err(HttpParseError::from_io_error)?;
     let body_bytes = &raw[(header_end + 4)..];
 

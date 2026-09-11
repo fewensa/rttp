@@ -151,8 +151,11 @@ pub(crate) fn find_header_end(raw: &[u8]) -> Option<usize> {
   raw.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
-pub(crate) fn reject_oversized_request_head(length: usize) -> io::Result<()> {
-  if length > MAX_REQUEST_HEAD_BYTES {
+pub(crate) fn reject_oversized_request_head(
+  length: usize,
+  max_request_head_bytes: usize,
+) -> io::Result<()> {
+  if length > max_request_head_bytes {
     Err(io::Error::new(
       io::ErrorKind::InvalidData,
       "request head is too large",
