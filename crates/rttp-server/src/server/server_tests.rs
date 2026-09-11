@@ -480,6 +480,113 @@ fn request_sec_gpc_parses_request_metadata_without_policy() {
 }
 
 #[test]
+fn request_sec_required_document_policy_parses_request_metadata_without_policy() {
+  let absent_raw = "GET /doc HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .sec_required_document_policy()
+      .expect("missing Sec-Required-Document-Policy should be accepted")
+  );
+  assert_eq!(None, absent.header("Sec-Required-Document-Policy"));
+
+  let valid_raw = concat!(
+    "GET /doc HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-Required-Document-Policy: oversized-images=2.0, unsized-media=?0, *;report-to=default\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  let policy = valid
+    .sec_required_document_policy()
+    .expect("Sec-Required-Document-Policy should parse")
+    .expect("Sec-Required-Document-Policy should be present");
+  assert_eq!(
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    policy.header_value()
+  );
+  assert_eq!(
+    Some("oversized-images=2.0, unsized-media=?0, *;report-to=default"),
+    valid.header("Sec-Required-Document-Policy")
+  );
+
+  let malformed_raw = concat!(
+    "GET /doc HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-Required-Document-Policy: oversized-images=1;foo=bar\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.sec_required_document_policy().is_err());
+  assert_eq!(
+    Some("oversized-images=1;foo=bar"),
+    malformed.header("Sec-Required-Document-Policy")
+  );
+
+  let control = HttpRequest {
+    method: "GET".to_string(),
+    path: "/doc".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![HttpHeader::new(
+      "Sec-Required-Document-Policy",
+      "oversized-images=2.0\r, unsized-media=?0",
+    )],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(control.sec_required_document_policy().is_err());
+  assert_eq!(
+    Some("oversized-images=2.0\r, unsized-media=?0"),
+    control.header("Sec-Required-Document-Policy")
+  );
+
+  let duplicate_raw = concat!(
+    "GET /doc HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-Required-Document-Policy: oversized-images=2.0\r\n",
+    "sec-required-document-policy: oversized-images=3.0\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.sec_required_document_policy().is_err());
+  assert_eq!(
+    Some("oversized-images=2.0"),
+    duplicate.header("Sec-Required-Document-Policy")
+  );
+
+  let oversized_value =
+    "x".repeat(rttp_protocol::document_policy::MAX_DOCUMENT_POLICY_VALUE_BYTES + 1);
+  let oversized = HttpRequest {
+    method: "GET".to_string(),
+    path: "/doc".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![HttpHeader::new(
+      "Sec-Required-Document-Policy",
+      oversized_value,
+    )],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(oversized.sec_required_document_policy().is_err());
+  assert!(oversized.header("Sec-Required-Document-Policy").is_some());
+}
+
+#[test]
 fn request_pragma_parses_request_metadata_without_policy() {
   let absent_raw = "GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));

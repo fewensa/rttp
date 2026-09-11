@@ -1532,6 +1532,22 @@ same directive model, parser, formatter, and bounds while exposing distinct
 report-only types and parse errors. It is also metadata-only: it does not
 enforce policy or deliver reports.
 
+## Sec-Required-Document-Policy
+
+`sec_required_document_policy` parses bounded `Sec-Required-Document-Policy`
+request metadata through the same Document Policy Structured Fields
+dictionary model, parser, formatter, and bounds as `Document-Policy`, while
+exposing distinct required-policy types and parse errors. Each field value is
+bounded to 64 KiB, the cumulative raw bytes across all supplied fields are
+bounded to 64 KiB, and the combined directive count is bounded to 256.
+Directive names are opaque lowercase tokens or `*` and are not looked up
+against a browser configuration-point list. Empty dictionaries, duplicate
+directive names including across fields, duplicate parameters, control-bearing
+input, and bound violations are errors. The parser reports declared request
+metadata only: it does not enforce document policy, compare values against
+`Document-Policy`, block document loads, disable browser features, or send
+reports.
+
 ## Supports-Loading-Mode
 
 `supports_loading_mode` parses bounded `Supports-Loading-Mode` response

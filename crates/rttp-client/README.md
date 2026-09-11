@@ -1377,6 +1377,21 @@ This helper only declares request metadata. RTTP does not infer or enforce
 consent, tracking, legal, or serving policy. Callers that need values outside
 the helper can retain raw-header control with `header(("Sec-GPC", "..."))`.
 
+## Bounded Sec-Required-Document-Policy request metadata
+
+`HttpClient::sec_required_document_policy(value)` validates one WICG Document
+Policy Structured Fields dictionary through the shared protocol
+`SecRequiredDocumentPolicy` type and replaces any existing case-insensitive
+`Sec-Required-Document-Policy` field with the canonical value before
+connecting. The helper uses the same grammar and bounds as `Document-Policy`
+while keeping a distinct request metadata type. Malformed, control-bearing,
+duplicate, or oversized input fails before a socket is opened.
+
+This helper only declares request metadata. RTTP does not enforce document
+policy, compare values against `Document-Policy`, block document loads, or
+send reports. Callers that need values outside the helper can retain
+raw-header control with `header(("Sec-Required-Document-Policy", "..."))`.
+
 ## Bounded Upgrade-Insecure-Requests request metadata
 
 `HttpClient::upgrade_insecure_requests()` emits `Upgrade-Insecure-Requests: 1`.
@@ -1795,6 +1810,7 @@ header-block model.
 | Referer | `referer` emits one bounded canonical `Referer` request field through the shared protocol type, replacing existing case-insensitive fields; absolute, relative, and scheme-relative URI references are accepted, and raw `header(("Referer", value))` remains available as a fallback | No `Referrer-Policy` enforcement, trust decisions, CSRF protection, redaction, URL canonicalization, or redirect behavior |
 | User-Agent | `user_agent` emits one bounded canonical `User-Agent` request field through the shared protocol type, replacing existing case-insensitive fields so typed values win over raw headers and the automatic default; absent typed/raw values retain `Mozilla/5.0 rttp/{version}` | No fingerprinting, platform discovery, product policy, global or environment-based defaults, or automatic policy beyond the existing default header |
 | Sec-GPC | `sec_gpc` emits bounded `Sec-GPC: 1` request metadata through the shared protocol type | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
+| Sec-Required-Document-Policy | `sec_required_document_policy` emits bounded WICG Document Policy dictionary request metadata through the shared protocol type, replacing existing same-name fields and rejecting malformed, control, duplicate, or oversized input before connecting | No document-policy enforcement, required-policy comparison against `Document-Policy`, document-load blocking, feature enablement, or report sending |
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Depth | `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, normalizing `infinity` to lowercase and replacing an existing same-name field | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |

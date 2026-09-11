@@ -46,6 +46,7 @@ use rttp_protocol::range::{Range, MAX_RANGE_COUNT};
 use rttp_protocol::referer::Referer;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
+use rttp_protocol::sec_required_document_policy::SecRequiredDocumentPolicy;
 use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::sec_websocket_protocol::SecWebSocketProtocol;
@@ -527,6 +528,30 @@ impl HttpClient {
     let sec_gpc =
       SecGpc::parse("1").map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Sec-GPC", sec_gpc.header_value())))
+  }
+
+  /// Set bounded `Sec-Required-Document-Policy` request metadata.
+  ///
+  /// The value is validated through the shared protocol
+  /// `SecRequiredDocumentPolicy` type using the same Document Policy
+  /// Structured Fields grammar and bounds as `Document-Policy`. The
+  /// canonical value replaces any existing case-insensitive
+  /// `Sec-Required-Document-Policy` field before a connection is opened.
+  /// Malformed, control-bearing, duplicate, or oversized input returns an
+  /// error without opening a socket. This declares request metadata only; it
+  /// does not enforce document policy, compare values against
+  /// `Document-Policy`, block document loads, or send reports. Use `header`
+  /// directly for unusual values.
+  pub fn sec_required_document_policy<S: AsRef<str>>(
+    &mut self,
+    value: S,
+  ) -> error::Result<&mut Self> {
+    let policy = SecRequiredDocumentPolicy::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-Required-Document-Policy",
+      policy.header_value(),
+    )))
   }
 
   /// Set `Upgrade-Insecure-Requests: 1` request metadata.

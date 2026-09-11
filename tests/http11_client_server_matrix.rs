@@ -15,8 +15,8 @@ use rttp_server::server::{
   HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
   HttpContentDisposition, HttpContentType, HttpDav, HttpDepth, HttpDestination, HttpEntityTag,
   HttpIf, HttpIfRangeRequestOutcome, HttpIfScheduleTagMatch, HttpLockToken, HttpOverwrite,
-  HttpResponse, HttpScheduleTag, HttpTimeout, Request, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecPurpose,
+  HttpResponse, HttpScheduleTag, HttpSecRequiredDocumentPolicyValue, HttpTimeout, Request,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecPurpose,
 };
 use rttp_test_support as fixtures;
 
@@ -2282,6 +2282,162 @@ fn sync_client_dnt_is_observed_by_server_helpers() {
     );
     handle.join().expect("DNT server thread");
   }
+}
+
+#[derive(Debug, PartialEq)]
+struct ObservedSecRequiredDocumentPolicy {
+  target: String,
+  raw: Option<String>,
+  parsed: Result<Option<String>, String>,
+  directives: Option<Vec<(String, String)>>,
+}
+
+fn observe_sec_required_document_policy(request: &Request) -> ObservedSecRequiredDocumentPolicy {
+  let parsed = request.sec_required_document_policy();
+  let directives = parsed.as_ref().ok().and_then(|policy| {
+    policy.as_ref().map(|policy| {
+      policy
+        .directives()
+        .iter()
+        .map(|directive| {
+          let value = match directive.value() {
+            HttpSecRequiredDocumentPolicyValue::Boolean(value) => format!("bool:{value}"),
+            HttpSecRequiredDocumentPolicyValue::Integer(value) => format!("int:{value}"),
+            HttpSecRequiredDocumentPolicyValue::Decimal(value) => {
+              format!("decimal:{value}")
+            }
+            HttpSecRequiredDocumentPolicyValue::Token(value) => format!("token:{value}"),
+          };
+          (directive.name().to_string(), value)
+        })
+        .collect()
+    })
+  });
+  ObservedSecRequiredDocumentPolicy {
+    target: request.target().to_string(),
+    raw: request
+      .header("Sec-Required-Document-Policy")
+      .map(str::to_string),
+    parsed: parsed
+      .map(|metadata| metadata.map(|metadata| metadata.header_value()))
+      .map_err(|error| error.to_string()),
+    directives,
+  }
+}
+
+fn spawn_sec_required_document_policy_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedSecRequiredDocumentPolicy>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Sec-Required-Document-Policy metadata server");
+  let addr = server
+    .local_addr()
+    .expect("Sec-Required-Document-Policy metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_sec_required_document_policy(&request))
+          .expect("send observed Sec-Required-Document-Policy metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Sec-Required-Document-Policy request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+#[test]
+fn facade_client_and_server_exchange_sec_required_document_policy_request_metadata() {
+  let (addr, observed_rx, handle) = spawn_sec_required_document_policy_observer();
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/doc"))
+    .sec_required_document_policy("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+    .expect("Sec-Required-Document-Policy should be accepted")
+    .emit()
+    .expect("Sec-Required-Document-Policy request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedSecRequiredDocumentPolicy {
+      target: "/doc".to_string(),
+      raw: Some("oversized-images=2.0, unsized-media=?0, *;report-to=default".to_string()),
+      parsed: Ok(Some(
+        "oversized-images=2.0, unsized-media=?0, *;report-to=default".to_string()
+      )),
+      directives: Some(vec![
+        ("oversized-images".to_string(), "decimal:2.0".to_string()),
+        ("unsized-media".to_string(), "bool:false".to_string()),
+        ("*".to_string(), "bool:true".to_string()),
+      ]),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe Sec-Required-Document-Policy metadata")
+  );
+  handle
+    .join()
+    .expect("Sec-Required-Document-Policy server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_sec_required_document_policy_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_sec_required_document_policy_observer();
+
+  let mut stream =
+    TcpStream::connect(addr).expect("connect malformed Sec-Required-Document-Policy");
+  stream
+    .write_all(
+      b"GET /doc HTTP/1.1\r\nHost: example.test\r\nSec-Required-Document-Policy: oversized-images=1;foo=bar\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Sec-Required-Document-Policy request");
+
+  assert_eq!(
+    ObservedSecRequiredDocumentPolicy {
+      target: "/doc".to_string(),
+      raw: Some("oversized-images=1;foo=bar".to_string()),
+      parsed: Err("invalid Sec-Required-Document-Policy dictionary member".to_string()),
+      directives: None,
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed Sec-Required-Document-Policy")
+  );
+  handle
+    .join()
+    .expect("malformed Sec-Required-Document-Policy server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_sec_required_document_policy_metadata() {
+  let (addr, observed_rx, handle) = spawn_sec_required_document_policy_observer();
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/doc"))
+    .emit()
+    .expect("request without Sec-Required-Document-Policy should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedSecRequiredDocumentPolicy {
+      target: "/doc".to_string(),
+      raw: None,
+      parsed: Ok(None),
+      directives: None,
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent Sec-Required-Document-Policy")
+  );
+  handle
+    .join()
+    .expect("absent Sec-Required-Document-Policy server thread");
 }
 
 #[test]

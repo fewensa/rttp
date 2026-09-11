@@ -24,20 +24,22 @@ use rttp::server::{
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpSameSite,
-  HttpSaveData, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
-  HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
-  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
-  HttpSpeculationRulesParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
-  HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpSaveData, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
+  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
+  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
+  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn,
+  HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
+  HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
+  HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember, HttpUserAgentParseError,
+  HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -525,6 +527,14 @@ fn compatibility_facade_exports_client_metadata_types() {
   let dnt: rttp::Dnt = rttp_client::Dnt::parse("1").expect("DNT should parse");
   let _: rttp::DntParseError =
     rttp_client::Dnt::parse("on").expect_err("invalid DNT should be rejected");
+  let sec_required_document_policy: rttp::SecRequiredDocumentPolicy =
+    rttp_client::SecRequiredDocumentPolicy::parse(
+      "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    )
+    .expect("Sec-Required-Document-Policy should parse");
+  let _: rttp::SecRequiredDocumentPolicyParseError =
+    rttp_client::SecRequiredDocumentPolicy::parse("unsized-media=src;foo=bar")
+      .expect_err("unknown Sec-Required-Document-Policy parameter should be rejected");
   let referer: rttp::Referer =
     rttp_client::Referer::parse("https://shop.example/checkout?step=pay")
       .expect("Referer should parse");
@@ -801,6 +811,18 @@ fn compatibility_facade_exports_client_metadata_types() {
       .unwrap()
       .value(),
     &rttp::DocumentPolicyReportOnlyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(sec_required_document_policy.directives().len(), 3);
+  assert_eq!(
+    sec_required_document_policy
+      .directive("oversized-images")
+      .unwrap()
+      .value(),
+    &rttp::SecRequiredDocumentPolicyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(
+    sec_required_document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
   );
   assert_eq!(
     supports_loading_mode.tokens(),
@@ -1241,6 +1263,56 @@ fn compatibility_facade_rejects_invalid_sec_gpc_request_metadata() {
   assert!(
     duplicate.sec_gpc().is_err(),
     "duplicate Sec-GPC fields must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_sec_required_document_policy_request_metadata() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  );
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/doc"))
+    .sec_required_document_policy("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+    .expect("Sec-Required-Document-Policy should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle
+    .join()
+    .expect("Sec-Required-Document-Policy capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(response.body().string().expect("response body"), "OK");
+  assert_eq!(
+    Some("oversized-images=2.0, unsized-media=?0, *;report-to=default"),
+    header_value(&captured_request_text, "Sec-Required-Document-Policy")
+  );
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let policy = server_request
+    .sec_required_document_policy()
+    .expect("server Sec-Required-Document-Policy should parse")
+    .expect("server Sec-Required-Document-Policy should be present");
+  assert_eq!(
+    policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
+  assert_eq!(policy.len(), 3);
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"GET /doc HTTP/1.1\r\nHost: example.test\r\nSec-Required-Document-Policy: oversized-images=1;foo=bar\r\n\r\n",
+  )
+  .expect("malformed Sec-Required-Document-Policy request should still parse");
+  assert_eq!(
+    malformed.header("Sec-Required-Document-Policy"),
+    Some("oversized-images=1;foo=bar")
+  );
+  assert!(
+    malformed.sec_required_document_policy().is_err(),
+    "malformed Sec-Required-Document-Policy values must fail closed"
   );
 }
 
@@ -2036,6 +2108,14 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let sec_gpc: HttpSecGpc = HttpSecGpc::parse("1").expect("Sec-GPC should parse");
   let _: HttpSecGpcParseError =
     HttpSecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
+  let sec_required_document_policy: HttpSecRequiredDocumentPolicy =
+    HttpSecRequiredDocumentPolicy::parse(
+      "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    )
+    .expect("Sec-Required-Document-Policy should parse");
+  let _: HttpSecRequiredDocumentPolicyParseError =
+    HttpSecRequiredDocumentPolicy::parse("unsized-media=src;foo=bar")
+      .expect_err("unknown Sec-Required-Document-Policy parameter should be rejected");
   let upgrade_insecure_requests: HttpUpgradeInsecureRequests =
     HttpUpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let _: Result<HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError> =
@@ -2235,6 +2315,20 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   );
   assert!(referer_error.is_err());
   assert_eq!(sec_gpc.header_value(), "1");
+  assert_eq!(sec_required_document_policy.directives().len(), 3);
+  assert_eq!(
+    sec_required_document_policy
+      .directive("oversized-images")
+      .unwrap()
+      .value(),
+    &HttpSecRequiredDocumentPolicyValue::Decimal("2.0".to_string())
+  );
+  let _: &HttpSecRequiredDocumentPolicyDirective =
+    sec_required_document_policy.directive("*").unwrap();
+  assert_eq!(
+    sec_required_document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(authorization.header_value(), "Bearer origin-token");
   assert_eq!(proxy_authorization.header_value(), "Basic cHJveHk6c2VjcmV0");
