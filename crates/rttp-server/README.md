@@ -1041,6 +1041,22 @@ original raw field.
 These helpers parse request metadata only. They do not infer or enforce
 consent, tracking, legal, or serving policy.
 
+## Sec-Required-Document-Policy request metadata
+
+Handlers can call `Request::sec_required_document_policy()` and
+`HttpRequest::sec_required_document_policy()` to observe bounded typed
+`Sec-Required-Document-Policy` request metadata through the shared protocol
+`HttpSecRequiredDocumentPolicy` type. The helpers use the same Document
+Policy Structured Fields grammar and bounds as `Document-Policy` while
+keeping a distinct request metadata type. Absent fields return `Ok(None)`.
+Malformed, control-bearing, duplicate, or oversized values return a parser
+error while `Request::header()` and `HttpRequest::header()` continue to
+expose the original raw field.
+
+These helpers parse request metadata only. They do not enforce document
+policy, compare values against `Document-Policy`, block document loads, or
+send reports.
+
 ## Upgrade-Insecure-Requests request metadata
 
 Handlers can call `Request::upgrade_insecure_requests()` and

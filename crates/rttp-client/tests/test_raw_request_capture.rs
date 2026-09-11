@@ -5909,6 +5909,89 @@ fn sec_gpc_helper_emits_one_request_signal() {
 }
 
 #[test]
+fn sec_required_document_policy_helper_emits_canonical_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/doc", base_url))
+      .sec_required_document_policy("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+      .expect("Sec-Required-Document-Policy should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("oversized-images=2.0, unsized-media=?0, *;report-to=default"),
+    header_value(&request, "Sec-Required-Document-Policy")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("sec-required-document-policy:"))
+      .count()
+  );
+}
+
+#[test]
+fn sec_required_document_policy_helper_replaces_existing_field() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/doc", base_url))
+      .header(("Sec-Required-Document-Policy", "oversized-images=1.0"))
+      .sec_required_document_policy("unsized-media=?0, *;report-to=default")
+      .expect("Sec-Required-Document-Policy should replace prior field")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("unsized-media=?0, *;report-to=default"),
+    header_value(&request, "Sec-Required-Document-Policy")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("sec-required-document-policy:"))
+      .count()
+  );
+}
+
+#[test]
+fn sec_required_document_policy_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    "oversized-images=1;foo=bar",
+    "oversized-images=2.0, oversized-images=3.0",
+    "oversized-images=2.0\r, unsized-media=?0",
+    "oversized-images=2.0\n, unsized-media=?0",
+    &"x".repeat(64 * 1024 + 1),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/doc", base_url))
+        .sec_required_document_policy(value)
+        .expect_err("invalid Sec-Required-Document-Policy should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-Required-Document-Policy must not open a socket"
+    );
+  }
+}
+
+#[test]
 fn upgrade_insecure_requests_helper_emits_signal_value_without_rewriting_target() {
   let request = capture_request(|base_url| {
     client()

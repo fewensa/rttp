@@ -46,6 +46,8 @@ use rttp_server::server::{
   HttpResponseDateParseError, HttpResponseExpires, HttpResponseLastModified,
   HttpResponseLastModifiedParseError, HttpRetryAfter, HttpRetryAfterParseError, HttpSameSite,
   HttpSaveData, HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
@@ -262,6 +264,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpUserAgent::parse("product/");
   let sec_gpc: HttpSecGpc = HttpSecGpc::parse("1").expect("Sec-GPC should parse");
   let sec_gpc_error: Result<HttpSecGpc, HttpSecGpcParseError> = HttpSecGpc::parse("0");
+  let sec_required_document_policy: HttpSecRequiredDocumentPolicy =
+    HttpSecRequiredDocumentPolicy::parse(
+      "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    )
+    .expect("Sec-Required-Document-Policy should parse");
+  let _: HttpSecRequiredDocumentPolicyParseError =
+    HttpSecRequiredDocumentPolicy::parse("unsized-media=src;foo=bar")
+      .expect_err("unknown Sec-Required-Document-Policy parameter should be rejected");
   let upgrade_insecure_requests: HttpUpgradeInsecureRequests =
     HttpUpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let upgrade_insecure_requests_error: Result<
@@ -594,6 +604,20 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(user_agent_error.is_err());
   assert_eq!(sec_gpc.header_value(), "1");
   assert!(sec_gpc_error.is_err());
+  assert_eq!(sec_required_document_policy.directives().len(), 3);
+  assert_eq!(
+    sec_required_document_policy
+      .directive("oversized-images")
+      .unwrap()
+      .value(),
+    &HttpSecRequiredDocumentPolicyValue::Decimal("2.0".to_string())
+  );
+  let _: &HttpSecRequiredDocumentPolicyDirective =
+    sec_required_document_policy.directive("*").unwrap();
+  assert_eq!(
+    sec_required_document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert!(upgrade_insecure_requests_error.is_err());
   assert_eq!(authorization.scheme(), "Bearer");
