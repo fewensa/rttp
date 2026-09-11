@@ -43,8 +43,18 @@ unsupported, `identity`, or parse-invalid stacks leave the original headers
 and body unchanged. Decoding is atomic: a malformed layer fails the
 response without exposing partial plaintext. Empty bodies are not decoded.
 `max_buffered_response_body_bytes` bounds each decoded layer. Raw
-non-zlib `deflate` is not supported. Streaming bodies and async HTTP/2
-stay out of this buffered path.
+non-zlib `deflate` is not supported.
+
+Streaming HTTP/1.1 body readers (`StreamingResponse` /
+`AsyncStreamingResponse`) apply the same supported gzip and zlib-wrapped
+deflate stacks incrementally without buffering the full body. Successful
+streaming decode strips `Content-Encoding` and `Content-Length` from
+`headers()` while `head()` keeps the raw capture; unsupported or
+parse-invalid stacks leave headers and body bytes unchanged. Chunked
+trailers remain visible after compressed EOF. Direct `body_mut()` reads
+are not bounded by `max_buffered_response_body_bytes`; bounded helpers such
+as `read_to_response` still enforce the decoded-size limit. Async HTTP/2
+streaming decode stays out of scope.
 
 ## Bounded Max-Forwards diagnostics
 
@@ -1787,7 +1797,8 @@ header-block model.
 | area | tested coverage | limits |
 |------|-----------------|--------|
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, informational responses, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | Not a complete RFC conformance suite |
-| Buffered content decoding | Automatic gzip and zlib-wrapped deflate stacks in reverse header order on buffered HTTP/1.1 and supported h2c paths; successful decoding drops stale `Content-Encoding`/`Content-Length`; unsupported or invalid stacks preserve headers and body; malformed layers fail atomically; size bounds apply per decoded layer; `Response::binary()` retains the original capture | No extra compression formats, raw deflate, streaming decode, or async HTTP/2 |
+| Buffered content decoding | Automatic gzip and zlib-wrapped deflate stacks in reverse header order on buffered HTTP/1.1 and supported h2c paths; successful decoding drops stale `Content-Encoding`/`Content-Length`; unsupported or invalid stacks preserve headers and body; malformed layers fail atomically; size bounds apply per decoded layer; `Response::binary()` retains the original capture | No extra compression formats, raw deflate, or async HTTP/2 |
+| Streaming content decoding | Incremental gzip and zlib-wrapped deflate stacks on blocking and async HTTP/1.1 streaming body readers; reverse order; empty bodies skipped; trailers remain after decoded chunked EOF; `headers()` strips CE/CL only on success while `head()` stays raw; unsupported stacks preserve raw bytes; malformed/raw-deflate map to decode errors; decoded bounds apply on `read_to_response` / buffered helpers, not direct `body_mut()` | No extra compression formats, raw deflate, or async HTTP/2 streaming decode |
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata through the shared protocol type | Expect metadata does not gate body transmission; raw `header(("Expect", value))` remains an escape hatch; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, request blocking, prefetch execution, or cache behavior |
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |

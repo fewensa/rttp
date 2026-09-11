@@ -101,8 +101,13 @@ pub use rttp_protocol::cross_origin_resource_policy::{
 };
 pub use rttp_protocol::nel::{Nel, NelParseError, NelUnknownMember};
 
+pub(crate) mod content_decode;
 mod raw_response;
 mod response;
+
+pub(crate) use content_decode::{
+  content_decoders, strip_content_encoding_and_length, ContentDecoder, StreamingContentDecoder,
+};
 
 pub use rttp_protocol::alt_svc::{AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError};
 pub use rttp_protocol::alt_used::{AltUsed, AltUsedParseError};

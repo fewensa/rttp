@@ -30,7 +30,10 @@ use crate::connection::connection_reader::{
 };
 use crate::error;
 use crate::request::RawRequest;
-use crate::response::Response;
+use crate::response::{
+  content_decoders, strip_content_encoding_and_length, ContentDecoder, Response,
+  StreamingContentDecoder,
+};
 use crate::types::{Header, Proxy, ProxyType};
 const CRLF: &[u8] = b"\r\n";
 
@@ -133,7 +136,11 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
   }
 
   pub fn headers(&self) -> error::Result<Vec<Header>> {
-    response_headers(&self.head)
+    let mut headers = response_headers(&self.head)?;
+    if self.body.content_decode_succeeded() {
+      strip_content_encoding_and_length(&mut headers);
+    }
+    Ok(headers)
   }
 
   pub fn head(&self) -> &[u8] {
@@ -162,7 +169,10 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
   async fn read_to_parts(mut self, max_body_bytes: usize) -> error::Result<ResponseParts> {
     let close_connection = response_connection_should_close(&self.head)?;
     let connection_reusable = response_connection_reusable(&self.head, &self.body.kind)?;
+    let content_length = content_length_from_response_body_kind(&self.body.kind);
     let mut binary = self.head;
+    // Buffered responses still decode in RawResponse; keep wire bytes here.
+    self.body.disable_content_decode();
     self
       .body
       .read_to_end_bounded(&mut binary, max_body_bytes)
@@ -171,7 +181,7 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
       binary,
       trailers: self.body.trailers().clone(),
       informational_responses: Vec::new(),
-      content_length: content_length_from_response_body_kind(&self.body.kind),
+      content_length,
       connection_reusable,
       close_connection,
     })
@@ -186,15 +196,24 @@ pub struct AsyncResponseBodyReader<'a, S: AsyncRead + Unpin + ?Sized> {
   chunk_needs_crlf: bool,
   trailers: Vec<Header>,
   eof: bool,
+  content_decode: Option<StreamingContentDecoder>,
+  framed_eof: bool,
 }
 
 impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
-  fn new(stream: &'a mut S, kind: ResponseBodyKind) -> Self {
+  fn new_with_content_decode(
+    stream: &'a mut S,
+    kind: ResponseBodyKind,
+    content_decoders: Option<Vec<ContentDecoder>>,
+  ) -> Self {
     let remaining = match kind {
       ResponseBodyKind::ContentLength(length) => length,
       _ => 0,
     };
     let eof = matches!(kind, ResponseBodyKind::NoBody);
+    let content_decode = content_decoders
+      .filter(|_| should_attempt_async_content_decode(&kind))
+      .map(|decoders| StreamingContentDecoder::new(&decoders, None));
     Self {
       stream,
       kind,
@@ -203,6 +222,8 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
       chunk_needs_crlf: false,
       trailers: Vec::new(),
       eof,
+      content_decode,
+      framed_eof: eof,
     }
   }
 
@@ -210,19 +231,19 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
     &self.trailers
   }
 
+  fn content_decode_succeeded(&self) -> bool {
+    self
+      .content_decode
+      .as_ref()
+      .is_some_and(StreamingContentDecoder::succeeded)
+  }
+
+  fn disable_content_decode(&mut self) {
+    self.content_decode = None;
+  }
+
   pub async fn read(&mut self, buf: &mut [u8]) -> error::Result<usize> {
-    match self.kind {
-      ResponseBodyKind::NoBody => Ok(0),
-      ResponseBodyKind::ContentLength(_) => self.read_fixed_length(buf).await,
-      ResponseBodyKind::Chunked => self.read_chunked(buf).await,
-      ResponseBodyKind::UntilEof => {
-        let read = self.stream.read(buf).await.map_err(error::request)?;
-        if read == 0 {
-          self.eof = true;
-        }
-        Ok(read)
-      }
-    }
+    self.read_decoded(buf).await
   }
 
   pub async fn read_to_end(&mut self, body: &mut Vec<u8>) -> error::Result<usize> {
@@ -259,9 +280,70 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
     }
   }
 
+  async fn read_decoded(&mut self, buf: &mut [u8]) -> error::Result<usize> {
+    if buf.is_empty() {
+      return Ok(0);
+    }
+
+    loop {
+      if let Some(decoder) = self.content_decode.as_mut() {
+        let filled = decoder.fill(buf);
+        if filled > 0 {
+          return Ok(filled);
+        }
+        if decoder.finished() {
+          self.eof = true;
+          return Ok(0);
+        }
+      } else {
+        return self.read_framed(buf).await;
+      }
+
+      if self.framed_eof {
+        let decoder = self
+          .content_decode
+          .as_mut()
+          .expect("content decoder present when decoding");
+        decoder.finish()?;
+        let filled = decoder.fill(buf);
+        self.eof = !decoder.has_pending();
+        return Ok(filled);
+      }
+
+      let mut compressed = [0u8; 8 * 1024];
+      let read = self.read_framed(&mut compressed).await?;
+      if read == 0 {
+        self.framed_eof = true;
+        continue;
+      }
+      self
+        .content_decode
+        .as_mut()
+        .expect("content decoder present when decoding")
+        .feed(&compressed[..read])?;
+    }
+  }
+
+  async fn read_framed(&mut self, buf: &mut [u8]) -> error::Result<usize> {
+    match self.kind {
+      ResponseBodyKind::NoBody => Ok(0),
+      ResponseBodyKind::ContentLength(_) => self.read_fixed_length(buf).await,
+      ResponseBodyKind::Chunked => self.read_chunked(buf).await,
+      ResponseBodyKind::UntilEof => {
+        let read = self.stream.read(buf).await.map_err(error::request)?;
+        if read == 0 {
+          self.eof = true;
+          self.framed_eof = true;
+        }
+        Ok(read)
+      }
+    }
+  }
+
   async fn read_fixed_length(&mut self, buf: &mut [u8]) -> error::Result<usize> {
     if self.remaining == 0 || buf.is_empty() {
       self.eof = self.remaining == 0;
+      self.framed_eof = self.remaining == 0;
       return Ok(0);
     }
 
@@ -280,12 +362,13 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
     self.remaining -= read;
     if self.remaining == 0 {
       self.eof = true;
+      self.framed_eof = true;
     }
     Ok(read)
   }
 
   async fn read_chunked(&mut self, buf: &mut [u8]) -> error::Result<usize> {
-    if self.eof || buf.is_empty() {
+    if self.framed_eof || buf.is_empty() {
       return Ok(0);
     }
 
@@ -300,6 +383,7 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
       if chunk_size == 0 {
         self.trailers = async_read_trailers(self.stream).await?;
         self.eof = true;
+        self.framed_eof = true;
         return Ok(0);
       }
       self.chunk_remaining = chunk_size;
@@ -320,6 +404,13 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
     }
     Ok(read)
   }
+}
+
+fn should_attempt_async_content_decode(kind: &ResponseBodyKind) -> bool {
+  !matches!(
+    kind,
+    ResponseBodyKind::NoBody | ResponseBodyKind::ContentLength(0)
+  )
 }
 
 pub struct AsyncConnection<'a> {
@@ -694,9 +785,12 @@ where
   S: AsyncRead + Unpin + ?Sized,
 {
   let kind = response_body_kind(&head, expect_no_body)?;
+  let decoders = response_headers(&head)
+    .ok()
+    .and_then(|headers| content_decoders(&headers));
   Ok(AsyncStreamingResponse {
     head,
-    body: AsyncResponseBodyReader::new(stream, kind),
+    body: AsyncResponseBodyReader::new_with_content_decode(stream, kind, decoders),
   })
 }
 

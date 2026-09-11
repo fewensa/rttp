@@ -367,6 +367,134 @@ fn test_async_streaming_response_can_read_body_larger_than_buffered_limit() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_streaming_gzip_fixed_length_decodes_body_and_strips_headers() {
+  block_on(async {
+    let compressed = gzip_bytes(b"decoded");
+    let head = format!(
+      "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nX-Trace: keep\r\n\r\n",
+      compressed.len()
+    )
+    .into_bytes();
+    let mut stream = AllowStdIo::new(Cursor::new(compressed));
+    let mut response = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(b"decoded", body.as_slice());
+    let headers = response.headers().unwrap();
+    assert!(headers
+      .iter()
+      .all(|header| !header.name().eq_ignore_ascii_case("Content-Encoding")));
+    assert!(headers
+      .iter()
+      .all(|header| !header.name().eq_ignore_ascii_case("Content-Length")));
+    assert!(String::from_utf8_lossy(response.head()).contains("Content-Encoding: gzip"));
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_streaming_gzip_chunked_decodes_body_and_exposes_trailers() {
+  block_on(async {
+    let compressed = gzip_bytes(b"hello");
+    let head =
+      b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+    let mut body = format!("{:x}\r\n", compressed.len()).into_bytes();
+    body.extend_from_slice(&compressed);
+    body.extend_from_slice(b"\r\n0\r\nX-Trace: trailer\r\n\r\n");
+    let mut stream = AllowStdIo::new(Cursor::new(body));
+    let mut response = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut out = Vec::new();
+    response.body_mut().read_to_end(&mut out).await.unwrap();
+
+    assert_eq!(b"hello", out.as_slice());
+    assert_eq!(
+      Some("trailer"),
+      response.trailer_value("x-trace").map(String::as_str)
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_streaming_stacked_gzip_deflate_decodes_body() {
+  block_on(async {
+    let compressed = zlib_bytes(&gzip_bytes(b"stacked"));
+    let head = format!(
+      "HTTP/1.1 200 OK\r\nContent-Encoding: gzip, deflate\r\nContent-Length: {}\r\n\r\n",
+      compressed.len()
+    )
+    .into_bytes();
+    let mut stream = AllowStdIo::new(Cursor::new(compressed));
+    let mut response = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await.unwrap();
+    assert_eq!(b"stacked", body.as_slice());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_streaming_malformed_deflate_returns_decode_error() {
+  block_on(async {
+    let body = b"not-zlib".to_vec();
+    let head = format!(
+      "HTTP/1.1 200 OK\r\nContent-Encoding: deflate\r\nContent-Length: {}\r\n\r\n",
+      body.len()
+    )
+    .into_bytes();
+    let mut stream = AllowStdIo::new(Cursor::new(body));
+    let mut response = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut out = Vec::new();
+    let error = response
+      .body_mut()
+      .read_to_end(&mut out)
+      .await
+      .expect_err("malformed deflate should fail");
+    assert_decode_error(error);
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_streaming_unknown_content_encoding_preserves_raw() {
+  block_on(async {
+    let body = gzip_bytes(b"OK");
+    let head = format!(
+      "HTTP/1.1 200 OK\r\nContent-Encoding: gzip, br\r\nContent-Length: {}\r\n\r\n",
+      body.len()
+    )
+    .into_bytes();
+    let expected = body.clone();
+    let mut stream = AllowStdIo::new(Cursor::new(body));
+    let mut response = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut out = Vec::new();
+    response.body_mut().read_to_end(&mut out).await.unwrap();
+    assert_eq!(expected, out);
+    assert_eq!(
+      Some("gzip, br"),
+      response
+        .headers()
+        .unwrap()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"))
+        .map(|header| header.value().as_str())
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_buffered_gzip_response_exposes_decoded_body_headers() {
   let body = gzip_bytes(b"decoded");
   let mut raw = format!(

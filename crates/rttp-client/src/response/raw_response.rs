@@ -3,9 +3,9 @@ use std::io::Read;
 
 use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
 use crate::error;
+use crate::response::content_decode::{content_decoders, ContentDecoder};
 use crate::response::ResponseBody;
 use crate::types::{is_sensitive_debug_header, Cookie, Header, RoUrl, ToUrl};
-use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::cookie::HttpSetCookie;
 use url::Url;
 
@@ -357,30 +357,4 @@ fn decode_http1_text(bytes: &[u8]) -> String {
 
 fn response_status_has_no_body(status_code: u32) -> bool {
   (100..200).contains(&status_code) || status_code == 204 || status_code == 304
-}
-
-enum ContentDecoder {
-  Gzip,
-  Deflate,
-}
-
-fn content_decoders(headers: &[Header]) -> Option<Vec<ContentDecoder>> {
-  let parsed = ContentEncoding::parse_values(
-    headers
-      .iter()
-      .filter(|header| header.name().eq_ignore_ascii_case("Content-Encoding"))
-      .map(|header| header.value().as_str()),
-  )
-  .ok()?;
-  let mut decoders = Vec::with_capacity(parsed.len());
-  for coding in parsed.codings() {
-    if coding.eq_ignore_ascii_case("gzip") {
-      decoders.push(ContentDecoder::Gzip);
-    } else if coding.eq_ignore_ascii_case("deflate") {
-      decoders.push(ContentDecoder::Deflate);
-    } else {
-      return None;
-    }
-  }
-  Some(decoders)
 }
