@@ -1311,6 +1311,54 @@ fn sync_client_and_server_exchange_access_control_allow_credentials_metadata_wit
 }
 
 #[test]
+fn sync_client_and_server_exchange_access_control_allow_private_network_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Access-Control-Allow-Private-Network server");
+  let addr = server
+    .local_addr()
+    .expect("Access-Control-Allow-Private-Network server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_access_control_allow_private_network("\ttrue ")
+          .expect("Access-Control-Allow-Private-Network should be accepted")
+      })
+      .expect("serve Access-Control-Allow-Private-Network response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/access-control-allow-private-network"
+    ))
+    .emit()
+    .expect("Access-Control-Allow-Private-Network response should parse");
+  assert_eq!(
+    "true",
+    response
+      .access_control_allow_private_network()
+      .expect("Access-Control-Allow-Private-Network should parse")
+      .expect("Access-Control-Allow-Private-Network should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some(&"true".to_string()),
+    response.header_value("Access-Control-Allow-Private-Network")
+  );
+  assert_eq!(
+    "OK",
+    response
+      .body()
+      .string()
+      .expect("response body should parse")
+  );
+  handle
+    .join()
+    .expect("Access-Control-Allow-Private-Network server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_cross_origin_resource_policy_metadata_without_policy() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
     .expect("bind Cross-Origin-Resource-Policy server");

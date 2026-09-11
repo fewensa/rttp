@@ -1329,8 +1329,22 @@ retain raw-header control with `header(("Origin", "..."))` and the other
 `header` forms.
 
 These are declaration helpers only. RTTP does not decide whether a preflight
-is needed, read `Access-Control-Allow-*` response fields, apply CORS policy, or
-apply Private Network Access policy.
+is needed, apply CORS policy, or apply Private Network Access policy.
+
+## Bounded Access-Control-Allow-Private-Network response metadata
+
+`Response::access_control_allow_private_network()` parses a singleton
+`Access-Control-Allow-Private-Network` response field through the shared
+`AccessControlAllowPrivateNetwork` protocol type. The value is the exact,
+case-sensitive `true` token with surrounding SP or HTAB trimmed and canonical
+lowercase `true` serialization. Values and duplicate fields are bounded and
+validated to reject malformed, control-byte, and oversized input. Absent
+metadata returns `Ok(None)`; parse errors leave the original raw field
+available through `Response::header_value()` and `Response::header_values()`.
+
+This accessor exposes response metadata only. It does not grant private-network
+access, decide whether a preflight is needed, apply CORS policy, or apply
+Private Network Access policy.
 
 ## Bounded Save-Data request metadata
 
@@ -1802,7 +1816,8 @@ header-block model.
 | W3C Baggage | `baggage` validates and emits bounded W3C Baggage request metadata through the shared protocol type, replacing an existing same-name field and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
 | CDN-Loop | `cdn_loop` validates and emits bounded RFC 8586 `CDN-Loop` request metadata through the shared protocol type, combining an existing same-name field with the new member in wire order and rejecting malformed or oversized values before connecting | No CDN identifier insertion, loop detection or rejection, automatic forwarding, or hop-by-hop handling |
 | Via | `via` validates and emits bounded HTTP `Via` request metadata through the shared protocol type, combining an existing same-name field with the new hops in wire order and rejecting malformed or oversized values before connecting; `Response::via` parses received hop chains while preserving raw headers on parse failures | No automatic hop insertion or removal, trusted-proxy inference, identity rewrite, or HTTP/1.1 or HTTP/2 proxy-policy changes |
-| Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
+| Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, CORS policy, or Private Network Access policy |
+| Access-Control-Allow-Private-Network | `Response::access_control_allow_private_network` parses bounded singleton `Access-Control-Allow-Private-Network` `true` metadata while preserving raw headers on parse failures | No private-network access grant, preflight decision, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept | `accept` and `accept_with_q` format bounded `Accept` request metadata through the shared `rttp-protocol` type, replacing existing same-name fields after validating helper-built and existing raw values | No content negotiation, representation selection, MIME sniffing, body decoding, cache `Vary` synthesis, or response choice |
 | Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |

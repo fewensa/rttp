@@ -26,6 +26,10 @@ pub use rttp_protocol::access_control_allow_origin::{
   AccessControlAllowOrigin as HttpAccessControlAllowOrigin,
   AccessControlAllowOriginParseError as HttpAccessControlAllowOriginParseError,
 };
+pub use rttp_protocol::access_control_allow_private_network::{
+  AccessControlAllowPrivateNetwork as HttpAccessControlAllowPrivateNetwork,
+  AccessControlAllowPrivateNetworkParseError as HttpAccessControlAllowPrivateNetworkParseError,
+};
 pub use rttp_protocol::allow::{
   Allow as HttpAllowedMethods, AllowParseError as HttpAllowParseError,
 };
@@ -1389,6 +1393,25 @@ impl HttpResponse {
     self.headers.push(HttpHeader::new(
       "Access-Control-Allow-Credentials",
       allow_credentials.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Access-Control-Allow-Private-Network` response
+  /// metadata without applying Private Network Access or CORS policy.
+  pub fn with_access_control_allow_private_network(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAccessControlAllowPrivateNetworkParseError> {
+    let allow_private_network = HttpAccessControlAllowPrivateNetwork::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Access-Control-Allow-Private-Network")
+    });
+    self.headers.push(HttpHeader::new(
+      "Access-Control-Allow-Private-Network",
+      allow_private_network.header_value(),
     ));
     Ok(self)
   }
@@ -2786,6 +2809,30 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAccessControlAllowCredentials::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Access-Control-Allow-Private-Network` response metadata
+  /// without applying Private Network Access or CORS policy.
+  pub fn access_control_allow_private_network(
+    &self,
+  ) -> Result<
+    Option<HttpAccessControlAllowPrivateNetwork>,
+    HttpAccessControlAllowPrivateNetworkParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Access-Control-Allow-Private-Network")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlAllowPrivateNetwork::parse_values(values).map(Some)
   }
 
   /// Parses attached `Access-Control-Allow-Headers` response metadata without

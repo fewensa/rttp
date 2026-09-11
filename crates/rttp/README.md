@@ -14,6 +14,23 @@ Applications that want one dependency for both client and server entry points
 can use this compatibility facade.
 The compatibility facade keeps client and server entry points accessible through one crate.
 
+## Bounded Access-Control-Allow-Private-Network response metadata
+
+With the `client` feature, the facade re-exports
+`AccessControlAllowPrivateNetwork` and its parse error, and client
+`Response::access_control_allow_private_network()` exposes bounded singleton
+`Access-Control-Allow-Private-Network: true` response metadata. The server
+facade exposes `HttpAccessControlAllowPrivateNetwork` plus
+`HttpResponse::with_access_control_allow_private_network()` and
+`HttpResponse::access_control_allow_private_network()`. Values are limited to
+64 KiB, trim surrounding SP/HTAB, require case-sensitive `true`, reject
+malformed, duplicate, control-byte, or oversized input, and preserve raw
+headers when typed access fails.
+
+These are metadata-only helpers. The facade does not grant private-network
+access, decide preflight behavior, or apply CORS or Private Network Access
+policy.
+
 ## Server
 
 Create a listener with `rttp::Http::server` or call `HttpServer::bind` directly.

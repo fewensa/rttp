@@ -46,6 +46,9 @@ pub use rttp_protocol::access_control_allow_methods::{
 pub use rttp_protocol::access_control_allow_origin::{
   AccessControlAllowOrigin, AccessControlAllowOriginParseError,
 };
+pub use rttp_protocol::access_control_allow_private_network::{
+  AccessControlAllowPrivateNetwork, AccessControlAllowPrivateNetworkParseError,
+};
 pub use rttp_protocol::access_control_expose_headers::{
   AccessControlExposeHeaders, AccessControlExposeHeadersParseError,
 };

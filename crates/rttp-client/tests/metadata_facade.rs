@@ -2,7 +2,8 @@ use rttp_client::response::{
   AcceptCh, AcceptCharset, AcceptEncoding, AccessControlAllowCredentials,
   AccessControlAllowCredentialsParseError, AccessControlAllowHeaders,
   AccessControlAllowHeadersParseError, AccessControlAllowMethods,
-  AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
+  AccessControlAllowMethodsParseError, AccessControlAllowPrivateNetwork,
+  AccessControlAllowPrivateNetworkParseError, AccessControlExposeHeaders, AccessControlMaxAge,
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AltUsed, AltUsedParseError,
   AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError, CacheStatus,
   CacheStatusParseError, Connection, ConnectionParseError, ContentDpr, ContentDprParseError,
@@ -82,6 +83,12 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Access-Control-Allow-Credentials should parse");
   let _: AccessControlAllowCredentialsParseError = AccessControlAllowCredentials::parse("false")
     .expect_err("false Access-Control-Allow-Credentials should be rejected");
+  let allow_private_network = AccessControlAllowPrivateNetwork::parse("true")
+    .expect("Access-Control-Allow-Private-Network should parse");
+  assert_eq!("true", allow_private_network.header_value());
+  let _: AccessControlAllowPrivateNetworkParseError =
+    AccessControlAllowPrivateNetwork::parse("false")
+      .expect_err("false Access-Control-Allow-Private-Network should be rejected");
   let allow_methods = AccessControlAllowMethods::parse("GET, POST")
     .expect("Access-Control-Allow-Methods should parse");
   let _: AccessControlAllowMethodsParseError = AccessControlAllowMethods::parse("")

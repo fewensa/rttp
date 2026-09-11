@@ -7744,6 +7744,80 @@ fn test_access_control_allow_credentials_response_helper_parses_valid_metadata_a
 }
 
 #[test]
+fn access_control_allow_private_network_response_helper_preserves_raw_parse_failures() {
+  let valid = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Private-Network: \ttrue \r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("valid response should remain usable");
+  assert_eq!(
+    "true",
+    valid
+      .access_control_allow_private_network()
+      .expect("valid metadata should parse")
+      .expect("valid metadata should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("true"),
+    valid
+      .header_value("Access-Control-Allow-Private-Network")
+      .map(String::as_str)
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without metadata should remain usable");
+  assert_eq!(
+    None,
+    absent
+      .access_control_allow_private_network()
+      .expect("absence should parse")
+  );
+
+  for value in [
+    "TRUE".to_string(),
+    "True".to_string(),
+    "false".to_string(),
+    "true, true".to_string(),
+    "true\0".to_string(),
+    "x".repeat(64 * 1024 + 1),
+  ] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Private-Network: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("malformed response metadata should remain usable");
+    assert!(response.access_control_allow_private_network().is_err());
+    assert_eq!(
+      response.header_value("Access-Control-Allow-Private-Network"),
+      Some(&value)
+    );
+  }
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Access-Control-Allow-Private-Network: true\r\n",
+      "access-control-allow-private-network: true\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("duplicate response metadata should remain usable");
+  assert!(duplicate.access_control_allow_private_network().is_err());
+  assert_eq!(
+    duplicate.header_values("Access-Control-Allow-Private-Network"),
+    [&"true".to_string(), &"true".to_string()]
+  );
+}
+
+#[test]
 fn test_access_control_allow_headers_response_helper_parses_valid_lists_wildcard_and_multiple_fields(
 ) {
   let listed = Response::new(
