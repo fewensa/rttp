@@ -1267,6 +1267,18 @@ whitespace. Unknown tokens, lists, quoted values, empty values, control
 bytes, and other unparsable input are errors.
 This parser does not evaluate CORS requests or grant credentials automatically.
 
+## Access-Control-Allow-Private-Network
+
+`access_control_allow_private_network` parses a singleton
+`Access-Control-Allow-Private-Network` response field. Each field value is
+bounded to 64 KiB, and a second field is rejected after every supplied field
+is bound-checked. The value must be exactly the case-sensitive Fetch
+`true` token and is serialized canonically as lowercase `true`; surrounding
+SP and HTAB are trimmed. Unknown tokens, lists, empty values, control bytes,
+oversized values, and other malformed input are errors. This parser reports
+response metadata only; it does not grant private-network access or apply
+CORS or Private Network Access policy.
+
 ## Access-Control-Request-Method
 
 `access_control_request_method` parses a singleton

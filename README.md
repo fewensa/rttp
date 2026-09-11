@@ -1123,6 +1123,24 @@ on demand without changing them.
 These helpers expose credentials metadata only. RTTP does not evaluate CORS
 requests, attach credentials to requests, or grant credentials automatically.
 
+### Bounded Access-Control-Allow-Private-Network response metadata
+
+`Response::access_control_allow_private_network()` parses a singleton
+`Access-Control-Allow-Private-Network` response field into bounded
+`AccessControlAllowPrivateNetwork` metadata. The value is the exact,
+case-sensitive `true` token after surrounding SP and HTAB trimming and is
+serialized canonically as `true`. Empty, malformed, duplicate, control-byte,
+or over-64-KiB values return an error while raw response fields remain
+available through `Response::header_value()` and `Response::header_values()`.
+
+On the server, `HttpAccessControlAllowPrivateNetwork::parse()` validates the
+same syntax, `HttpResponse::with_access_control_allow_private_network()`
+replaces same-name fields only after successful validation, and
+`HttpResponse::access_control_allow_private_network()` parses attached fields
+without changing them. These helpers expose metadata only; RTTP does not grant
+private-network access, decide preflight behavior, or apply CORS or Private
+Network Access policy.
+
 ### Bounded NEL response metadata
 
 `Response::nel()` parses the `NEL` response field as bounded W3C Network Error
@@ -1865,8 +1883,9 @@ gain additional HTTP/2 header-block handling.
 | X-Forwarded compatibility metadata | Client `x_forwarded_for`, `x_forwarded_host`, and `x_forwarded_proto` emit bounded compatibility request metadata through shared protocol types; server `Request`/`HttpRequest` helpers parse ordered node, authority, and scheme values while preserving raw headers on errors | No forwarded identity trust, client address selection, routing rewrite, scheme rewrite, redirect, upgrade, enforcement, or trusted-proxy selection; applications must choose trusted proxies |
 | Via | Client `via` emits bounded HTTP `Via` hop metadata through the shared protocol type; `Response::via` parses received hops; server `Request`/`HttpRequest` helpers and `HttpResponse::with_via`/`via` parse or declare caller-supplied chains while preserving raw headers on errors | No automatic hop insertion or removal, trusted-proxy inference, identity rewrite, or HTTP/1.1 or HTTP/2 proxy-policy changes |
 | Accept-Language | Client `accept_language` emits bounded `Accept-Language` request metadata through the protocol `AcceptLanguage` type; server `Request::accept_language()` and `HttpRequest::accept_language()` parse typed received values as `HttpAcceptLanguages` while preserving raw headers on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
-| Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
+| Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, CORS policy, or Private Network Access policy |
 | Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
+| Access-Control-Allow-Private-Network | Client `Response::access_control_allow_private_network` and server `HttpAccessControlAllowPrivateNetwork`, `HttpResponse::with_access_control_allow_private_network`, and `HttpResponse::access_control_allow_private_network` parse or declare bounded singleton `Access-Control-Allow-Private-Network` `true`-token metadata while preserving raw headers on parse failures | No private-network access grant, preflight decision, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Encoding | Client `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type; server `Request::accept_encoding()` and `HttpRequest::accept_encoding()` parse received fields into `HttpRequestAcceptEncodings` | No compression, decompression, content negotiation, retries, or transport changes |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |

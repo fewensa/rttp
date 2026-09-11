@@ -20,6 +20,7 @@ pub mod access_control_allow_credentials;
 pub mod access_control_allow_headers;
 pub mod access_control_allow_methods;
 pub mod access_control_allow_origin;
+pub mod access_control_allow_private_network;
 pub mod access_control_expose_headers;
 pub mod access_control_max_age;
 pub mod access_control_request_headers;

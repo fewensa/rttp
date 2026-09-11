@@ -20,6 +20,7 @@ fn package_includes_protocol_metadata_facade_test() {
   for expected in [
     "README.md",
     "tests/authorization.rs",
+    "tests/access_control_allow_private_network.rs",
     "tests/link.rs",
     "tests/location.rs",
     "tests/lock_token.rs",

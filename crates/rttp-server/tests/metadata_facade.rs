@@ -3,19 +3,21 @@ use rttp_server::server::{
   HttpAcceptCharset, HttpAcceptCharsetParseError, HttpAcceptDatetime, HttpAcceptDatetimeParseError,
   HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAcceptParseError,
   HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
-  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
-  HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
-  HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
-  HttpAccessControlRequestPrivateNetworkParseError, HttpAltUsed, HttpAltUsedParseError,
-  HttpAuthenticationInfo, HttpAuthenticationInfoParameter, HttpAuthenticationInfoParseError,
-  HttpAuthorization, HttpAuthorizationParseError, HttpBaggage, HttpBaggageMember,
-  HttpBaggageParseError, HttpBaggageProperty, HttpCacheStatus, HttpCacheStatusParseError,
-  HttpCdnCacheControl, HttpCdnLoop, HttpCdnLoopMember, HttpCdnLoopParseError,
-  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentDisposition,
-  HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpContentSecurityPolicyReportOnly, HttpContentSecurityPolicyReportOnlyParseError,
-  HttpCookieParseError, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
+  HttpAccessControlAllowPrivateNetwork, HttpAccessControlAllowPrivateNetworkParseError,
+  HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
+  HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
+  HttpAccessControlRequestPrivateNetwork, HttpAccessControlRequestPrivateNetworkParseError,
+  HttpAltUsed, HttpAltUsedParseError, HttpAuthenticationInfo, HttpAuthenticationInfoParameter,
+  HttpAuthenticationInfoParseError, HttpAuthorization, HttpAuthorizationParseError, HttpBaggage,
+  HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty, HttpCacheStatus,
+  HttpCacheStatusParseError, HttpCdnCacheControl, HttpCdnLoop, HttpCdnLoopMember,
+  HttpCdnLoopParseError, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
+  HttpContentDisposition, HttpContentDispositionParseError, HttpContentDpr,
+  HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
+  HttpContentRange, HttpContentRangeParseError, HttpContentSecurityPolicyReportOnly,
+  HttpContentSecurityPolicyReportOnlyParseError, HttpCookieParseError,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeltaBase,
   HttpDeltaBaseParseError, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
   HttpDepthParseError, HttpDnt, HttpDntParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
@@ -101,6 +103,43 @@ fn server_dav_response_metadata_uses_protocol_representation() {
 }
 
 #[test]
+fn server_access_control_allow_private_network_is_bounded_metadata_only() {
+  let response = HttpResponse::ok("body")
+    .header("Access-Control-Allow-Private-Network", "legacy")
+    .header("access-control-allow-private-network", "legacy-case")
+    .with_access_control_allow_private_network("\ttrue ")
+    .expect("valid Access-Control-Allow-Private-Network should replace raw fields");
+  let metadata = response
+    .access_control_allow_private_network()
+    .expect("typed metadata should parse")
+    .expect("typed metadata should be present");
+  assert_eq!("true", metadata.header_value());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(serialized.contains("Access-Control-Allow-Private-Network: true\r\n"));
+  assert!(!serialized.contains("legacy"));
+  assert!(serialized.contains("body"));
+
+  let absent = HttpResponse::ok("");
+  assert!(absent
+    .access_control_allow_private_network()
+    .expect("absence should parse")
+    .is_none());
+
+  let malformed = HttpResponse::ok("").header("Access-Control-Allow-Private-Network", "false");
+  assert!(malformed.access_control_allow_private_network().is_err());
+  let serialized = String::from_utf8(malformed.to_bytes()).expect("response should serialize");
+  assert!(serialized.contains("Access-Control-Allow-Private-Network: false\r\n"));
+
+  let unchanged = HttpResponse::ok("").header("Access-Control-Allow-Private-Network", "legacy");
+  let _: Result<HttpResponse, HttpAccessControlAllowPrivateNetworkParseError> = unchanged
+    .clone()
+    .with_access_control_allow_private_network("TRUE");
+  assert!(unchanged.access_control_allow_private_network().is_err());
+  let _: HttpAccessControlAllowPrivateNetwork =
+    HttpAccessControlAllowPrivateNetwork::parse("true").expect("true should parse");
+}
+
+#[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let accept: HttpAccept =
@@ -160,6 +199,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("Access-Control-Allow-Credentials should parse");
   let _: Result<HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError> =
     HttpAccessControlAllowCredentials::parse("false");
+  let allow_private_network: HttpAccessControlAllowPrivateNetwork =
+    HttpAccessControlAllowPrivateNetwork::parse("true")
+      .expect("Access-Control-Allow-Private-Network should parse");
+  assert_eq!("true", allow_private_network.header_value());
+  let _: Result<
+    HttpAccessControlAllowPrivateNetwork,
+    HttpAccessControlAllowPrivateNetworkParseError,
+  > = HttpAccessControlAllowPrivateNetwork::parse("false");
   let allow_methods: HttpAccessControlAllowMethods =
     HttpAccessControlAllowMethods::parse("GET").expect("Access-Control-Allow-Methods should parse");
   let allow_headers: HttpAccessControlAllowHeaders =

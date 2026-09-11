@@ -8,7 +8,8 @@ pub use rttp_server::server;
 pub use rttp_client::response::{
   AcceptCh, AcceptCharset, AcceptEncoding, AcceptPatch, AcceptPatchParseError, AcceptPost,
   AcceptPostParseError, AcceptRanges, AccessControlAllowCredentials,
-  AccessControlAllowCredentialsParseError, Age, AgeParseError, AltSvc, AltSvcAlternative,
+  AccessControlAllowCredentialsParseError, AccessControlAllowPrivateNetwork,
+  AccessControlAllowPrivateNetworkParseError, Age, AgeParseError, AltSvc, AltSvcAlternative,
   AltSvcParameter, AltSvcParseError, AltUsed, AltUsedParseError, AlternateAttribute,
   AlternateVariant, Alternates, AlternatesParseError, AuthenticationInfo,
   AuthenticationInfoParameter, AuthenticationInfoParseError, CacheControl, CacheControlExtension,

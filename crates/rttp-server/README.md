@@ -118,6 +118,22 @@ error remain distinct. These helpers only declare and parse metadata; RTTP does
 not evaluate directives, enforce CSP, send reports, or create browser policy
 state.
 
+## Access-Control-Allow-Private-Network response metadata
+
+`HttpResponse::with_access_control_allow_private_network(value)` validates and
+replaces attached `Access-Control-Allow-Private-Network` response fields with
+one canonical `true` value. `HttpResponse::access_control_allow_private_network()`
+parses attached fields on demand through the shared
+`HttpAccessControlAllowPrivateNetwork` type and returns `Ok(None)` when absent.
+The value is matched case-sensitively after surrounding SP and HTAB are
+trimmed; malformed, duplicate, control-byte, and over-64-KiB values return a
+typed parse error while raw fields remain available when the accessor rejects
+them. Invalid typed declarations leave existing fields unchanged.
+
+These helpers declare and inspect bounded response metadata only. They do not
+grant private-network access, decide whether a preflight is needed, apply CORS
+policy, or apply Private Network Access policy.
+
 ## Authentication metadata
 
 `Request::authorization()` / `HttpRequest::authorization()` and

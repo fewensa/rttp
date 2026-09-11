@@ -184,6 +184,13 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::AccessControlAllowCredentialsParseError =
     rttp_client::response::AccessControlAllowCredentials::parse("false")
       .expect_err("invalid Access-Control-Allow-Credentials should fail");
+  let allow_private_network: rttp::AccessControlAllowPrivateNetwork =
+    rttp_client::response::AccessControlAllowPrivateNetwork::parse(" true ")
+      .expect("Access-Control-Allow-Private-Network should parse");
+  assert_eq!("true", allow_private_network.header_value());
+  let _: rttp::AccessControlAllowPrivateNetworkParseError =
+    rttp_client::response::AccessControlAllowPrivateNetwork::parse("false")
+      .expect_err("invalid Access-Control-Allow-Private-Network should fail");
   let client_sec_websocket_key =
     HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
   let client_sec_websocket_accept: rttp::SecWebSocketAccept =
