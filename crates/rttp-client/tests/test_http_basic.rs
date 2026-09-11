@@ -367,6 +367,185 @@ fn test_streaming_response_can_read_body_larger_than_buffered_limit() {
 }
 
 #[test]
+fn test_streaming_gzip_fixed_length_decodes_body_and_strips_headers() {
+  let compressed = gzip_bytes(b"decoded");
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nX-Trace: keep\r\n\r\n",
+    compressed.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&compressed);
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/gzip").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let mut response = reader.streaming_response().unwrap();
+  let mut body = Vec::new();
+  response.body_mut().read_to_end(&mut body).unwrap();
+
+  assert_eq!(b"decoded", body.as_slice());
+  let headers = response.headers().unwrap();
+  assert!(headers
+    .iter()
+    .all(|header| !header.name().eq_ignore_ascii_case("Content-Encoding")));
+  assert!(headers
+    .iter()
+    .all(|header| !header.name().eq_ignore_ascii_case("Content-Length")));
+  assert!(headers
+    .iter()
+    .any(|header| header.name().eq_ignore_ascii_case("X-Trace")));
+  assert!(String::from_utf8_lossy(response.head()).contains("Content-Encoding: gzip"));
+}
+
+#[test]
+fn test_streaming_gzip_chunked_decodes_body_and_exposes_trailers() {
+  let compressed = gzip_bytes(b"hello");
+  let mut raw = b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n"
+    .to_vec();
+  raw.extend_from_slice(format!("{:x}\r\n", compressed.len()).as_bytes());
+  raw.extend_from_slice(&compressed);
+  raw.extend_from_slice(b"\r\n0\r\nX-Trace: trailer\r\n\r\n");
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/gzip").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let mut response = reader.streaming_response().unwrap();
+  let mut body = Vec::new();
+  response.body_mut().read_to_end(&mut body).unwrap();
+
+  assert_eq!(b"hello", body.as_slice());
+  assert_eq!(
+    Some("trailer"),
+    response.trailer_value("x-trace").map(String::as_str)
+  );
+  assert!(response
+    .headers()
+    .unwrap()
+    .iter()
+    .all(|header| !header.name().eq_ignore_ascii_case("Content-Encoding")));
+}
+
+#[test]
+fn test_streaming_stacked_gzip_deflate_decodes_body() {
+  let compressed = zlib_bytes(&gzip_bytes(b"stacked"));
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip, deflate\r\nContent-Length: {}\r\n\r\n",
+    compressed.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&compressed);
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/stack").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let mut response = reader.streaming_response().unwrap();
+  let mut body = Vec::new();
+  response.body_mut().read_to_end(&mut body).unwrap();
+
+  assert_eq!(b"stacked", body.as_slice());
+  assert!(response
+    .headers()
+    .unwrap()
+    .iter()
+    .all(|header| !header.name().eq_ignore_ascii_case("Content-Encoding")));
+}
+
+#[test]
+fn test_streaming_malformed_gzip_returns_decode_error() {
+  let body = b"not-gzip";
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(body);
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/gzip").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let error = reader
+    .streaming_response()
+    .unwrap()
+    .read_to_response()
+    .expect_err("malformed gzip should fail");
+  assert_decode_error(error);
+}
+
+#[test]
+fn test_streaming_raw_deflate_returns_decode_error() {
+  let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), Compression::default());
+  encoder.write_all(b"OK").unwrap();
+  let body = encoder.finish().unwrap();
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: deflate\r\nContent-Length: {}\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&body);
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/deflate").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let error = reader
+    .streaming_response()
+    .unwrap()
+    .read_to_response()
+    .expect_err("raw deflate should fail");
+  assert_decode_error(error);
+}
+
+#[test]
+fn test_streaming_unknown_content_encoding_preserves_raw_body_and_headers() {
+  let body = gzip_bytes(b"OK");
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip, br\r\nContent-Length: {}\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&body);
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/br").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let mut response = reader.streaming_response().unwrap();
+  let mut out = Vec::new();
+  response.body_mut().read_to_end(&mut out).unwrap();
+
+  assert_eq!(body, out);
+  assert_eq!(
+    Some("gzip, br"),
+    response
+      .headers()
+      .unwrap()
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"))
+      .map(|header| header.value().as_str())
+  );
+}
+
+#[test]
+fn test_streaming_identity_content_encoding_preserves_raw_body_and_headers() {
+  let body = b"plain";
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: identity\r\nContent-Length: {}\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(body);
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/identity").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let mut response = reader.streaming_response().unwrap();
+  let mut out = Vec::new();
+  response.body_mut().read_to_end(&mut out).unwrap();
+
+  assert_eq!(b"plain", out.as_slice());
+  assert_eq!(
+    Some("identity"),
+    response
+      .headers()
+      .unwrap()
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"))
+      .map(|header| header.value().as_str())
+  );
+}
+
+#[test]
 fn test_buffered_gzip_response_exposes_decoded_body_headers() {
   let body = gzip_bytes(b"decoded");
   let mut raw = format!(
