@@ -44,6 +44,8 @@ use rttp_server::server::{
   HttpResponseDateParseError, HttpResponseExpires, HttpResponseLastModified,
   HttpResponseLastModifiedParseError, HttpRetryAfter, HttpRetryAfterParseError, HttpSameSite,
   HttpSaveData, HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
@@ -447,6 +449,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let document_policy_report_only_response = HttpResponse::ok("")
     .with_document_policy_report_only("oversized-images=2.0, unsized-media=?0, *;report-to=default")
     .expect("Document-Policy-Report-Only should be accepted");
+  let sec_required_document_policy: HttpSecRequiredDocumentPolicy =
+    HttpSecRequiredDocumentPolicy::parse(
+      "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    )
+    .expect("Sec-Required-Document-Policy should parse");
+  let _: HttpSecRequiredDocumentPolicyParseError =
+    HttpSecRequiredDocumentPolicy::parse("unsized-media=src;foo=bar")
+      .expect_err("unknown Sec-Required-Document-Policy parameter should be rejected");
   let supports_loading_mode: HttpSupportsLoadingMode =
     HttpSupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
       .expect("Supports-Loading-Mode should parse");
@@ -789,6 +799,20 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("Document-Policy-Report-Only should parse")
       .expect("Document-Policy-Report-Only should be present")
       .header_value()
+  );
+  assert_eq!(sec_required_document_policy.directives().len(), 3);
+  assert_eq!(
+    sec_required_document_policy
+      .directive("oversized-images")
+      .unwrap()
+      .value(),
+    &HttpSecRequiredDocumentPolicyValue::Decimal("2.0".to_string())
+  );
+  let _: &HttpSecRequiredDocumentPolicyDirective =
+    sec_required_document_policy.directive("*").unwrap();
+  assert_eq!(
+    sec_required_document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
   );
   assert_eq!(
     supports_loading_mode.tokens(),

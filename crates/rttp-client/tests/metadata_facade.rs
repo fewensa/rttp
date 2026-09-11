@@ -49,12 +49,13 @@ use rttp_client::{
   HttpClient, If, IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag,
   IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective,
   NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, SecWebSocketKey, SecWebSocketKeyParseError,
-  Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError, TimeoutType, TraceParent,
-  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
-  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, UserAgent, UserAgentMember,
-  UserAgentParseError, Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor,
-  XForwardedForParseError, XForwardedHost, XForwardedHostParseError, XForwardedProto,
+  SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, SecRequiredDocumentPolicy,
+  SecRequiredDocumentPolicyParseError, SecRequiredDocumentPolicyValue, SecWebSocketKey,
+  SecWebSocketKeyParseError, Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError,
+  TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, UserAgent,
+  UserAgentMember, UserAgentParseError, Via as ClientVia, ViaParseError as ClientViaParseError,
+  XForwardedFor, XForwardedForParseError, XForwardedHost, XForwardedHostParseError, XForwardedProto,
   XForwardedProtoParseError,
 };
 use rttp_test_support as support;
@@ -331,6 +332,13 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: DocumentPolicyReportOnlyParseError =
     DocumentPolicyReportOnly::parse("unsized-media=src;foo=bar")
       .expect_err("unknown Document-Policy-Report-Only parameter should be rejected");
+  let sec_required_document_policy = SecRequiredDocumentPolicy::parse(
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+  )
+  .expect("Sec-Required-Document-Policy should parse");
+  let _: SecRequiredDocumentPolicyParseError =
+    SecRequiredDocumentPolicy::parse("unsized-media=src;foo=bar")
+      .expect_err("unknown Sec-Required-Document-Policy parameter should be rejected");
   let supports_loading_mode = SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
     .expect("Supports-Loading-Mode should parse");
   let _: SupportsLoadingModeParseError =
@@ -646,6 +654,18 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(
     document_policy_report_only.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
+  assert_eq!(sec_required_document_policy.directives().len(), 3);
+  assert_eq!(
+    sec_required_document_policy
+      .directive("oversized-images")
+      .unwrap()
+      .value(),
+    &SecRequiredDocumentPolicyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(
+    sec_required_document_policy.header_value(),
     "oversized-images=2.0, unsized-media=?0, *;report-to=default"
   );
   assert_eq!(

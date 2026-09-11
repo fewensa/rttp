@@ -1388,6 +1388,23 @@ into `Cache-Control`, store cache entries, or apply cache, intermediary, or
 HTTP/1.0 compatibility policy. Callers that need unusual values can retain
 raw-header control with `header(("Pragma", "..."))`.
 
+## Bounded Sec-Required-Document-Policy request metadata
+
+`HttpClient::sec_required_document_policy(value)` validates WICG Document
+Policy Structured Fields dictionary metadata through the shared protocol
+`SecRequiredDocumentPolicy` type and emits one normalized
+`Sec-Required-Document-Policy` field. Already-attached
+`Sec-Required-Document-Policy` fields are combined in wire order and replaced
+by that single canonical field, so duplicate directive names, unknown
+parameters, control bytes, empty dictionaries, and per-field or combined-size
+bound violations fail before a socket opens.
+
+This helper only declares request metadata. RTTP does not enforce document
+policy, compare required policies with `Document-Policy`, block document
+loads, disable browser features, or echo response fields. Callers that need
+unusual values can retain raw-header control with
+`header(("Sec-Required-Document-Policy", "..."))`.
+
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
 `Response::content_disposition()` parses a singleton response

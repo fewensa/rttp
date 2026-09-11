@@ -46,6 +46,7 @@ use rttp_protocol::range::{Range, MAX_RANGE_COUNT};
 use rttp_protocol::referer::Referer;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
+use rttp_protocol::sec_required_document_policy::SecRequiredDocumentPolicy;
 use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::sec_websocket_protocol::SecWebSocketProtocol;
@@ -575,6 +576,41 @@ impl HttpClient {
   /// translate `Pragma` into `Cache-Control` or apply cache policy.
   pub fn pragma_no_cache(&mut self) -> error::Result<&mut Self> {
     self.pragma("no-cache")
+  }
+
+  /// Set bounded `Sec-Required-Document-Policy` request metadata.
+  ///
+  /// The value is validated through the shared protocol
+  /// `SecRequiredDocumentPolicy` type using the same Document Policy
+  /// Structured Fields dictionary model and bounds as `Document-Policy`. Any
+  /// already-attached `Sec-Required-Document-Policy` fields are combined in
+  /// wire order and replaced by one canonical field. Malformed members,
+  /// control bytes, duplicate directive names, and per-field or combined-size
+  /// bound violations fail before a socket opens. This declares request
+  /// metadata only; it does not enforce document policy, compare required
+  /// policies with `Document-Policy`, or echo response fields. Use `header`
+  /// directly for unusual values.
+  pub fn sec_required_document_policy<S: AsRef<str>>(
+    &mut self,
+    value: S,
+  ) -> error::Result<&mut Self> {
+    let mut values: Vec<String> = self
+      .request
+      .headers()
+      .iter()
+      .filter(|header| header.name().eq_ignore_ascii_case("Sec-Required-Document-Policy"))
+      .map(|header| header.value().clone())
+      .collect();
+    values.push(value.as_ref().to_string());
+    let policy = SecRequiredDocumentPolicy::parse_values(values.iter().map(String::as_str))
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    let headers = self.request.headers_mut();
+    headers.retain(|header| !header.name().eq_ignore_ascii_case("Sec-Required-Document-Policy"));
+    headers.push(Header::new(
+      "Sec-Required-Document-Policy",
+      policy.header_value(),
+    ));
+    Ok(self)
   }
 
   /// Append a validated `Accept` media range with its supplied quality value.

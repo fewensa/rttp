@@ -1656,6 +1656,28 @@ These helpers only declare or parse metadata. RTTP does not translate `Pragma`
 into `Cache-Control`, store cache entries, or apply cache, freshness,
 revalidation, intermediary, or HTTP/1.0 compatibility policy.
 
+### Bounded Sec-Required-Document-Policy request metadata
+
+`rttp-protocol` owns the shared `SecRequiredDocumentPolicy` primitive. Client
+helpers format through that type, and server `Request` / `HttpRequest` helpers
+parse with the same Document Policy Structured Fields dictionary rules.
+
+`HttpClient::sec_required_document_policy(value)` emits bounded
+`Sec-Required-Document-Policy` request metadata, combining and replacing
+already-attached same-name fields with one canonical value. On the server,
+`Request::sec_required_document_policy()` and
+`HttpRequest::sec_required_document_policy()` parse received fields into
+`HttpSecRequiredDocumentPolicy`. Absent fields return `Ok(None)`. Multiple
+fields are combined in wire order, duplicate directive names are rejected,
+each field value is bounded to 64 KiB, combined raw bytes are bounded to
+64 KiB, and the combined directive count is bounded to 256. Malformed members,
+control bytes, unknown parameters, empty dictionaries, and bound violations
+return a parser error while raw headers remain available.
+
+These helpers only declare or parse request metadata. RTTP does not enforce
+document policy, compare required policies with `Document-Policy`, block
+document loads, disable browser features, or echo response fields.
+
 ### Bounded Upgrade-Insecure-Requests request metadata
 
 `HttpClient::upgrade_insecure_requests()` emits `Upgrade-Insecure-Requests: 1`.
@@ -1908,6 +1930,7 @@ gain additional HTTP/2 header-block handling.
 | Permissions-Policy | `Response::permissions_policy` parses bounded W3C Permissions Policy dictionary metadata through the shared protocol type, combining fields in wire order and preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, or report sending |
 | Document-Policy | `Response::document_policy` parses bounded WICG Document Policy dictionary metadata through the shared protocol type, combining fields in wire order, retaining `*` and `report-to`, and preserving raw headers on parse failures | No configuration-point execution, document-load blocking, required-policy comparison, `Sec-Required-Document-Policy` echoing, feature enablement, or report sending |
 | Document-Policy-Report-Only | `Response::document_policy_report_only` parses bounded WICG Document Policy Report-Only dictionary metadata through the same shared protocol parser and formatter, retaining report-only type identity, `*`, and `report-to`, and preserving raw headers on parse failures | No policy enforcement, document-load blocking, required-policy comparison, `Sec-Required-Document-Policy` echoing, feature enablement, report delivery, scheduling, retry, or endpoint validation |
+| Sec-Required-Document-Policy | Client `sec_required_document_policy` and server `Request::sec_required_document_policy` / `HttpRequest::sec_required_document_policy` share the bounded protocol `SecRequiredDocumentPolicy` representation, combining fields in wire order and preserving raw headers on errors | No document-policy enforcement, required-policy comparison with `Document-Policy`, document-load blocking, feature enablement, or response echoing |
 | Supports-Loading-Mode | `Response::supports_loading_mode` parses bounded Structured Fields token-list response metadata through the shared protocol type, combining fields in wire order, retaining unknown tokens, and preserving raw headers on parse failures | No prerendering, fenced-frame admission, navigation changes, redirects, retries, or resource-loading behavior |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
 | Bounded h2c client | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, buffered POST, PUT, or PATCH requests, and opt-in RFC 8441 extended CONNECT request HEADERS via `http2_extended_connect`, opens at most one request stream, supports prior-knowledge with `emit_http2_prior_knowledge`, supports explicit HTTP/1.1 `Upgrade: h2c` negotiation with `emit_http2_upgrade`, advertises `SETTINGS_ENABLE_PUSH = 0`, advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` only for the explicit extended CONNECT path, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or `1`, honors initial peer `SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the peer allows zero streams, honors peer-advertised `SETTINGS_MAX_HEADER_LIST_SIZE` request metadata limits, accepts only legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, rejects oversized inbound frames when a configured local frame-size limit is exceeded, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges inbound PING without ACK on stream 0 and exactly 8 octets with matching opaque data, ignores inbound PING ACK, rejects malformed PING frames, DATA bodies, trailers, HPACK static Huffman strings, bounded large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | Ordinary `CONNECT`, header-configured `:protocol` metadata, non-h2c HTTP/1.1 `Upgrade` handoff requests, and proxies are rejected deterministically, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded direct h2c only, with no keepalive timers, no automatic client/server initiated PING policy, no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry/replay, server push, full session manager, full stream state machine, full multiplex scheduler, unbounded multiplex scheduling, general multiplexing, priority scheduling, request bodies or trailers for extended CONNECT, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
@@ -2563,6 +2586,30 @@ These helpers declare and parse metadata only. They do not translate `Pragma`
 into `Cache-Control`, store cache entries, or apply cache, freshness,
 revalidation, intermediary, or HTTP/1.0 compatibility policy.
 
+### Bounded Sec-Required-Document-Policy request metadata
+
+Server-side `Sec-Required-Document-Policy` helpers expose request metadata
+through the shared `rttp-protocol` primitive.
+`Request::sec_required_document_policy()` and
+`HttpRequest::sec_required_document_policy()` parse received fields in wire
+order into `HttpSecRequiredDocumentPolicy`. Absent fields return `Ok(None)`.
+HTTP/1.1 and HTTP/2 share the same `Request` helpers. The shared protocol type
+is the authority for directive, parameter, duplicate, member-count, and size
+validation.
+
+Parsing is bounded and validation-oriented. Each field value is limited to
+64 KiB, combined raw bytes are limited to 64 KiB, and the combined directive
+count is limited to 256. Empty dictionaries, malformed members, unknown
+parameters, duplicate names, control bytes, and bound violations return
+`HttpSecRequiredDocumentPolicyParseError` from the helper. Raw
+`Request::header("Sec-Required-Document-Policy")` values remain preserved
+exactly as ordinary headers; helper parse errors do not remove existing
+headers.
+
+These helpers parse request metadata only. They do not enforce document
+policy, compare required policies with `Document-Policy`, block document
+loads, disable browser features, or echo response fields.
+
 ### Bounded Accept-Encoding request metadata
 
 Server-side `Accept-Encoding` helpers expose request metadata through the
@@ -3165,6 +3212,7 @@ TLS or async accept loops.
 | Permissions-Policy | `HttpPermissionsPolicy`, `HttpResponse::with_permissions_policy`, and `HttpResponse::permissions_policy` parse and declare bounded W3C Permissions Policy dictionary response metadata through the shared protocol type, replacing raw duplicates on declaration and preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, or report sending |
 | Document-Policy | `HttpDocumentPolicy`, `HttpResponse::with_document_policy`, and `HttpResponse::document_policy` parse and declare bounded WICG Document Policy dictionary response metadata through the shared protocol type, replacing raw duplicates on declaration, retaining `*` and `report-to`, and preserving raw headers on parse failures | No configuration-point execution, document-load blocking, required-policy comparison, `Sec-Required-Document-Policy` echoing, feature enablement, or report sending |
 | Document-Policy-Report-Only | `HttpDocumentPolicyReportOnly`, `HttpResponse::with_document_policy_report_only`, and `HttpResponse::document_policy_report_only` parse and declare bounded WICG Document Policy Report-Only dictionary metadata through the same shared protocol parser and formatter, replacing raw duplicates on declaration, retaining report-only type identity, `*`, and `report-to`, and preserving raw headers on parse failures | No policy enforcement, document-load blocking, required-policy comparison, `Sec-Required-Document-Policy` echoing, feature enablement, report delivery, scheduling, retry, or endpoint validation |
+| Sec-Required-Document-Policy | `HttpSecRequiredDocumentPolicy`, `Request::sec_required_document_policy`, and `HttpRequest::sec_required_document_policy` parse bounded WICG required Document Policy dictionary request metadata through the shared protocol type, combining fields in wire order and preserving raw headers on parse failures | No document-policy enforcement, required-policy comparison with `Document-Policy`, document-load blocking, feature enablement, or response echoing |
 | Supports-Loading-Mode | `HttpSupportsLoadingMode`, `HttpResponse::with_supports_loading_mode`, and `HttpResponse::supports_loading_mode` parse and declare bounded Structured Fields token-list response metadata through the shared protocol type, replacing raw duplicates on declaration, retaining unknown tokens, and preserving raw headers on parse failures | No prerendering, fenced-frame admission, navigation changes, redirects, retries, or resource-loading behavior |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Content-Security-Policy-Report-Only | `HttpContentSecurityPolicyReportOnly`, `HttpResponse::with_content_security_policy_report_only`, `content_security_policy_report_only`, and client `Response::content_security_policy_report_only` parse or declare bounded opaque `Content-Security-Policy-Report-Only` response metadata while preserving repeated fields in wire order and raw headers on parse failures | No CSP enforcement, directive evaluation, report delivery, browser policy state, retry, redirect, cache behavior, or status-policy behavior |

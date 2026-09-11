@@ -4682,6 +4682,184 @@ fn pragma_helper_rejects_combined_fields_that_exceed_total_size() {
 }
 
 #[test]
+fn sec_required_document_policy_helper_emits_canonical_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .sec_required_document_policy(
+        "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+      )
+      .expect("Sec-Required-Document-Policy should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("oversized-images=2.0, unsized-media=?0, *;report-to=default"),
+    header_value(&request, "Sec-Required-Document-Policy")
+  );
+}
+
+#[test]
+fn sec_required_document_policy_helper_combines_existing_fields_and_replaces_them() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .sec_required_document_policy("oversized-images=2.0, unsized-media=?0")
+      .expect("first Sec-Required-Document-Policy should be accepted")
+      .sec_required_document_policy("*;report-to=default")
+      .expect("second Sec-Required-Document-Policy should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("oversized-images=2.0, unsized-media=?0, *;report-to=default"),
+    header_value(&request, "Sec-Required-Document-Policy")
+  );
+  assert_eq!(
+    1,
+    request.matches("Sec-Required-Document-Policy:").count(),
+    "combined Sec-Required-Document-Policy fields must be replaced by one field"
+  );
+}
+
+#[test]
+fn sec_required_document_policy_helper_combines_existing_raw_fields_into_one_field() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-Required-Document-Policy", "oversized-images=2.0"))
+      .sec_required_document_policy("unsized-media=?0")
+      .expect("Sec-Required-Document-Policy should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("oversized-images=2.0, unsized-media=?0"),
+    header_value(&request, "Sec-Required-Document-Policy"),
+    "the typed helper must combine existing same-name fields with the new value"
+  );
+  assert_eq!(
+    1,
+    request.matches("Sec-Required-Document-Policy:").count(),
+    "combined Sec-Required-Document-Policy fields must be replaced by one field"
+  );
+}
+
+#[test]
+fn sec_required_document_policy_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "oversized-images=()",
+    "oversized-images=src;foo=bar",
+    "Oversized-Images=2.0",
+    "oversized-images=2.0, oversized-images=3.0",
+    "oversized-images=2.0\r\nX-Injected: 1",
+    "oversized-images=2.0\u{1}",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_required_document_policy(value)
+        .expect_err("invalid Sec-Required-Document-Policy should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-Required-Document-Policy must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn sec_required_document_policy_helper_rejects_invalid_existing_fields_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-Required-Document-Policy", "oversized-images=src;foo=bar"))
+      .sec_required_document_policy("unsized-media=?0")
+      .expect_err("combined invalid Sec-Required-Document-Policy should be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid combined Sec-Required-Document-Policy must not open a socket"
+  );
+}
+
+#[test]
+fn sec_required_document_policy_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .sec_required_document_policy(oversized.as_str())
+      .expect_err("oversized Sec-Required-Document-Policy should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized Sec-Required-Document-Policy must not open a socket"
+  );
+}
+
+#[test]
+fn sec_required_document_policy_helper_rejects_combined_fields_that_exceed_total_size() {
+  let first = format!("first={}", "a".repeat(40 * 1024));
+  let second = format!("second={}", "b".repeat(40 * 1024));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-Required-Document-Policy", first.as_str()))
+      .sec_required_document_policy(second.as_str())
+      .expect_err("combined oversized Sec-Required-Document-Policy should be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "combined oversized Sec-Required-Document-Policy must not open a socket"
+  );
+}
+
+#[test]
+fn raw_sec_required_document_policy_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header((
+        "Sec-Required-Document-Policy",
+        "opaque custom document policy",
+      ))
+      .emit()
+      .expect("manual Sec-Required-Document-Policy header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom document policy"),
+    header_value(&request, "Sec-Required-Document-Policy")
+  );
+}
+
+#[test]
 fn raw_pragma_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

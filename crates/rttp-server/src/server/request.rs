@@ -121,6 +121,12 @@ pub use rttp_protocol::save_data::{
   SaveData as HttpSaveData, SaveDataParseError as HttpSaveDataParseError,
 };
 pub use rttp_protocol::sec_gpc::{SecGpc as HttpSecGpc, SecGpcParseError as HttpSecGpcParseError};
+pub use rttp_protocol::sec_required_document_policy::{
+  SecRequiredDocumentPolicy as HttpSecRequiredDocumentPolicy,
+  SecRequiredDocumentPolicyDirective as HttpSecRequiredDocumentPolicyDirective,
+  SecRequiredDocumentPolicyParseError as HttpSecRequiredDocumentPolicyParseError,
+  SecRequiredDocumentPolicyValue as HttpSecRequiredDocumentPolicyValue,
+};
 pub use rttp_protocol::sec_websocket_extensions::{
   SecWebSocketExtension as HttpSecWebSocketExtension,
   SecWebSocketExtensionParameter as HttpSecWebSocketExtensionParameter,
@@ -940,6 +946,18 @@ impl Request {
       return Ok(None);
     }
     HttpPragma::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Sec-Required-Document-Policy` request metadata without
+  /// enforcing document policy or comparing it with `Document-Policy`.
+  pub fn sec_required_document_policy(
+    &self,
+  ) -> Result<Option<HttpSecRequiredDocumentPolicy>, HttpSecRequiredDocumentPolicyParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-Required-Document-Policy").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecRequiredDocumentPolicy::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
@@ -2935,6 +2953,27 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpPragma::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Sec-Required-Document-Policy` request metadata without
+  /// enforcing document policy or comparing it with `Document-Policy`.
+  pub fn sec_required_document_policy(
+    &self,
+  ) -> Result<Option<HttpSecRequiredDocumentPolicy>, HttpSecRequiredDocumentPolicyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Sec-Required-Document-Policy")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecRequiredDocumentPolicy::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing

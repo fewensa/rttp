@@ -80,6 +80,9 @@ use rttp_protocol::retry_after::RetryAfter;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::schedule_tag::ScheduleTag;
 use rttp_protocol::sec_gpc::SecGpc;
+use rttp_protocol::sec_required_document_policy::{
+  SecRequiredDocumentPolicy, SecRequiredDocumentPolicyParseError,
+};
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
 use rttp_protocol::sec_websocket_extensions::{
   SecWebSocketExtensions, SecWebSocketExtensionsParseError,
@@ -296,6 +299,13 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let _: DocumentPolicyReportOnlyParseError =
     DocumentPolicyReportOnly::parse("unsized-media=src;foo=bar")
       .expect_err("Document-Policy-Report-Only with an unknown parameter should be rejected");
+  let sec_required_document_policy = SecRequiredDocumentPolicy::parse(
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+  )
+  .expect("Sec-Required-Document-Policy should parse");
+  let _: SecRequiredDocumentPolicyParseError =
+    SecRequiredDocumentPolicy::parse("unsized-media=src;foo=bar")
+      .expect_err("Sec-Required-Document-Policy with an unknown parameter should be rejected");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
   let content_security_policy =
@@ -449,6 +459,18 @@ fn protocol_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(
     document_policy_report_only
+      .directive("*")
+      .unwrap()
+      .report_to(),
+    Some("default")
+  );
+  assert_eq!(sec_required_document_policy.directives().len(), 3);
+  assert_eq!(
+    sec_required_document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
+  assert_eq!(
+    sec_required_document_policy
       .directive("*")
       .unwrap()
       .report_to(),

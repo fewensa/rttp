@@ -1897,6 +1897,66 @@ fn request_pragma_parses_bounded_metadata_without_cache_policy() {
 }
 
 #[test]
+fn request_sec_required_document_policy_parses_bounded_metadata_without_policy() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .sec_required_document_policy()
+      .expect("missing Sec-Required-Document-Policy should be valid")
+  );
+
+  let valid = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-Required-Document-Policy: oversized-images=2.0, unsized-media=?0\r\n",
+    "Sec-Required-Document-Policy: *;report-to=default\r\n",
+    "\r\n"
+  ));
+  let policy = valid
+    .sec_required_document_policy()
+    .expect("Sec-Required-Document-Policy should parse")
+    .expect("Sec-Required-Document-Policy should be present");
+  assert_eq!(3, policy.len());
+  assert_eq!(
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    policy.header_value()
+  );
+  assert_eq!(
+    Some("oversized-images=2.0, unsized-media=?0"),
+    valid.header("Sec-Required-Document-Policy")
+  );
+
+  for value in [
+    "oversized-images=src;foo=bar",
+    "Oversized-Images=2.0",
+    "oversized-images=2.0, oversized-images=3.0",
+  ] {
+    let request = parse_request(&format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-Required-Document-Policy: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.sec_required_document_policy().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-Required-Document-Policy"));
+  }
+
+  let duplicate = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-Required-Document-Policy: oversized-images=2.0\r\n",
+    "sec-required-document-policy: oversized-images=3.0\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.sec_required_document_policy().is_err());
+  assert_eq!(
+    Some("oversized-images=2.0"),
+    duplicate.header("Sec-Required-Document-Policy")
+  );
+}
+
+#[test]
 fn request_idempotency_key_is_optional_and_rejects_invalid_metadata() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(
