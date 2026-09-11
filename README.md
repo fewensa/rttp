@@ -2124,7 +2124,10 @@ Use `HttpServer::bind` directly when you already want the server type,
 connection, and `serve_requests` for a fixed number of sequential connections.
 Use `with_read_timeout` and `with_write_timeout` to apply socket-level
 timeouts to each accepted connection; pass `None` to leave the corresponding
-socket timeout unset. Add `Transfer-Encoding: chunked` to an `HttpResponse` to
+socket timeout unset. Use `with_max_request_head_bytes` to set the maximum
+HTTP request-head size accepted for HTTP/1 parsing and h2c upgrade handoff;
+the default remains 64 KiB, and zero is rejected before serving. Add
+`Transfer-Encoding: chunked` to an `HttpResponse` to
 write the complete response body with HTTP/1.x chunked transfer framing instead
 of an automatic `Content-Length`; response trailers added with
 `HttpResponse::trailer` are written after the terminating zero-size chunk. Add a

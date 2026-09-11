@@ -64,6 +64,9 @@ to port `0` in tests. `HttpServer::accept_one` serves one connection.
 the same listener. `HttpServer::with_read_timeout` and
 `HttpServer::with_write_timeout` apply socket-level timeouts to each accepted
 connection; pass `None` to leave the corresponding socket timeout unset.
+`HttpServer::with_max_request_head_bytes` sets the maximum HTTP request-head
+size accepted for HTTP/1 parsing and h2c upgrade handoff; the default remains
+64 KiB, and zero is rejected before serving.
 
 Add `Transfer-Encoding: chunked` to an `HttpResponse` to write the complete
 response body with HTTP/1.x chunked transfer framing instead of an automatic

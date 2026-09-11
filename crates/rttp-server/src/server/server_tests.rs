@@ -1,6 +1,31 @@
 use std::net::TcpStream as StdTcpStream;
 
 #[test]
+fn with_max_request_head_bytes_rejects_zero_before_serving() {
+  let error = match HttpServer::bind("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_head_bytes(0)
+  {
+    Ok(_) => panic!("zero request-head limit must fail"),
+    Err(error) => error,
+  };
+  assert_eq!(io::ErrorKind::InvalidInput, error.kind());
+  assert_eq!(
+    "max request head bytes must be greater than zero",
+    error.to_string()
+  );
+}
+
+#[test]
+fn with_max_request_head_bytes_accepts_nonzero_limit() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_head_bytes(1)
+    .expect("nonzero request-head limit must be accepted");
+  assert_eq!(1, server.max_request_head_bytes);
+}
+
+#[test]
 fn request_cache_control_combines_case_insensitive_header_fields() {
   let request = Request::from_raw_frame(
     b"GET / HTTP/1.1\r\nHost: example.test\r\nCache-Control: no-cache, max-age=60\r\ncache-control: min-fresh=30, only-if-cached\r\n\r\n",
