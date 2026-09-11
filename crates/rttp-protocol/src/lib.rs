@@ -109,6 +109,7 @@ pub mod retry_after;
 pub mod save_data;
 pub mod schedule_tag;
 pub mod sec_gpc;
+pub mod sec_required_document_policy;
 pub mod sec_websocket_accept;
 pub mod sec_websocket_extensions;
 pub mod sec_websocket_key;

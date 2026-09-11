@@ -492,6 +492,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::DocumentPolicyReportOnlyParseError =
     rttp_client::response::DocumentPolicyReportOnly::parse("unsized-media=src;foo=bar")
       .expect_err("unknown Document-Policy-Report-Only parameter should be rejected");
+  let sec_required_document_policy: rttp::SecRequiredDocumentPolicy =
+    rttp::SecRequiredDocumentPolicy::parse("oversized-images=2.0, unsized-media=?0")
+      .expect("Sec-Required-Document-Policy should parse");
+  let _: rttp::SecRequiredDocumentPolicyParseError =
+    rttp::SecRequiredDocumentPolicy::parse("unsized-media=src;foo=bar")
+      .expect_err("unknown Sec-Required-Document-Policy parameter should be rejected");
   let supports_loading_mode: rttp::SupportsLoadingMode =
     rttp_client::response::SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
       .expect("Supports-Loading-Mode should parse");
@@ -795,6 +801,16 @@ fn compatibility_facade_exports_client_metadata_types() {
       .value(),
     &rttp::DocumentPolicyReportOnlyValue::Decimal("2.0".to_string())
   );
+  assert_eq!(sec_required_document_policy.directives().len(), 2);
+  assert_eq!(
+    sec_required_document_policy
+      .directive("oversized-images")
+      .unwrap()
+      .value(),
+    &rttp::SecRequiredDocumentPolicyValue::Decimal("2.0".to_string())
+  );
+  let _: &rttp::SecRequiredDocumentPolicyDirective =
+    sec_required_document_policy.directive("unsized-media").unwrap();
   assert_eq!(
     supports_loading_mode.tokens(),
     ["fenced-frame", "credentialed-prerender"]

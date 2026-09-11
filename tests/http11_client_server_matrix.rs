@@ -4691,6 +4691,58 @@ fn sync_client_and_server_exchange_bounded_pragma_metadata_without_policy() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_sec_required_document_policy_metadata_without_policy() {
+  const POLICY: &str = "oversized-images=2.0, unsized-media=?0, *;report-to=default";
+
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Sec-Required-Document-Policy server");
+  let addr = server
+    .local_addr()
+    .expect("Sec-Required-Document-Policy server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .sec_required_document_policy()
+            .expect("Sec-Required-Document-Policy should parse")
+            .map(|policy| policy.header_value()),
+          request
+            .header("Sec-Required-Document-Policy")
+            .map(str::to_string),
+          request.header("Document-Policy").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Sec-Required-Document-Policy metadata");
+        HttpResponse::new(200, "OK")
+      })
+      .expect("serve Sec-Required-Document-Policy request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/document"))
+    .sec_required_document_policy(POLICY)
+    .expect("Sec-Required-Document-Policy should be accepted")
+    .emit()
+    .expect("Sec-Required-Document-Policy response should parse");
+
+  let (typed, raw, document_policy) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe Sec-Required-Document-Policy metadata");
+  assert_eq!(Some(POLICY.to_string()), typed);
+  assert_eq!(Some(POLICY.to_string()), raw);
+  assert_eq!(
+    None, document_policy,
+    "Sec-Required-Document-Policy exchange must not invent Document-Policy"
+  );
+  assert_eq!(200, response.code());
+  handle.join().expect("Sec-Required-Document-Policy server thread");
+}
+
+#[test]
 fn sync_client_and_server_observe_pragma_and_cache_control_independently() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind pragma/cache server");

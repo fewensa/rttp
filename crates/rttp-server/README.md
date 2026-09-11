@@ -1343,6 +1343,26 @@ These helpers declare and parse metadata only. They do not translate `Pragma`
 into `Cache-Control`, store cache entries, or apply cache, intermediary, or
 HTTP/1.0 compatibility policy.
 
+## Sec-Required-Document-Policy request metadata
+
+Handlers can call `Request::sec_required_document_policy()` and
+`HttpRequest::sec_required_document_policy()` to observe bounded typed
+`Sec-Required-Document-Policy` request metadata through the shared protocol
+`HttpSecRequiredDocumentPolicy` type. Absent fields return `Ok(None)`. The
+helpers reuse the Document Policy Structured Fields dictionary model: opaque
+lowercase directive names or `*`, boolean/integer/decimal/token values, and a
+retained `report-to` parameter. Multiple fields are combined in wire order,
+duplicate directive names are rejected, each field value is bounded to 64 KiB,
+combined raw bytes are bounded to 64 KiB, and the combined directive count is
+bounded to 256. Empty dictionaries, malformed members, forbidden ASCII control
+bytes, unknown parameters, and bound violations return a parser error while
+`Request::header()` and `HttpRequest::header()` continue to expose the
+original raw fields.
+
+These helpers parse request metadata only. They do not enforce document
+policy, compare required policies with `Document-Policy`, block document
+loads, disable browser features, or echo response fields.
+
 ## W3C Trace Context request metadata
 
 Handlers can call `Request::traceparent()`, `Request::tracestate()`, and the

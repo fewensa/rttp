@@ -1520,6 +1520,12 @@ same directive model, parser, formatter, and bounds while exposing distinct
 report-only types and parse errors. It is also metadata-only: it does not
 enforce policy or deliver reports.
 
+`sec_required_document_policy` parses `Sec-Required-Document-Policy` request
+metadata with the same directive model, parser, formatter, and bounds while
+exposing distinct required-policy types and parse errors. It is metadata-only:
+it does not enforce document policy, compare required policies with
+`Document-Policy`, block document loads, or echo response fields.
+
 ## Supports-Loading-Mode
 
 `supports_loading_mode` parses bounded `Supports-Loading-Mode` response
