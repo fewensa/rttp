@@ -60,6 +60,30 @@ fn content_range_parses_satisfied_unknown_and_unsatisfied_forms() {
 }
 
 #[test]
+fn content_range_trims_http_ows_and_formats_canonical_values() {
+  let content_range =
+    ContentRange::parse("\tBYTES 0003-0006/0010 ").expect("OWS-padded content range");
+  let unsatisfied = ContentRange::parse(" bytes */0010\t").expect("OWS-padded unsatisfied range");
+
+  assert_eq!(
+    ContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    },
+    content_range
+  );
+  assert_eq!("bytes 3-6/10", content_range.header_value());
+  assert_eq!(
+    ContentRange::Unsatisfied {
+      complete_length: 10,
+    },
+    unsatisfied
+  );
+  assert_eq!("bytes */10", unsatisfied.header_value());
+}
+
+#[test]
 fn content_range_rejects_repeated_field_values() {
   assert!(ContentRange::parse_values(["bytes 0-1/4", "bytes 2-3/4"]).is_err());
 }
@@ -82,6 +106,12 @@ fn range_and_content_range_reject_invalid_syntax_controls_and_overflow() {
     "bytes 0-2/2",
     "bytes */*",
     "bytes */18446744073709551616",
+    "bytes\t0-1/2",
+    "bytes 0-1 /\t2",
+    "bytes 0-1/2, bytes 2-3/4",
+    "bytes 0-1/2/",
+    "bytes 0-1",
+    "bytes 0-1/",
     "bytes 0-1/2\n",
   ] {
     assert!(
