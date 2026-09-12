@@ -1121,6 +1121,18 @@ available.
 These helpers only declare or parse request metadata. RTTP does not infer or
 enforce consent, tracking, legal, or serving policy.
 
+## Bounded Early-Data request metadata
+
+`HttpClient::early_data()` emits `Early-Data: 1` through the shared protocol
+representation. Server-side `Request::early_data()` and
+`HttpRequest::early_data()` parse the same bounded singleton `1` signal and
+return `Ok(None)` when the field is absent. Malformed, unsupported,
+oversized, duplicate, or control-byte values return a parser error while raw
+request headers remain available.
+
+These helpers only declare or parse RFC 8470 request metadata. RTTP does not
+enable 0-RTT transport, decide replay safety, retry, or apply serving policy.
+
 ## Bounded Sec-Required-Document-Policy request metadata
 
 `HttpClient::sec_required_document_policy(value)` emits bounded
@@ -1805,6 +1817,7 @@ scheduling, or async accept loops.
 | Metadata HTTP/1.1 interoperability matrix | Workspace integration tests cover live HTTP/1.1 client/server/facade roundtrips for `From`, `Referer`, `Accept-Patch`, `Accept-Post`, and `RateLimit-*`, including canonical wire values, ordered typed values, raw escape hatches, absence as `Ok(None)`, malformed peer input with raw preservation, pre-connect builder rejection, and sync/async client parity | No identity, referrer, method-negotiation, or quota policy |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Sec-GPC | `HttpClient::sec_gpc`, `Request::sec_gpc`, and `HttpRequest::sec_gpc` share the bounded protocol `Sec-GPC` `1`-signal representation and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
+| Early-Data | `HttpClient::early_data`, `Request::early_data`, and `HttpRequest::early_data` share the bounded RFC 8470 `Early-Data` `1`-signal representation and preserve raw values on errors | No 0-RTT transport enablement, replay-safety decision, retry behavior, or server acceptance policy |
 | Sec-Required-Document-Policy | `HttpClient::sec_required_document_policy`, `Request::sec_required_document_policy`, and `HttpRequest::sec_required_document_policy` share the bounded Document Policy Structured Fields request metadata type, replace existing same-name fields on emission, and preserve raw values on errors | No document-policy enforcement, required-policy comparison against `Document-Policy`, document-load blocking, feature enablement, or report sending |
 | Pragma | `HttpClient::pragma`/`pragma_no_cache`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation across client construction, server access, server response declaration, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |

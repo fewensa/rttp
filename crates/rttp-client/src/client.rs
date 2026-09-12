@@ -24,6 +24,7 @@ use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
 use rttp_protocol::dnt::Dnt;
+use rttp_protocol::early_data::EarlyData;
 use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
@@ -528,6 +529,16 @@ impl HttpClient {
     let sec_gpc =
       SecGpc::parse("1").map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Sec-GPC", sec_gpc.header_value())))
+  }
+
+  /// Set `Early-Data: 1` request metadata.
+  ///
+  /// This declares the RFC 8470 early-data signal only; it does not enable
+  /// 0-RTT transport, decide replay safety, or apply server acceptance policy.
+  pub fn early_data(&mut self) -> error::Result<&mut Self> {
+    let early_data =
+      EarlyData::parse("1").map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Early-Data", early_data.header_value())))
   }
 
   /// Set bounded `Sec-Required-Document-Policy` request metadata.

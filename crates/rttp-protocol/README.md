@@ -113,6 +113,17 @@ and size validator shared with `IM`. It reports declared request metadata
 only; it does not select a preferred instance manipulation or apply delta
 encodings.
 
+## Early-Data
+
+`early_data` parses singleton RFC 8470 `Early-Data` request metadata. The
+only accepted value is the case-sensitive `1` signal with optional surrounding
+SP or HTAB. `header_value()` emits the canonical `1` value. Missing values,
+unsupported values, duplicate fields, comma-lists, forbidden control bytes,
+and values over 64 KiB are errors.
+
+This type reports declared request metadata only; it does not enable 0-RTT
+transport, decide replay safety, retry, or apply server acceptance policy.
+
 ## IM
 
 `im` parses one or more RFC 3229 `IM` field values into an ordered list of

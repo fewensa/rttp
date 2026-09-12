@@ -1654,6 +1654,18 @@ field available.
 These helpers only declare or parse request metadata. RTTP does not infer or
 enforce consent, tracking, legal, or serving policy.
 
+### Bounded Early-Data request metadata
+
+`HttpClient::early_data()` emits `Early-Data: 1`. On the server,
+`Request::early_data()` and `HttpRequest::early_data()` parse the same bounded
+singleton RFC 8470 `1` signal through the shared protocol representation,
+returning `Ok(None)` when the field is absent and a parser error for
+malformed, unsupported, oversized, duplicate, or control-byte values while
+leaving the raw `Early-Data` field available.
+
+These helpers only declare or parse request metadata. RTTP does not enable
+0-RTT transport, decide replay safety, retry, or apply serving policy.
+
 ### Bounded Pragma metadata
 
 `rttp-protocol` owns the shared `Pragma` primitive. Client helpers format
@@ -1865,6 +1877,7 @@ gain additional HTTP/2 header-block handling.
 | Set-Cookie | Client `Response::set_cookies()` and server `HttpResponse::with_set_cookie()`/`set_cookies()` share bounded protocol `Set-Cookie` response metadata, preserve multiple field lines and raw headers, redact cookie values from typed debug and errors, and reject invalid typed metadata including duplicate attributes, valued flag attributes, non-standard `SameSite`, invalid `Max-Age`, malformed quoted values, and bounds violations; client `Response::cookies()`/`cookie()` are a legacy compatibility view that only exposes protocol-accepted fields and silently omits invalid `Set-Cookie` fields while raw headers remain available | No cookie jar, persistence, domain/path matching, expiry enforcement, SameSite or partitioning policy, or automatic request `Cookie` emission |
 | Variant-Vary | Client `Response::variant_vary()` and server `HttpResponse::with_variant_vary()`/`variant_vary()` share bounded RFC 2295 `Variant-Vary` response metadata through the protocol `VariantVary` type while preserving raw headers on accessor errors | No cache-key construction, variant selection, `Alternates`/`TCN`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Sec-GPC | Client `sec_gpc` emits bounded `Sec-GPC: 1` request metadata; server `Request::sec_gpc()` and `HttpRequest::sec_gpc()` parse typed received values while preserving raw headers on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
+| Early-Data | Client `early_data` emits bounded RFC 8470 `Early-Data: 1` request metadata; server `Request::early_data()` and `HttpRequest::early_data()` parse typed received values while preserving raw headers on errors | No 0-RTT transport enablement, replay-safety decision, retry behavior, or server acceptance policy |
 | Upgrade-Insecure-Requests | Client `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata; server `Request::upgrade_insecure_requests()` and `HttpRequest::upgrade_insecure_requests()` parse typed received values while preserving raw headers on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Depth | Client `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::depth()` and `HttpRequest::depth()` parse typed received values while preserving raw headers on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Destination | Client `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::destination()` and `HttpRequest::destination()` parse typed received values while preserving raw headers on errors | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
@@ -3164,6 +3177,7 @@ TLS or async accept loops.
 | Set-Cookie | `HttpResponse::with_set_cookie` and `HttpResponse::set_cookies` declare or parse bounded protocol `Set-Cookie` response metadata, preserve multiple field lines and raw headers, redact cookie values from typed debug and errors, and reject invalid typed metadata including duplicate attributes, valued flag attributes, non-standard `SameSite`, invalid `Max-Age`, malformed quoted values, and bounds violations | No cookie jar, persistence, domain/path matching, expiry enforcement, SameSite or partitioning policy, or automatic request `Cookie` emission |
 | Variant-Vary | `HttpVariantVary`, `HttpResponse::with_variant_vary`, and `HttpResponse::variant_vary` declare or parse bounded RFC 2295 `Variant-Vary` response metadata through the shared protocol type, replacing raw duplicates on declaration and preserving raw headers on accessor errors | No cache-key construction, variant selection, `Alternates`/`TCN`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Sec-GPC | `Request::sec_gpc` and `HttpRequest::sec_gpc` parse bounded singleton `Sec-GPC` `1`-signal metadata and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
+| Early-Data | `Request::early_data` and `HttpRequest::early_data` parse bounded singleton RFC 8470 `Early-Data` `1`-signal metadata and preserve raw values on errors | No 0-RTT transport enablement, replay-safety decision, retry behavior, or server acceptance policy |
 | Upgrade-Insecure-Requests | `Request::upgrade_insecure_requests` and `HttpRequest::upgrade_insecure_requests` parse bounded singleton `Upgrade-Insecure-Requests` `1`-token metadata and preserve raw values on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Depth | `Request::depth` and `HttpRequest::depth` parse bounded singleton WebDAV `Depth` request metadata through the shared protocol type and preserve raw values on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Destination | `Request::destination` and `HttpRequest::destination` parse bounded singleton WebDAV `Destination` request metadata through the shared protocol type and preserve raw values on errors | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |

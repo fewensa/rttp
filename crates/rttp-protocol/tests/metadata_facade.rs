@@ -42,6 +42,7 @@ use rttp_protocol::document_policy::{DocumentPolicy, DocumentPolicyParseError};
 use rttp_protocol::document_policy_report_only::{
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError,
 };
+use rttp_protocol::early_data::{EarlyData, EarlyDataParseError};
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
@@ -147,6 +148,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let _: AcceptParseError = Accept::parse("*/json").expect_err("invalid Accept should fail");
   let dnt = Dnt::parse("1").expect("DNT should parse");
   let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
+  let early_data = EarlyData::parse("1").expect("Early-Data should parse");
+  let _: EarlyDataParseError =
+    EarlyData::parse("0").expect_err("invalid Early-Data should be rejected");
   let upgrade_insecure_requests =
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
@@ -400,6 +404,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(Some("1"), media_range.parameter("level"));
   assert_eq!(dnt.header_value(), "1");
   assert_eq!(sec_gpc.header_value(), "1");
+  assert_eq!(early_data.header_value(), "1");
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(entity_tag.opaque_tag(), "revision-42");

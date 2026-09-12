@@ -1046,6 +1046,20 @@ original raw field.
 These helpers parse request metadata only. They do not infer or enforce
 consent, tracking, legal, or serving policy.
 
+## Early-Data request metadata
+
+Handlers can call `Request::early_data()` and `HttpRequest::early_data()` to
+observe bounded typed RFC 8470 `Early-Data` request metadata through the
+shared protocol `HttpEarlyData` representation. Absent fields return
+`Ok(None)`. The recognized value is the case-sensitive `1` signal with
+optional surrounding SP or HTAB. Malformed, unsupported, oversized,
+duplicate, or control-byte values return `HttpEarlyDataParseError` while
+`Request::header()` and `HttpRequest::header()` continue to expose the
+original raw field.
+
+These helpers parse request metadata only. They do not enable 0-RTT
+transport, decide replay safety, retry, or apply serving policy.
+
 ## Sec-Required-Document-Policy request metadata
 
 Handlers can call `Request::sec_required_document_policy()` and

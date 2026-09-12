@@ -12,15 +12,15 @@ use rttp::server::{
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeltaBase, HttpDeltaBaseParseError, HttpDeprecation,
   HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDestination,
-  HttpDestinationParseError, HttpDnt, HttpDntParseError, HttpEntityTag, HttpExpectations, HttpFrom,
-  HttpFromParseError, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf,
-  HttpIfModifiedSince, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError,
-  HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards, HttpMediaType,
-  HttpMediaTypeParameter, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
-  HttpNegotiateDirective, HttpNegotiateParseError, HttpNel, HttpOriginTrialParseError,
-  HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError,
-  HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpDestinationParseError, HttpDnt, HttpDntParseError, HttpEarlyData, HttpEarlyDataParseError,
+  HttpEntityTag, HttpExpectations, HttpFrom, HttpFromParseError, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIf, HttpIfModifiedSince, HttpIfScheduleTagMatch,
+  HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError,
+  HttpMaxForwards, HttpMediaType, HttpMediaTypeParameter, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError,
+  HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpSameSite,
@@ -1040,6 +1040,8 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
     .expect("Want-Repr-Digest preference should be accepted")
     .sec_gpc()
     .expect("Sec-GPC should be accepted")
+    .early_data()
+    .expect("Early-Data should be accepted")
     .emit()
     .expect("client request should complete");
   let captured_request = handle
@@ -1069,6 +1071,10 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
     header_value(&captured_request_text, "Content-Language")
   );
   assert_eq!(Some("1"), header_value(&captured_request_text, "Sec-GPC"));
+  assert_eq!(
+    Some("1"),
+    header_value(&captured_request_text, "Early-Data")
+  );
 
   let server_request =
     rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
@@ -1087,6 +1093,14 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
       .sec_gpc()
       .expect("server Sec-GPC should parse")
       .expect("server Sec-GPC should be present")
+      .header_value(),
+    "1"
+  );
+  assert_eq!(
+    server_request
+      .early_data()
+      .expect("server Early-Data should parse")
+      .expect("server Early-Data should be present")
       .header_value(),
     "1"
   );
@@ -1263,6 +1277,29 @@ fn compatibility_facade_rejects_invalid_sec_gpc_request_metadata() {
   assert!(
     duplicate.sec_gpc().is_err(),
     "duplicate Sec-GPC fields must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_rejects_invalid_early_data_request_metadata() {
+  let malformed = rttp::server::HttpRequest::parse(
+    b"POST /charge HTTP/1.1\r\nHost: example.test\r\nEarly-Data: 0\r\n\r\n",
+  )
+  .expect("malformed Early-Data request should still parse");
+  assert!(
+    malformed.early_data().is_err(),
+    "malformed Early-Data values must fail closed"
+  );
+  assert_eq!(Some("0"), malformed.header("Early-Data"));
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"POST /charge HTTP/1.1\r\nHost: example.test\r\nEarly-Data: 1\r\nearly-data: 1\r\n\r\n",
+  )
+  .expect("duplicate Early-Data request should still parse");
+  assert!(
+    duplicate.early_data().is_err(),
+    "duplicate Early-Data fields must fail closed"
   );
 }
 
@@ -2108,6 +2145,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let sec_gpc: HttpSecGpc = HttpSecGpc::parse("1").expect("Sec-GPC should parse");
   let _: HttpSecGpcParseError =
     HttpSecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
+  let early_data: HttpEarlyData = HttpEarlyData::parse("1").expect("Early-Data should parse");
+  let _: HttpEarlyDataParseError =
+    HttpEarlyData::parse("0").expect_err("invalid Early-Data should be rejected");
   let sec_required_document_policy: HttpSecRequiredDocumentPolicy =
     HttpSecRequiredDocumentPolicy::parse(
       "oversized-images=2.0, unsized-media=?0, *;report-to=default",
@@ -2309,6 +2349,7 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(save_data.header_value(), "on");
   assert_eq!(dnt.header_value(), "1");
   assert!(dnt_error.is_err());
+  assert_eq!(early_data.header_value(), "1");
   assert_eq!(
     referer.header_value(),
     "https://shop.example/checkout?step=pay"
