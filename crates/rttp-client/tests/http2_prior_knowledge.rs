@@ -4323,6 +4323,7 @@ fn prior_knowledge_rejects_invalid_window_update_frames() {
     ("stream-zero", 1, 0, "WINDOW_UPDATE"),
     ("connection-overflow", 0, 0x7fff_ffff, "overflow"),
     ("stream-overflow", 1, 0x7fff_ffff, "overflow"),
+    ("idle-stream", 3, 1, "idle stream"),
   ] {
     let (addr, handle) = spawn_window_update_peer(stream_id, vec![increment]);
     let error = HttpClient::new()
@@ -4336,6 +4337,90 @@ fn prior_knowledge_rejects_invalid_window_update_frames() {
     );
     handle.join().expect("invalid window update peer thread");
   }
+}
+
+#[test]
+fn prior_knowledge_rejects_window_update_for_other_streams_during_response() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_WINDOW_UPDATE, 0, 3, &1_u32.to_be_bytes());
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ignored");
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/other-stream-window-update"))
+    .emit_http2_prior_knowledge()
+    .expect_err("WINDOW_UPDATE for another stream must fail");
+  assert!(
+    error.to_string().contains("idle stream"),
+    "unexpected other-stream WINDOW_UPDATE error: {error}"
+  );
+  handle
+    .join()
+    .expect("other-stream window update peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_connection_level_data_frames() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, 0, 0, b"connection-data");
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ignored");
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/connection-data"))
+    .emit_http2_prior_knowledge()
+    .expect_err("DATA on stream 0 must fail");
+  assert!(
+    error.to_string().contains("DATA frame on stream 0"),
+    "unexpected connection-level DATA error: {error}"
+  );
+  handle.join().expect("connection-level DATA peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_data_exceeding_flow_control_window() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(
+      &mut stream,
+      FRAME_DATA,
+      FLAG_END_STREAM,
+      1,
+      &vec![b'x'; 65_536],
+    );
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/over-window"))
+    .emit_http2_prior_knowledge()
+    .expect_err("DATA larger than the 65535 window must fail");
+  assert!(
+    error
+      .to_string()
+      .contains("DATA frame exceeds flow-control window"),
+    "unexpected flow-control overflow error: {error}"
+  );
+  handle.join().expect("over-window DATA peer thread");
 }
 
 #[test]

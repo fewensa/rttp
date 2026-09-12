@@ -369,8 +369,11 @@ fn reject_goaway_before_opening_request_stream(
       (FRAME_PING, _) => {
         return Err(error::bad_response("invalid HTTP/2 PING frame"));
       }
-      (FRAME_WINDOW_UPDATE, _) => {
+      (FRAME_WINDOW_UPDATE, 0) => {
         window_update_increment(&frame)?;
+      }
+      (FRAME_WINDOW_UPDATE, _) => {
+        return Err(idle_window_update_error());
       }
       (FRAME_PRIORITY, _) => {
         validate_priority_frame(&frame)?;
@@ -385,6 +388,9 @@ fn reject_goaway_before_opening_request_stream(
         return Err(error::bad_response(
           "unexpected HTTP/2 CONTINUATION frame without header block",
         ));
+      }
+      (FRAME_DATA, 0) => {
+        return Err(connection_data_error());
       }
       (_, 0) => {}
       _ => {
@@ -1061,14 +1067,13 @@ fn read_until_send_window_available(
   loop {
     let frame = read_frame(stream, local_settings)?;
     match (frame.frame_type, frame.stream_id) {
-      (FRAME_WINDOW_UPDATE, 0) => {
-        connection_send_window.increase(window_update_increment(&frame)?)?;
-      }
-      (FRAME_WINDOW_UPDATE, id) if id == stream_id => {
-        stream_send_window.increase(window_update_increment(&frame)?)?;
-      }
       (FRAME_WINDOW_UPDATE, _) => {
-        window_update_increment(&frame)?;
+        apply_send_window_update(
+          &frame,
+          connection_send_window,
+          stream_send_window,
+          stream_id,
+        )?;
       }
       (FRAME_SETTINGS, _) => {
         handle_settings_while_sending(
@@ -1120,6 +1125,9 @@ fn read_until_send_window_available(
           stream_id,
         )
         .map(Some);
+      }
+      (FRAME_DATA, 0) => {
+        return Err(connection_data_error());
       }
       _ => {}
     }
@@ -1581,14 +1589,13 @@ fn read_single_stream_response_with_first_frame(
           break;
         }
       }
-      (FRAME_WINDOW_UPDATE, 0) => {
-        connection_send_window.increase(window_update_increment(&frame)?)?;
-      }
-      (FRAME_WINDOW_UPDATE, id) if id == stream_id => {
-        stream_send_window.increase(window_update_increment(&frame)?)?;
-      }
       (FRAME_WINDOW_UPDATE, _) => {
-        window_update_increment(&frame)?;
+        apply_send_window_update(
+          &frame,
+          &mut connection_send_window,
+          &mut stream_send_window,
+          stream_id,
+        )?;
       }
       (FRAME_PRIORITY, _) => {
         validate_priority_frame(&frame)?;
@@ -1629,6 +1636,9 @@ fn read_single_stream_response_with_first_frame(
         return Err(error::bad_response(
           "unexpected HTTP/2 CONTINUATION frame without header block",
         ));
+      }
+      (FRAME_DATA, 0) => {
+        return Err(connection_data_error());
       }
       (_, 0) => {}
       _ => {}
@@ -1768,6 +1778,30 @@ fn window_update_increment(frame: &Frame) -> error::Result<u32> {
     ));
   }
   Ok(increment)
+}
+
+fn apply_send_window_update(
+  frame: &Frame,
+  connection_send_window: &mut SendWindow,
+  stream_send_window: &mut SendWindow,
+  stream_id: u32,
+) -> error::Result<()> {
+  let increment = window_update_increment(frame)?;
+  if frame.stream_id == 0 {
+    connection_send_window.increase(increment)
+  } else if frame.stream_id == stream_id {
+    stream_send_window.increase(increment)
+  } else {
+    Err(idle_window_update_error())
+  }
+}
+
+fn idle_window_update_error() -> error::Error {
+  error::bad_response("HTTP/2 WINDOW_UPDATE for idle stream")
+}
+
+fn connection_data_error() -> error::Error {
+  error::bad_response("invalid HTTP/2 DATA frame on stream 0")
 }
 
 fn validate_priority_frame(frame: &Frame) -> error::Result<()> {
