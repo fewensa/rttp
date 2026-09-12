@@ -156,9 +156,8 @@ impl ContentRange {
       ));
     }
 
-    validate_value(value, MAX_CONTENT_RANGE_VALUE_BYTES, "Content-Range")
-      .map_err(ContentRangeParseError::new)?;
-    let value = value.trim();
+    validate_content_range_value(value).map_err(ContentRangeParseError::new)?;
+    let value = trim_http_ows(value);
     let Some((unit, range)) = value.split_once(' ') else {
       return Err(ContentRangeParseError::new(
         "invalid Content-Range header value",
@@ -257,6 +256,23 @@ fn validate_value(value: &str, maximum_length: usize, name: &str) -> Result<(), 
     return Err(format!("invalid {name} header value"));
   }
   Ok(())
+}
+
+fn validate_content_range_value(value: &str) -> Result<(), String> {
+  if value.len() > MAX_CONTENT_RANGE_VALUE_BYTES {
+    return Err("Content-Range header value is too large".to_string());
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err("invalid Content-Range header value".to_string());
+  }
+  Ok(())
+}
+
+fn trim_http_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
 }
 
 fn parse_range_member(value: &str) -> Result<ByteRangeSpec, RangeParseError> {

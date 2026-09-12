@@ -119,9 +119,14 @@ client
 
 `206 Partial Content` and `416 Range Not Satisfiable` are visible through
 `Response::is_partial_content()` and `Response::is_range_not_satisfiable()`.
-`Response::content_range()` parses `Content-Range` into `ContentRange`, using
-`start` and `end` for satisfiable ranges such as `bytes 10-19/200`, and no
-`start` or `end` for unsatisfied ranges such as `bytes */200`.
+`Response::content_range()` parses a bounded singleton `Content-Range` into
+`ContentRange`, using `start` and `end` for satisfiable byte ranges such as
+`bytes 10-19/200`, and no `start` or `end` for unsatisfied ranges such as
+`bytes */200`. The typed parser accepts HTTP optional whitespace around the
+field value, emits canonical `bytes start-end/length` or `bytes */length`
+formatting, and rejects duplicate fields, unsupported units, malformed
+separators, control bytes, overflow, inverted ranges, and ranges whose last
+byte is not below a known complete length.
 
 `If-Range` is available through bounded request helpers that compose with the
 range helpers: `if_range_etag(etag)` writes a single strong entity-tag
@@ -1890,7 +1895,7 @@ gain additional HTTP/2 header-block handling.
 | Accept-Encoding | Client `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type; server `Request::accept_encoding()` and `HttpRequest::accept_encoding()` parse received fields into `HttpRequestAcceptEncodings` | No compression, decompression, content negotiation, retries, or transport changes |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
-| Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
+| Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose bounded typed `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
 | Accept-Patch | `Response::accept_patch` parses repeated bounded `Accept-Patch` response fields through the shared `AcceptPatch` type into ordered `MediaType` values while preserving raw headers on parse errors | No PATCH routing, payload decoding, media-type negotiation, method selection, retry, or automatic follow-up request |
 | Accept-Post | `Response::accept_post` parses repeated bounded `Accept-Post` response fields through the shared `AcceptPost` type into ordered `MediaType` values while preserving raw headers on parse errors | No POST routing, payload decoding, media-type negotiation, method selection, retry, or automatic follow-up request |
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; the date helpers validate and emit through the shared protocol `IfModifiedSince` and `IfUnmodifiedSince` types; `Response::is_not_modified`, `is_precondition_failed`, typed bounded `etag`, `delta_base`, and `last_modified` expose `304`/`412` and delta-base metadata while preserving raw headers | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no cached-entity lookup, no automatic revalidation, no delta application, and no cache-control engine |

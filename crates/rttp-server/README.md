@@ -650,7 +650,12 @@ These helpers only declare and inspect metadata. RTTP does not generate
 `Range` requests, create a partial response engine, serve files, resume
 downloads, or choose redirect, retry, or status-policy behavior. Resolved
 range sets are serialized by `HttpResponse::partial_content` and
-`HttpResponse::partial_content_ranges`.
+`HttpResponse::partial_content_ranges`. `HttpResponse::content_range()` parses
+attached singleton `Content-Range` fields into `HttpContentRange`, accepting
+satisfied byte ranges and `bytes */length` unsatisfied ranges, canonicalizing
+typed formatting, and rejecting duplicates, unsupported units, malformed
+separators, control bytes, overflow, inverted ranges, and ranges beyond a known
+complete length while leaving raw fields available through `HttpResponse::header`.
 
 ## Accept-Patch response metadata
 
