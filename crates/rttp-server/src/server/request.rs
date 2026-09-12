@@ -56,6 +56,9 @@ pub use rttp_protocol::destination::{
   Destination as HttpDestination, DestinationParseError as HttpDestinationParseError,
 };
 pub use rttp_protocol::dnt::{Dnt as HttpDnt, DntParseError as HttpDntParseError};
+pub use rttp_protocol::early_data::{
+  EarlyData as HttpEarlyData, EarlyDataParseError as HttpEarlyDataParseError,
+};
 pub use rttp_protocol::entity_tag::{
   EntityTag as HttpEntityTag, EntityTagParseError as HttpEntityTagParseError,
 };
@@ -601,6 +604,16 @@ impl Request {
       return Ok(None);
     }
     HttpSecGpc::parse_values(values).map(Some)
+  }
+
+  /// Parses received RFC 8470 `Early-Data` metadata without applying
+  /// replay, 0-RTT transport, or serving policy.
+  pub fn early_data(&self) -> Result<Option<HttpEarlyData>, HttpEarlyDataParseError> {
+    let values: Vec<&str> = self.headers_named("Early-Data").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpEarlyData::parse_values(values).map(Some)
   }
 
   /// Parses received `Sec-Required-Document-Policy` request metadata without
@@ -2829,6 +2842,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecGpc::parse_values(values).map(Some)
+  }
+
+  /// Parses received RFC 8470 `Early-Data` metadata without applying
+  /// replay, 0-RTT transport, or serving policy.
+  pub fn early_data(&self) -> Result<Option<HttpEarlyData>, HttpEarlyDataParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Early-Data"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpEarlyData::parse_values(values).map(Some)
   }
 
   /// Parses received `Sec-Required-Document-Policy` request metadata without

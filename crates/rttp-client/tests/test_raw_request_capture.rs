@@ -5909,6 +5909,31 @@ fn sec_gpc_helper_emits_one_request_signal() {
 }
 
 #[test]
+fn early_data_helper_emits_one_canonical_request_signal() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/submit", base_url))
+      .header(("Early-Data", "0"))
+      .early_data()
+      .expect("Early-Data should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("1"), header_value(&request, "Early-Data"));
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line.to_ascii_lowercase().starts_with("early-data:"))
+      .count(),
+    "typed Early-Data should replace an existing same-name field"
+  );
+}
+
+#[test]
 fn sec_required_document_policy_helper_emits_canonical_metadata() {
   let request = capture_request(|base_url| {
     client()

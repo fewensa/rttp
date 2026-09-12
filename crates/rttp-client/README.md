@@ -1377,6 +1377,17 @@ This helper only declares request metadata. RTTP does not infer or enforce
 consent, tracking, legal, or serving policy. Callers that need values outside
 the helper can retain raw-header control with `header(("Sec-GPC", "..."))`.
 
+## Bounded Early-Data request metadata
+
+`HttpClient::early_data()` emits `Early-Data: 1` through the shared protocol
+`EarlyData` representation. A second call or an existing raw `Early-Data`
+field is replaced with the canonical value before a socket is opened.
+
+This helper only declares RFC 8470 request metadata. RTTP does not enable
+0-RTT transport, decide replay safety, retry, or apply server acceptance
+policy. Callers that need values outside the helper can retain raw-header
+control with `header(("Early-Data", "..."))`.
+
 ## Bounded Sec-Required-Document-Policy request metadata
 
 `HttpClient::sec_required_document_policy(value)` validates one WICG Document
@@ -1810,6 +1821,7 @@ header-block model.
 | Referer | `referer` emits one bounded canonical `Referer` request field through the shared protocol type, replacing existing case-insensitive fields; absolute, relative, and scheme-relative URI references are accepted, and raw `header(("Referer", value))` remains available as a fallback | No `Referrer-Policy` enforcement, trust decisions, CSRF protection, redaction, URL canonicalization, or redirect behavior |
 | User-Agent | `user_agent` emits one bounded canonical `User-Agent` request field through the shared protocol type, replacing existing case-insensitive fields so typed values win over raw headers and the automatic default; absent typed/raw values retain `Mozilla/5.0 rttp/{version}` | No fingerprinting, platform discovery, product policy, global or environment-based defaults, or automatic policy beyond the existing default header |
 | Sec-GPC | `sec_gpc` emits bounded `Sec-GPC: 1` request metadata through the shared protocol type | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
+| Early-Data | `early_data` emits bounded RFC 8470 `Early-Data: 1` request metadata through the shared protocol type, replacing existing same-name fields before connecting | No 0-RTT transport enablement, replay-safety decision, retry behavior, or server acceptance policy |
 | Sec-Required-Document-Policy | `sec_required_document_policy` emits bounded WICG Document Policy dictionary request metadata through the shared protocol type, replacing existing same-name fields and rejecting malformed, control, duplicate, or oversized input before connecting | No document-policy enforcement, required-policy comparison against `Document-Policy`, document-load blocking, feature enablement, or report sending |
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |

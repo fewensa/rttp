@@ -23,11 +23,11 @@ use rttp_server::server::{
   HttpDepthParseError, HttpDnt, HttpDntParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
   HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
-  HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations,
-  HttpExpiresParseError, HttpFrom, HttpFromParseError, HttpHost, HttpIdempotencyKey,
-  HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList, HttpIfModifiedSince,
-  HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate, HttpIfResourceTag,
-  HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
+  HttpDocumentPolicyValue, HttpEarlyData, HttpEarlyDataParseError, HttpEntityTag,
+  HttpExpectParseError, HttpExpectations, HttpExpiresParseError, HttpFrom, HttpFromParseError,
+  HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList,
+  HttpIfModifiedSince, HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate,
+  HttpIfResourceTag, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
   HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter,
   HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
@@ -264,6 +264,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpUserAgent::parse("product/");
   let sec_gpc: HttpSecGpc = HttpSecGpc::parse("1").expect("Sec-GPC should parse");
   let sec_gpc_error: Result<HttpSecGpc, HttpSecGpcParseError> = HttpSecGpc::parse("0");
+  let early_data: HttpEarlyData = HttpEarlyData::parse("1").expect("Early-Data should parse");
+  let early_data_error: Result<HttpEarlyData, HttpEarlyDataParseError> = HttpEarlyData::parse("0");
   let sec_required_document_policy: HttpSecRequiredDocumentPolicy =
     HttpSecRequiredDocumentPolicy::parse(
       "oversized-images=2.0, unsized-media=?0, *;report-to=default",
@@ -604,6 +606,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(user_agent_error.is_err());
   assert_eq!(sec_gpc.header_value(), "1");
   assert!(sec_gpc_error.is_err());
+  assert_eq!(early_data.header_value(), "1");
+  assert!(early_data_error.is_err());
   assert_eq!(sec_required_document_policy.directives().len(), 3);
   assert_eq!(
     sec_required_document_policy
@@ -2646,6 +2650,44 @@ fn request_facade_parses_accept_datetime_request_metadata() {
   assert!(HttpAcceptDatetime::parse(oversized.as_str()).is_err());
   let _: HttpAcceptDatetimeParseError =
     HttpAcceptDatetime::parse("").expect_err("empty Accept-Datetime should be rejected");
+}
+
+#[test]
+fn request_facade_parses_early_data_request_metadata() {
+  let request =
+    HttpRequest::parse(b"POST /charge HTTP/1.1\r\nHost: example.test\r\nEarly-Data: 1\r\n\r\n")
+      .expect("request should parse");
+
+  let early_data: HttpEarlyData = request
+    .early_data()
+    .expect("Early-Data should parse")
+    .expect("Early-Data should be present");
+  assert_eq!("1", early_data.header_value());
+  assert_eq!(
+    Some("1"),
+    request.header("Early-Data"),
+    "the raw field must remain available"
+  );
+
+  let absent = HttpRequest::parse(b"POST /charge HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.early_data().expect("absent value is valid"));
+
+  let malformed =
+    HttpRequest::parse(b"POST /charge HTTP/1.1\r\nHost: example.test\r\nEarly-Data: 0\r\n\r\n")
+      .expect("request should parse");
+  assert!(malformed.early_data().is_err());
+  assert_eq!(
+    Some("0"),
+    malformed.header("Early-Data"),
+    "raw headers must remain inspectable after a parse error"
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"POST /charge HTTP/1.1\r\nHost: example.test\r\nEarly-Data: 1\r\nearly-data: 1\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.early_data().is_err());
 }
 
 #[test]

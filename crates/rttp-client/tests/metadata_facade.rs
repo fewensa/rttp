@@ -46,18 +46,19 @@ use rttp_client::response::{
 use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, AcceptDatetime, AcceptDatetimeParseError, Baggage,
   BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
-  DestinationParseError, Dnt, DntParseError, Expect, ExpectParseError, From, FromParseError,
-  HttpClient, If, IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag,
-  IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective,
-  NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, SecRequiredDocumentPolicy,
-  SecRequiredDocumentPolicyDirective, SecRequiredDocumentPolicyParseError,
-  SecRequiredDocumentPolicyValue, SecWebSocketKey, SecWebSocketKeyParseError, Tcn, TcnDirective,
-  TcnParseError, Timeout, TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError,
-  TraceState, TraceStateMember, TraceStateParseError, UpgradeInsecureRequests,
-  UpgradeInsecureRequestsParseError, UserAgent, UserAgentMember, UserAgentParseError,
-  Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError,
-  XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  DestinationParseError, Dnt, DntParseError, EarlyData, EarlyDataParseError, Expect,
+  ExpectParseError, From, FromParseError, HttpClient, If, IfCondition, IfList, IfParseError,
+  IfPredicate, IfResourceTag, IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken,
+  Negotiate, NegotiateDirective, NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose,
+  SecRequiredDocumentPolicy, SecRequiredDocumentPolicyDirective,
+  SecRequiredDocumentPolicyParseError, SecRequiredDocumentPolicyValue, SecWebSocketKey,
+  SecWebSocketKeyParseError, Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError,
+  TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, UserAgent,
+  UserAgentMember, UserAgentParseError, Via as ClientVia, ViaParseError as ClientViaParseError,
+  XForwardedFor, XForwardedForParseError, XForwardedHost, XForwardedHostParseError,
+  XForwardedProto, XForwardedProtoParseError,
 };
 use rttp_test_support as support;
 
@@ -402,6 +403,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: DntParseError = Dnt::parse("on").expect_err("invalid DNT should be rejected");
   let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
   let _: SecGpcParseError = SecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
+  let early_data = EarlyData::parse("1").expect("Early-Data should parse");
+  let _: EarlyDataParseError =
+    EarlyData::parse("0").expect_err("invalid Early-Data should be rejected");
   let sec_required_document_policy =
     SecRequiredDocumentPolicy::parse("oversized-images=2.0, unsized-media=?0, *;report-to=default")
       .expect("Sec-Required-Document-Policy should parse");
@@ -734,6 +738,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(dnt.header_value(), "1");
   assert_eq!(sec_gpc.header_value(), "1");
+  assert_eq!(early_data.header_value(), "1");
   assert_eq!(sec_required_document_policy.directives().len(), 3);
   assert_eq!(
     sec_required_document_policy
