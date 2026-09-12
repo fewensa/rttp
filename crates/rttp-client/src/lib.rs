@@ -151,6 +151,7 @@ pub use rttp_protocol::negotiate::{Negotiate, NegotiateDirective, NegotiateParse
 pub use rttp_protocol::overwrite::{Overwrite, OverwriteParseError};
 pub use rttp_protocol::referer::{Referer, RefererParseError};
 pub use rttp_protocol::schedule_tag::{ScheduleTag, ScheduleTagParseError};
+pub use rttp_protocol::save_data::{SaveData, SaveDataParseError};
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
 pub use rttp_protocol::sec_required_document_policy::{
   SecRequiredDocumentPolicy, SecRequiredDocumentPolicyDirective,

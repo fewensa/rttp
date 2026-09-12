@@ -49,9 +49,9 @@ use rttp_client::{
   DestinationParseError, Dnt, DntParseError, Expect, ExpectParseError, From, FromParseError,
   HttpClient, If, IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag,
   IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective,
-  NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, SecRequiredDocumentPolicy,
-  SecRequiredDocumentPolicyDirective, SecRequiredDocumentPolicyParseError,
+  NegotiateParseError, Overwrite, OverwriteParseError, SaveData, SaveDataParseError,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose,
+  SecRequiredDocumentPolicy, SecRequiredDocumentPolicyDirective, SecRequiredDocumentPolicyParseError,
   SecRequiredDocumentPolicyValue, SecWebSocketKey, SecWebSocketKeyParseError, Tcn, TcnDirective,
   TcnParseError, Timeout, TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError,
   TraceState, TraceStateMember, TraceStateParseError, UpgradeInsecureRequests,
@@ -400,6 +400,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
   let dnt = Dnt::parse("1").expect("DNT should parse");
   let _: DntParseError = Dnt::parse("on").expect_err("invalid DNT should be rejected");
+  let save_data = SaveData::parse("on").expect("Save-Data should parse");
+  assert_eq!("on", save_data.header_value());
+  let _: SaveDataParseError =
+    SaveData::parse("?1").expect_err("structured boolean Save-Data should be rejected");
   let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
   let _: SecGpcParseError = SecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
   let sec_required_document_policy =
