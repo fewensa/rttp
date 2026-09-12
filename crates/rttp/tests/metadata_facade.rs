@@ -527,6 +527,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   let dnt: rttp::Dnt = rttp_client::Dnt::parse("1").expect("DNT should parse");
   let _: rttp::DntParseError =
     rttp_client::Dnt::parse("on").expect_err("invalid DNT should be rejected");
+  let save_data: rttp::SaveData = rttp::SaveData::parse("on").expect("Save-Data should parse");
+  assert_eq!("on", save_data.header_value());
+  let _: rttp::SaveDataParseError =
+    rttp::SaveData::parse("?1").expect_err("structured boolean Save-Data should fail");
   let sec_required_document_policy: rttp::SecRequiredDocumentPolicy =
     rttp_client::SecRequiredDocumentPolicy::parse(
       "oversized-images=2.0, unsized-media=?0, *;report-to=default",
