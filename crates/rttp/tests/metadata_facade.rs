@@ -163,6 +163,7 @@ fn compatibility_facade_user_agent_server_aliases_preserve_absence_and_raw_error
 }
 
 #[test]
+#[cfg(feature = "client")]
 fn compatibility_facade_exports_origin_agent_cluster_metadata() {
   let value = rttp::OriginAgentCluster::parse(" \t?0 ").expect("Origin-Agent-Cluster should parse");
   assert!(!value.boolean());
