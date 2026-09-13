@@ -8,7 +8,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::host::Host;
-use crate::http1::{is_token, is_token_byte};
+use crate::http1::{is_quoted_pair_char, is_token, is_token_byte};
 
 /// Maximum bytes accepted in one `Via` field value, in the combined raw
 /// field set including `", "` separator overhead, and in the combined
@@ -207,48 +207,18 @@ fn parse_received_protocol(
 
 fn parse_received_by(value: &str, position: &mut usize) -> Result<String, ViaParseError> {
   let start = *position;
-  if value.as_bytes().get(*position) == Some(&b'[') {
-    *position += 1;
-    while value
-      .as_bytes()
-      .get(*position)
-      .is_some_and(|byte| *byte != b']')
-    {
-      *position += 1;
-    }
-    if value.as_bytes().get(*position) != Some(&b']') {
-      return Err(ViaParseError::new("invalid Via received-by"));
-    }
-    *position += 1;
-    parse_optional_port(value, position)?;
-  } else {
-    parse_token(value, position, "invalid Via received-by")?;
-    parse_optional_port(value, position)?;
-  }
-  let received_by = &value[start..*position];
-  if !is_valid_received_by(received_by) {
-    return Err(ViaParseError::new("invalid Via received-by"));
-  }
-  Ok(received_by.to_string())
-}
-
-fn parse_optional_port(value: &str, position: &mut usize) -> Result<(), ViaParseError> {
-  if value.as_bytes().get(*position) != Some(&b':') {
-    return Ok(());
-  }
-  *position += 1;
-  let start = *position;
-  while value
-    .as_bytes()
+  let bytes = value.as_bytes();
+  while bytes
     .get(*position)
-    .is_some_and(|byte| byte.is_ascii_digit())
+    .is_some_and(|byte| !matches!(*byte, b' ' | b'\t' | b',' | b'('))
   {
     *position += 1;
   }
-  if start == *position {
+  let received_by = &value[start..*position];
+  if received_by.is_empty() || !is_valid_received_by(received_by) {
     return Err(ViaParseError::new("invalid Via received-by"));
   }
-  Ok(())
+  Ok(received_by.to_string())
 }
 
 fn parse_optional_comment(
@@ -299,17 +269,12 @@ fn parse_comment_body(value: &str, position: &mut usize) -> Result<(), ViaParseE
         let Some(&escaped) = bytes.get(*position) else {
           return Err(ViaParseError::new("invalid Via comment"));
         };
-        if !(escaped == b'\t'
-          || escaped == b' '
-          || (0x21..=0x7e).contains(&escaped)
-          || escaped >= 0x80)
-        {
+        if !is_quoted_pair_char(escaped) {
           return Err(ViaParseError::new("invalid Via comment"));
         }
         *position += 1;
       }
-      b'\t' | b' ' | 0x21..=0x27 | 0x2A..=0x5B | 0x5D..=0x7E => *position += 1,
-      byte if byte >= 0x80 => *position += 1,
+      byte if is_comment_text_byte(byte) => *position += 1,
       _ => return Err(ViaParseError::new("invalid Via comment")),
     }
   }
@@ -317,15 +282,11 @@ fn parse_comment_body(value: &str, position: &mut usize) -> Result<(), ViaParseE
 }
 
 fn is_valid_received_by(received_by: &str) -> bool {
-  if received_by.starts_with('[') {
-    return Host::parse(received_by).is_ok();
-  }
-  if is_token(received_by) {
-    return true;
-  }
-  received_by
-    .rsplit_once(':')
-    .is_some_and(|(name, port)| is_token(name) && is_port(port))
+  Host::parse(received_by).is_ok()
+    || is_token(received_by)
+    || received_by
+      .rsplit_once(':')
+      .is_some_and(|(name, port)| is_token(name) && is_port(port))
 }
 
 fn is_port(port: &str) -> bool {
@@ -365,4 +326,11 @@ fn skip_ows(bytes: &[u8], position: &mut usize) -> usize {
     *position += 1;
   }
   *position - start
+}
+
+fn is_comment_text_byte(byte: u8) -> bool {
+  matches!(
+    byte,
+    b'\t' | b' ' | 0x21..=0x27 | 0x2a..=0x5b | 0x5d..=0x7e
+  ) || byte >= 0x80
 }
