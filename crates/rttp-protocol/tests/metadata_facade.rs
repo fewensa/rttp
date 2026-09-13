@@ -67,6 +67,7 @@ use rttp_protocol::negotiate::{Negotiate, NegotiateDirective};
 use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
+use rttp_protocol::origin_agent_cluster::OriginAgentCluster;
 use rttp_protocol::origin_trial::OriginTrials;
 use rttp_protocol::overwrite::{Overwrite, OverwriteParseError};
 use rttp_protocol::permissions_policy::PermissionsPolicy;
@@ -870,4 +871,11 @@ fn protocol_exports_bounded_link_metadata() {
     links.values()[1].target()
   );
   assert_eq!(Some("modulepreload"), links.values()[1].parameter("rel"));
+}
+
+#[test]
+fn protocol_exports_origin_agent_cluster_metadata() {
+  let value = OriginAgentCluster::parse(" ?1 ").expect("Origin-Agent-Cluster should parse");
+  assert!(value.boolean());
+  assert_eq!("?1", value.header_value());
 }

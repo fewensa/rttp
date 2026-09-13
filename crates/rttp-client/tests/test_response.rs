@@ -5,11 +5,11 @@ use rttp_client::response::{
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, DeltaBase, Deprecation, DocumentPolicy,
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag,
   HttpClearSiteData, HttpSameSite, HttpSetCookie, HttpSetCookies, Im, ImMember, ImParameter,
-  ImParseError, KeepAlive, LinkValues, Location, LockToken, MementoDatetime, OriginTrials,
-  PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem,
-  ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ScheduleTag, SecWebSocketAccept,
-  SecWebSocketExtensions, SecWebSocketProtocol, SecWebSocketVersion, ServerTiming,
-  ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
+  ImParseError, KeepAlive, LinkValues, Location, LockToken, MementoDatetime, OriginAgentCluster,
+  OriginTrials, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
+  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ScheduleTag,
+  SecWebSocketAccept, SecWebSocketExtensions, SecWebSocketProtocol, SecWebSocketVersion,
+  ServerTiming, ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
   SupportsLoadingMode, Tcn, TcnDirective, Via, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
@@ -66,6 +66,57 @@ fn assert_decode_error(error: rttp_client::error::Error) {
     "unexpected error: {error}"
   );
   assert!(!error.is_body_too_large());
+}
+
+#[test]
+fn origin_agent_cluster_response_metadata_preserves_raw_invalid_headers() {
+  let valid = Response::new(
+    RoUrl::with("https://example.test/"),
+    b"HTTP/1.1 200 OK\r\nOrigin-Agent-Cluster: \t?1 \r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("valid Origin-Agent-Cluster response should parse");
+  let value = valid
+    .origin_agent_cluster()
+    .expect("valid Origin-Agent-Cluster should parse")
+    .expect("Origin-Agent-Cluster should be present");
+  assert_eq!(OriginAgentCluster::Boolean(true), value);
+  assert_eq!("?1", value.header_value());
+
+  for raw_value in ["true", "?1, ?0", "?1\0"] {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nOrigin-Agent-Cluster: {raw_value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test/"), raw.into_bytes())
+      .expect("invalid typed metadata should remain usable");
+    assert!(
+      response.origin_agent_cluster().is_err(),
+      "{raw_value:?} should fail typed parsing"
+    );
+    assert_eq!(
+      Some(&raw_value.to_string()),
+      response.header_value("Origin-Agent-Cluster")
+    );
+  }
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test/"),
+    b"HTTP/1.1 200 OK\r\nOrigin-Agent-Cluster: ?1\r\norigin-agent-cluster: ?0\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("duplicate metadata should remain usable");
+  assert!(duplicate.origin_agent_cluster().is_err());
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let response = Response::new(
+    RoUrl::with("https://example.test/"),
+    format!("HTTP/1.1 200 OK\r\nOrigin-Agent-Cluster: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("oversized metadata should remain usable");
+  assert!(response.origin_agent_cluster().is_err());
+  assert_eq!(
+    Some(&oversized),
+    response.header_value("Origin-Agent-Cluster")
+  );
 }
 
 #[test]
