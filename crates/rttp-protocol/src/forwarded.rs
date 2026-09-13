@@ -1,6 +1,9 @@
 use std::error::Error;
 use std::fmt;
 
+/// Maximum bytes accepted in one `Forwarded` field value, across all supplied
+/// field values including `", "` separator overhead, and in the serialized
+/// field value.
 pub const MAX_FORWARDED_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_FORWARDED_ELEMENTS: usize = 256;
 pub const MAX_FORWARDED_PARAMETERS: usize = 32;
@@ -53,8 +56,18 @@ impl Forwarded {
     I: IntoIterator<Item = &'a str>,
   {
     let mut elements = Vec::new();
+    let mut total_bytes = 0usize;
     for value in values {
       if value.len() > MAX_FORWARDED_VALUE_BYTES {
+        return Err(ForwardedParseError::new(
+          "Forwarded header value is too large",
+        ));
+      }
+      let separator = if total_bytes > 0 { 2 } else { 0 };
+      total_bytes = total_bytes
+        .saturating_add(separator)
+        .saturating_add(value.len());
+      if total_bytes > MAX_FORWARDED_VALUE_BYTES {
         return Err(ForwardedParseError::new(
           "Forwarded header value is too large",
         ));
@@ -64,7 +77,13 @@ impl Forwarded {
     if elements.is_empty() {
       return Err(ForwardedParseError::new("invalid Forwarded element"));
     }
-    Ok(Self { elements })
+    let forwarded = Self { elements };
+    if forwarded.header_value().len() > MAX_FORWARDED_VALUE_BYTES {
+      return Err(ForwardedParseError::new(
+        "Forwarded header value is too large",
+      ));
+    }
+    Ok(forwarded)
   }
 
   pub fn elements(&self) -> &[ForwardedElement] {
