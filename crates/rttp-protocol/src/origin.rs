@@ -161,10 +161,12 @@ fn validate_value(value: &str) -> Result<(), OriginParseError> {
 
 fn parse_tuple(value: &str) -> Result<OriginTuple, OriginParseError> {
   let (scheme, authority) = value.split_once("://").ok_or_else(invalid_value)?;
-  let scheme = match scheme {
-    "http" => OriginScheme::Http,
-    "https" => OriginScheme::Https,
-    _ => return Err(invalid_value()),
+  let scheme = if scheme.eq_ignore_ascii_case("http") {
+    OriginScheme::Http
+  } else if scheme.eq_ignore_ascii_case("https") {
+    OriginScheme::Https
+  } else {
+    return Err(invalid_value());
   };
   let (host, port) = parse_authority(authority)?;
   let port = port.filter(|port| *port != scheme.default_port());
