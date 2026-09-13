@@ -606,6 +606,18 @@ case-insensitive field. On the server facade, `Request::dpr()` and
 the raw header available. These helpers only expose metadata: RTTP does not
 negotiate content, emit `Accept-CH`, or generate Client Hints automatically.
 
+## Bounded ECT request Client Hint metadata
+
+With the client feature, `HttpClient::ect(value)` validates and emits one
+singleton `ECT` request field through `rttp::Ect`, replacing any existing
+case-insensitive field. Recognized values are the Network Information
+effective connection type tokens `slow-2g`, `2g`, `3g`, and `4g`, with
+optional surrounding HTTP optional whitespace. On the server facade,
+`Request::ect()` and `HttpRequest::ect()` parse received fields into
+`HttpEct`; `header_value()` exposes the preserved token. Parse errors leave
+the raw header available. These helpers only expose metadata: RTTP does not
+negotiate content, emit `Accept-CH`, or generate Client Hints automatically.
+
 ## Bounded Idempotency-Key request metadata
 
 `HttpClient::idempotency_key(value)` validates and emits one opaque

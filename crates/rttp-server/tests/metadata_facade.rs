@@ -24,6 +24,7 @@ use rttp_server::server::{
   HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
   HttpDocumentPolicyValue, HttpDpr, HttpDprParseError, HttpEarlyData, HttpEarlyDataParseError,
+  HttpEct, HttpEctParseError,
   HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpExpiresParseError, HttpFrom,
   HttpFromParseError, HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf,
   HttpIfCondition, HttpIfList, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
@@ -1831,6 +1832,37 @@ fn request_facade_parses_dpr_metadata_without_negotiation() {
   assert_eq!(Some("1"), duplicate.header("DPR"));
 
   let _: HttpDprParseError = HttpDpr::parse("").expect_err("empty DPR should fail");
+}
+
+#[test]
+fn request_facade_parses_ect() {
+  let request =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: \t4g \t\r\n\r\n")
+      .expect("ECT request should parse");
+  let ect: HttpEct = request
+    .ect()
+    .expect("ECT should parse")
+    .expect("ECT should be present");
+  assert_eq!("4g", ect.header_value());
+  assert_eq!(Some("4g"), request.header("ECT"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without ECT should parse");
+  assert_eq!(None, absent.ect().expect("missing ECT should be valid"));
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: 5g\r\n\r\n")
+      .expect("malformed ECT request should retain raw metadata");
+  assert!(malformed.ect().is_err());
+  assert_eq!(Some("5g"), malformed.header("ECT"));
+
+  let duplicate =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: 4g\r\nECT: 3g\r\n\r\n")
+      .expect("duplicate ECT request should retain raw metadata");
+  let _: HttpEctParseError = duplicate.ect().expect_err("duplicate ECT should fail");
+  assert_eq!(Some("4g"), duplicate.header("ECT"));
+
+  let _: HttpEctParseError = HttpEct::parse("").expect_err("empty ECT should fail");
 }
 
 #[test]
