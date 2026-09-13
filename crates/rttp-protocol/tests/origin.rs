@@ -27,27 +27,61 @@ fn origin_accepts_url_legal_host_characters() {
 }
 
 #[test]
-fn origin_canonicalizes_equivalent_tuple_origins() {
-  let explicit_default_port = Origin::parse("https://example.test:443").expect("Origin must parse");
-  let implicit_default_port = Origin::parse("https://example.test").expect("Origin must parse");
-  let expanded_ipv6 = Origin::parse("http://[0:0:0:0:0:0:0:1]").expect("Origin must parse");
-  let compressed_ipv6 = Origin::parse("http://[::1]").expect("Origin must parse");
+fn origin_canonicalizes_tuple_components() {
+  for (value, expected) in [
+    ("http://example.test:80", "http://example.test"),
+    ("https://example.test:443", "https://example.test"),
+    ("http://example.test:8080", "http://example.test:8080"),
+    ("https://example.test:8443", "https://example.test:8443"),
+    ("HTTP://EXAMPLE.TEST:8080", "http://example.test:8080"),
+    ("hTtPs://EXAMPLE.TEST:443", "https://example.test"),
+    ("http://[0:0:0:0:0:0:0:1]", "http://[::1]"),
+    ("https://[0:0:0:0:0:0:0:1]:8443", "https://[::1]:8443"),
+  ] {
+    let origin = Origin::parse(value).expect("tuple Origin must parse");
+    assert_eq!(
+      expected,
+      origin.header_value(),
+      "unexpected canonical form for {value:?}"
+    );
+  }
+}
 
-  assert_eq!(implicit_default_port, explicit_default_port);
-  assert_eq!(compressed_ipv6, expanded_ipv6);
+#[test]
+fn origin_handles_opaque_null() {
+  for value in ["null", "\tnull "] {
+    let origin = Origin::parse(value).expect("opaque null Origin must parse");
+
+    assert_eq!(Origin::Null, origin);
+    assert_eq!("null", origin.header_value());
+  }
 }
 
 #[test]
 fn origin_rejects_invalid_singleton_values() {
   for value in [
     "",
+    "   ",
     "http://",
     "ftp://example.test",
+    "HTTPS+TCP://example.test",
     "https://example.test/path",
     "https://example.test?query",
     "https://example.test#fragment",
     "https://user@example.test",
     "https://example.test, https://other.test",
+    "https://example.test:",
+    "https://example.test:abc",
+    "https://example.test:1.5",
+    "https://example.test:65536",
+    "https://example.test:999999999999",
+    "https://[::1]:",
+    "https://[::1]:65536",
+    "https://[::1]8443",
+    "https://example.test\n",
+    "https://example.test\r",
+    "https://example.test\0",
+    "https://example.test\x7f",
     "https://example.test\r\nX-Injected: true",
   ] {
     assert!(Origin::parse(value).is_err(), "{value:?} must be rejected");
