@@ -278,6 +278,10 @@ pub use rttp_protocol::x_content_type_options::{
   XContentTypeOptions as HttpXContentTypeOptions,
   XContentTypeOptionsParseError as HttpXContentTypeOptionsParseError,
 };
+pub use rttp_protocol::x_download_options::{
+  XDownloadOptions as HttpXDownloadOptions,
+  XDownloadOptionsParseError as HttpXDownloadOptionsParseError,
+};
 pub use rttp_protocol::x_frame_options::{
   XFrameOptions as HttpXFrameOptions, XFrameOptionsParseError as HttpXFrameOptionsParseError,
 };
@@ -1590,6 +1594,23 @@ impl HttpResponse {
       .retain(|header| !header.name.eq_ignore_ascii_case("X-Content-Type-Options"));
     self.headers.push(HttpHeader::new(
       "X-Content-Type-Options",
+      options.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `X-Download-Options` response metadata without
+  /// applying download handling policy.
+  pub fn with_x_download_options(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpXDownloadOptionsParseError> {
+    let options = HttpXDownloadOptions::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("X-Download-Options"));
+    self.headers.push(HttpHeader::new(
+      "X-Download-Options",
       options.header_value(),
     ));
     Ok(self)
@@ -3003,6 +3024,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpXContentTypeOptions::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `X-Download-Options` response metadata without
+  /// applying download handling policy.
+  pub fn x_download_options(
+    &self,
+  ) -> Result<Option<HttpXDownloadOptions>, HttpXDownloadOptionsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Download-Options"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXDownloadOptions::parse_values(values).map(Some)
   }
 
   /// Parses attached `X-Frame-Options` response metadata without

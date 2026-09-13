@@ -474,6 +474,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::XContentTypeOptionsParseError =
     rttp_client::response::XContentTypeOptions::parse("unknown")
       .expect_err("unknown X-Content-Type-Options should be rejected");
+  let x_download_options: rttp::XDownloadOptions =
+    rttp_client::response::XDownloadOptions::parse("NoOpen")
+      .expect("X-Download-Options should parse");
+  let _: rttp::XDownloadOptionsParseError =
+    rttp_client::response::XDownloadOptions::parse("unknown")
+      .expect_err("unknown X-Download-Options should be rejected");
   let x_frame_options: rttp::XFrameOptions =
     rttp_client::response::XFrameOptions::parse("deny").expect("X-Frame-Options should parse");
   let _: rttp::XFrameOptionsParseError =
@@ -780,6 +786,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!("no-cache, community=private", pragma.header_value());
   assert_eq!(x_content_type_options, rttp::XContentTypeOptions::Nosniff);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_download_options, rttp::XDownloadOptions::Noopen);
+  assert_eq!(x_download_options.header_value(), "noopen");
   assert_eq!(x_frame_options, rttp::XFrameOptions::Deny);
   assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(

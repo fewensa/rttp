@@ -51,7 +51,8 @@ pub use rttp_client::response::{
   UpgradeParseError, VariantVary, VariantVaryParseError, WantContentDigest, WantReprDigest,
   Warning, WarningParseError, WarningValue, WwwAuthenticate, WwwAuthenticateChallenge,
   WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  XContentTypeOptionsParseError, XDownloadOptions, XDownloadOptionsParseError, XFrameOptions,
+  XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{

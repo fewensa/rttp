@@ -1243,6 +1243,18 @@ coding lists, and empty present field sets are errors. This parser never fails
 open and does not enable a transfer-coding engine, negotiate trailers, or
 apply compression or proxy behavior.
 
+## X-Download-Options
+
+`x_download_options` parses a singleton `X-Download-Options` response field.
+Each field value is bounded to 64 KiB. A second field is rejected after every
+supplied field is bound-checked. Surrounding SP and HTAB are trimmed as
+optional whitespace. The value must be exactly `noopen`, matched
+case-insensitively and formatted canonically in lowercase. Empty values,
+comma-joined values, semicolon parameters, quoted values, unsupported tokens,
+ASCII controls other than HTAB, and other ambiguous input are errors. This
+parser reports declared metadata only; it does not decide download handling
+policy.
+
 ## X-Frame-Options
 
 `x_frame_options` parses a singleton `X-Frame-Options` response field. Each

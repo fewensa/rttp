@@ -35,8 +35,8 @@ use rttp_client::response::{
   TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary,
   VariantVaryParseError, Vary, VaryParseError, Via, ViaParseError, WantContentDigest,
   WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter,
-  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
-  XFrameOptionsParseError,
+  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XDownloadOptions,
+  XDownloadOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -321,6 +321,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     XContentTypeOptions::parse("NoSniff").expect("X-Content-Type-Options should parse");
   let _: XContentTypeOptionsParseError = XContentTypeOptions::parse("unknown")
     .expect_err("unknown X-Content-Type-Options should be rejected");
+  let x_download_options =
+    XDownloadOptions::parse("NoOpen").expect("X-Download-Options should parse");
+  let _: XDownloadOptionsParseError =
+    XDownloadOptions::parse("unknown").expect_err("unknown X-Download-Options should be rejected");
   let x_frame_options = XFrameOptions::parse("deny").expect("X-Frame-Options should parse");
   let _: XFrameOptionsParseError = XFrameOptions::parse("ALLOW-FROM https://example.test")
     .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
@@ -633,6 +637,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert!(strict_transport_security.include_sub_domains());
   assert_eq!(x_content_type_options, XContentTypeOptions::Nosniff);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_download_options, XDownloadOptions::Noopen);
+  assert_eq!(x_download_options.header_value(), "noopen");
   assert_eq!(x_frame_options, XFrameOptions::Deny);
   assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(

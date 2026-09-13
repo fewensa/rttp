@@ -10,7 +10,8 @@ use rttp_client::response::{
   ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ScheduleTag, SecWebSocketAccept,
   SecWebSocketExtensions, SecWebSocketProtocol, SecWebSocketVersion, ServerTiming,
   ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
-  SupportsLoadingMode, Tcn, TcnDirective, Via, Warning, XContentTypeOptions, XFrameOptions,
+  SupportsLoadingMode, Tcn, TcnDirective, Via, Warning, XContentTypeOptions, XDownloadOptions,
+  XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use rttp_client::DavClass;
@@ -846,6 +847,85 @@ fn x_content_type_options_metadata_is_absent_without_a_header() {
     None
   );
   let _: Option<XContentTypeOptions> = response.x_content_type_options().expect("header is absent");
+}
+
+#[test]
+fn x_download_options_metadata_parses_noopen_without_applying_policy() {
+  for value in ["noopen", "NoOpen"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-Download-Options: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    let metadata = response
+      .x_download_options()
+      .expect("X-Download-Options should parse")
+      .expect("X-Download-Options should be present");
+
+    assert_eq!(metadata, XDownloadOptions::Noopen);
+    assert_eq!(metadata.header_value(), "noopen");
+    assert_eq!(
+      response.header_value("X-Download-Options"),
+      Some(&value.to_string())
+    );
+  }
+}
+
+#[test]
+fn x_download_options_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in ["", "unknown", "noopen, noopen"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-Download-Options: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.x_download_options().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("X-Download-Options"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "X-Download-Options: noopen\r\n",
+      "X-Download-Options: noopen\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.x_download_options().is_err());
+  assert_eq!(
+    response.header_values("X-Download-Options"),
+    [&"noopen".to_string(), &"noopen".to_string()]
+  );
+}
+
+#[test]
+fn x_download_options_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response.x_download_options().expect("header is absent"),
+    None
+  );
+  let _: Option<XDownloadOptions> = response.x_download_options().expect("header is absent");
 }
 
 #[test]
