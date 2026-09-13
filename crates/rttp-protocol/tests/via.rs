@@ -76,6 +76,33 @@ fn via_normalizes_optional_whitespace_and_nested_comments() {
 }
 
 #[test]
+fn via_preserves_escaped_comment_quoted_pairs() {
+  let via = Via::parse(r#"1.1 hop (outer \(literal\) (inner) "quoted")"#)
+    .expect("escaped comment quoted-pairs should parse");
+
+  assert_eq!(
+    Some(r#"outer \(literal\) (inner) "quoted""#),
+    via.members()[0].comment()
+  );
+  assert_eq!(
+    r#"1.1 hop (outer \(literal\) (inner) "quoted")"#,
+    via.header_value()
+  );
+  assert_eq!(
+    via,
+    Via::parse(via.header_value()).expect("serialized escaped comment should round-trip")
+  );
+
+  for value in [
+    r#"1.1 hop (bad\)"#,
+    "1.1 hop (bad\\\r)",
+    "1.1 hop (bad\\\n)",
+  ] {
+    assert!(Via::parse(value).is_err(), "Via should reject {value:?}");
+  }
+}
+
+#[test]
 fn via_bounds_comment_nesting_without_recursion() {
   let deepest_comment = format!(
     "{}{}",
