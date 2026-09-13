@@ -93,6 +93,7 @@ pub mod negotiate;
 pub mod nel;
 pub mod no_vary_search;
 pub mod origin;
+pub mod origin_agent_cluster;
 pub mod origin_trial;
 pub mod overwrite;
 pub mod permissions_policy;

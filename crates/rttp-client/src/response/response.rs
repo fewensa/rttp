@@ -20,6 +20,7 @@ use crate::response::Digest;
 use crate::response::KeepAlive;
 use crate::response::Nel;
 use crate::response::NoVarySearch;
+use crate::response::OriginAgentCluster;
 use crate::response::OriginTrials;
 use crate::response::Pragma;
 use crate::response::Priority;
@@ -982,6 +983,18 @@ impl Response {
       return Ok(None);
     }
     ServiceWorkerAllowed::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Origin-Agent-Cluster` response metadata without
+  /// applying browser isolation or trust policy.
+  pub fn origin_agent_cluster(&self) -> error::Result<Option<OriginAgentCluster>> {
+    let values = self.header_values("origin-agent-cluster");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    OriginAgentCluster::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

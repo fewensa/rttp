@@ -70,6 +70,32 @@ fn client_facade_exports_from_metadata_types() {
 }
 
 #[test]
+fn client_origin_agent_cluster_response_metadata_is_bounded_and_preserves_raw_errors() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nOrigin-Agent-Cluster: \t?0 \r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  let value = response
+    .origin_agent_cluster()
+    .expect("Origin-Agent-Cluster should parse")
+    .expect("Origin-Agent-Cluster should be present");
+  assert!(!value.boolean());
+  assert_eq!("?0", value.header_value());
+
+  let malformed = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nOrigin-Agent-Cluster: true\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("malformed typed metadata should remain usable");
+  assert!(malformed.origin_agent_cluster().is_err());
+  assert_eq!(
+    Some(&"true".to_string()),
+    malformed.header_value("Origin-Agent-Cluster")
+  );
+}
+
+#[test]
 fn client_facade_exports_dpr_metadata_types() {
   let dpr = Dpr::parse("1.5").expect("DPR metadata should parse");
   assert_eq!(1.5, dpr.ratio());

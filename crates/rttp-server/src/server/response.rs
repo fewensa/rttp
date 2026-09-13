@@ -162,6 +162,10 @@ pub use rttp_protocol::no_vary_search::{
   NoVarySearchParams as HttpNoVarySearchParams,
   NoVarySearchParseError as HttpNoVarySearchParseError,
 };
+pub use rttp_protocol::origin_agent_cluster::{
+  OriginAgentCluster as HttpOriginAgentCluster,
+  OriginAgentClusterParseError as HttpOriginAgentClusterParseError,
+};
 pub use rttp_protocol::origin_trial::{
   OriginTrialParseError as HttpOriginTrialParseError, OriginTrials as HttpOriginTrials,
 };
@@ -2163,6 +2167,21 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_origin_agent_cluster<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpOriginAgentClusterParseError> {
+    let origin_agent_cluster = HttpOriginAgentCluster::parse(value.as_ref())?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Origin-Agent-Cluster"));
+    self.headers.push(HttpHeader::new(
+      "Origin-Agent-Cluster",
+      origin_agent_cluster.header_value(),
+    ));
+    Ok(self)
+  }
+
   pub fn with_content_dpr<V: AsRef<str>>(
     mut self,
     value: V,
@@ -3618,6 +3637,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpServiceWorkerAllowed::parse_values(values).map(Some)
+  }
+
+  pub fn origin_agent_cluster(
+    &self,
+  ) -> Result<Option<HttpOriginAgentCluster>, HttpOriginAgentClusterParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Origin-Agent-Cluster"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpOriginAgentCluster::parse_values(values).map(Some)
   }
 
   pub fn content_dpr(&self) -> Result<Option<HttpContentDpr>, HttpContentDprParseError> {

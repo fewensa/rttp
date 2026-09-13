@@ -18,9 +18,10 @@ use rttp::server::{
   HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError,
   HttpMaxForwards, HttpMediaType, HttpMediaTypeParameter, HttpMementoDatetime,
   HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError,
-  HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpNel, HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginTrialParseError,
+  HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError,
+  HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpSameSite,
@@ -159,6 +160,20 @@ fn compatibility_facade_user_agent_server_aliases_preserve_absence_and_raw_error
   .expect("duplicate User-Agent fields should remain a parseable request");
   assert!(duplicate.user_agent().is_err());
   assert_eq!(Some("client/1"), duplicate.header("User-Agent"));
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_exports_origin_agent_cluster_metadata() {
+  let value = rttp::OriginAgentCluster::parse(" \t?0 ").expect("Origin-Agent-Cluster should parse");
+  assert!(!value.boolean());
+  assert_eq!("?0", value.header_value());
+
+  let server_value =
+    HttpOriginAgentCluster::parse("?1").expect("server Origin-Agent-Cluster should parse");
+  assert!(server_value.boolean());
+  let _: HttpOriginAgentClusterParseError =
+    HttpOriginAgentCluster::parse("true").expect_err("invalid Origin-Agent-Cluster should fail");
 }
 
 #[test]

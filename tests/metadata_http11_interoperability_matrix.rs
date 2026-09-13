@@ -16,6 +16,7 @@ use rttp_server::server::{
 const FROM_CANONICAL: &str = "Ops Team <ops@example.test>";
 const REFERER_CANONICAL: &str = "https://shop.example/checkout?step=pay";
 const DPR_CANONICAL: &str = "1.5";
+const ORIGIN_AGENT_CLUSTER_CANONICAL: &str = "?1";
 const ACCEPT_PATCH_WIRE: &str = r#"Text/Plain; title="a,b\"c", application/json"#;
 const ACCEPT_POST_WIRE: &str = "application/json, text/plain; charset=utf-8";
 const RATE_LIMIT_LIMIT_WIRE: &str = "100, 50;w=3600";
@@ -114,6 +115,8 @@ fn metadata_response(body: &'static str) -> HttpResponse {
     .expect("response Proxy-Authenticate should be accepted")
     .with_proxy_authentication_info(PROXY_AUTHENTICATION_INFO_INPUT)
     .expect("response Proxy-Authentication-Info should be accepted")
+    .with_origin_agent_cluster("\t?1 ")
+    .expect("response Origin-Agent-Cluster should be accepted")
 }
 
 fn spawn_observed_facade_server(
@@ -303,6 +306,22 @@ fn assert_valid_response_metadata(response: &Response) {
     Some(PROXY_AUTHENTICATION_INFO_WIRE),
     response
       .header_value("Proxy-Authentication-Info")
+      .map(String::as_str)
+  );
+
+  let origin_agent_cluster = response
+    .origin_agent_cluster()
+    .expect("Origin-Agent-Cluster should parse")
+    .expect("Origin-Agent-Cluster should be present");
+  assert!(origin_agent_cluster.boolean());
+  assert_eq!(
+    ORIGIN_AGENT_CLUSTER_CANONICAL,
+    origin_agent_cluster.header_value()
+  );
+  assert_eq!(
+    Some(ORIGIN_AGENT_CLUSTER_CANONICAL),
+    response
+      .header_value("Origin-Agent-Cluster")
       .map(String::as_str)
   );
 
@@ -689,6 +708,7 @@ fn live_http11_response_helpers_reject_malformed_metadata_while_preserving_raw_h
       .header("Authentication-Info", "nextnonce")
       .header("Proxy-Authenticate", "Basic @")
       .header("Proxy-Authentication-Info", "rspauth")
+      .header("Origin-Agent-Cluster", "true")
   });
 
   let response = client()
@@ -754,6 +774,13 @@ fn live_http11_response_helpers_reject_malformed_metadata_while_preserving_raw_h
     Some("rspauth"),
     response
       .header_value("Proxy-Authentication-Info")
+      .map(String::as_str)
+  );
+  assert!(response.origin_agent_cluster().is_err());
+  assert_eq!(
+    Some("true"),
+    response
+      .header_value("Origin-Agent-Cluster")
       .map(String::as_str)
   );
   assert_eq!(200, response.code());

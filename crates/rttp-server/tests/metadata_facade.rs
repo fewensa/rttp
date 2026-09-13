@@ -33,8 +33,9 @@ use rttp_server::server::{
   HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
   HttpNegotiateDirective, HttpNegotiateParseError, HttpNoVarySearch, HttpNoVarySearchParams,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
-  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
+  HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginTrialParseError,
+  HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError, HttpPermissionsPolicy,
+  HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthenticate, HttpProxyAuthenticateChallenge,
   HttpProxyAuthenticateParameter, HttpProxyAuthenticateParseError, HttpProxyAuthenticationInfo,
@@ -3407,4 +3408,28 @@ fn response_authentication_metadata_facade_aliases_build_and_parse() {
       .expect("Proxy-Authentication-Info should be present")
       .parameter("nextnonce")
   );
+}
+
+#[test]
+fn server_origin_agent_cluster_response_metadata_is_bounded_and_preserves_raw_errors() {
+  let response = HttpResponse::ok("body")
+    .header("Origin-Agent-Cluster", "legacy")
+    .with_origin_agent_cluster(" \t?1\t ")
+    .expect("Origin-Agent-Cluster should be accepted");
+  let value = response
+    .origin_agent_cluster()
+    .expect("Origin-Agent-Cluster should parse")
+    .expect("Origin-Agent-Cluster should be present");
+  assert!(value.boolean());
+  assert_eq!("?1", value.header_value());
+  assert!(String::from_utf8(response.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nOrigin-Agent-Cluster: ?1\r\n"));
+
+  let malformed = HttpResponse::ok("body").header("Origin-Agent-Cluster", "true");
+  let _: Result<Option<HttpOriginAgentCluster>, HttpOriginAgentClusterParseError> =
+    malformed.origin_agent_cluster();
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("malformed response should serialize")
+    .contains("\r\nOrigin-Agent-Cluster: true\r\n"));
 }
