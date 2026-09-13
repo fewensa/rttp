@@ -46,11 +46,11 @@ use rttp_client::response::{
 use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, AcceptDatetime, AcceptDatetimeParseError, Baggage,
   BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
-  DestinationParseError, Dnt, DntParseError, EarlyData, EarlyDataParseError, Expect,
-  ExpectParseError, From, FromParseError, HttpClient, If, IfCondition, IfList, IfParseError,
-  IfPredicate, IfResourceTag, IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken,
-  Negotiate, NegotiateDirective, NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose,
+  DestinationParseError, Dnt, DntParseError, Dpr, DprParseError, EarlyData, EarlyDataParseError,
+  Expect, ExpectParseError, From, FromParseError, HttpClient, If, IfCondition, IfList,
+  IfParseError, IfPredicate, IfResourceTag, IfScheduleTagMatch, IfScheduleTagMatchParseError,
+  IfStateToken, Negotiate, NegotiateDirective, NegotiateParseError, Overwrite, OverwriteParseError,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose,
   SecRequiredDocumentPolicy, SecRequiredDocumentPolicyDirective,
   SecRequiredDocumentPolicyParseError, SecRequiredDocumentPolicyValue, SecWebSocketKey,
   SecWebSocketKeyParseError, Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError,
@@ -67,6 +67,14 @@ fn client_facade_exports_from_metadata_types() {
   let from: From = From::parse("Ops Team <ops@example.test>").expect("From metadata should parse");
   assert_eq!("Ops Team <ops@example.test>", from.header_value());
   let _: FromParseError = From::parse("invalid").expect_err("invalid From should fail");
+}
+
+#[test]
+fn client_facade_exports_dpr_metadata_types() {
+  let dpr = Dpr::parse("1.5").expect("DPR metadata should parse");
+  assert_eq!(1.5, dpr.ratio());
+  assert_eq!("1.5", dpr.header_value());
+  let _: DprParseError = Dpr::parse("0").expect_err("zero DPR should fail");
 }
 
 #[test]

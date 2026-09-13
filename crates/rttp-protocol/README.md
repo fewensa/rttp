@@ -606,6 +606,15 @@ notation, leftover characters, and forbidden ASCII control bytes are errors.
 This parser reports declared metadata only; it does not rescale images, send
 request DPR, apply Client Hints policy, retry, or change transport.
 
+## DPR
+
+`client_hints::Dpr` parses a singleton HTTP `DPR` request Client Hint as a
+finite positive decimal ratio. The field value is bounded to 64 KiB, optional
+outer SP and HTAB are trimmed, and the accepted decimal text is preserved by
+`header_value()`. Empty, malformed, duplicate, non-finite, non-positive,
+control-byte, and oversized values are errors. This parser reports request
+metadata only; it does not negotiate content or emit Client Hints.
+
 ## Memento-Datetime
 
 `memento_datetime` parses a singleton `Memento-Datetime` field as one

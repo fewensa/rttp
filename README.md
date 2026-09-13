@@ -1902,6 +1902,7 @@ gain additional HTTP/2 header-block handling.
 | Via | Client `via` emits bounded HTTP `Via` hop metadata through the shared protocol type; `Response::via` parses received hops; server `Request`/`HttpRequest` helpers and `HttpResponse::with_via`/`via` parse or declare caller-supplied chains while preserving raw headers on errors | No automatic hop insertion or removal, trusted-proxy inference, identity rewrite, or HTTP/1.1 or HTTP/2 proxy-policy changes |
 | Accept-Language | Client `accept_language` emits bounded `Accept-Language` request metadata through the protocol `AcceptLanguage` type; server `Request::accept_language()` and `HttpRequest::accept_language()` parse typed received values as `HttpAcceptLanguages` while preserving raw headers on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, CORS policy, or Private Network Access policy |
+| DPR request Client Hint | `HttpClient::dpr` emits bounded singleton `DPR` request metadata through `Dpr`; server `Request::dpr()` and `HttpRequest::dpr()` parse received fields as `HttpDpr` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
 | Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
 | Access-Control-Allow-Private-Network | Client `Response::access_control_allow_private_network` and server `HttpAccessControlAllowPrivateNetwork`, `HttpResponse::with_access_control_allow_private_network`, and `HttpResponse::access_control_allow_private_network` parse or declare bounded singleton `Access-Control-Allow-Private-Network` `true`-token metadata while preserving raw headers on parse failures | No private-network access grant, preflight decision, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
@@ -1922,6 +1923,7 @@ gain additional HTTP/2 header-block handling.
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Service-Worker-Allowed | `Response::service_worker_allowed` and `ServiceWorkerAllowed::parse` parse bounded singleton response `Service-Worker-Allowed` path metadata while preserving raw headers | No service-worker registration, scope evaluation, script-URL resolution, or application routing policy |
 | Content-DPR | `Response::content_dpr` and `ContentDpr::parse` parse bounded singleton response `Content-DPR` decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
+| DPR | `Dpr::parse`, `HttpClient::dpr`, `Request::dpr`, and `HttpRequest::dpr` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
 | Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
@@ -2714,6 +2716,19 @@ the typed parser is requested.
 These helpers are observation-only. RTTP does not rescale images, send request
 DPR, apply Client Hints policy, retry, replay, redirect, or change transport
 from `Content-DPR`.
+
+### Bounded DPR request Client Hint metadata
+
+`HttpClient::dpr(value)` validates and emits one singleton `DPR` request
+Client Hint through the shared `Dpr` type. `Request::dpr()` and
+`HttpRequest::dpr()` parse received fields into `HttpDpr`, exposing the finite
+positive ratio with `ratio()` and the trimmed decimal text with
+`header_value()`. Invalid, duplicate, non-finite, non-positive, control-byte,
+and oversized values return parser errors while raw headers remain available.
+
+These helpers are metadata-only. RTTP does not negotiate content, emit
+`Accept-CH`, generate Client Hints automatically, retry, replay, redirect, or
+change transport from `DPR`.
 
 ### Bounded HTTP/1.1 Content-Disposition behavior
 

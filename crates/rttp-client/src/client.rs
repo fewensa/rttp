@@ -21,6 +21,7 @@ use rttp_protocol::access_control_request_private_network::AccessControlRequestP
 use rttp_protocol::authorization::Authorization;
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
+use rttp_protocol::client_hints::Dpr;
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
 use rttp_protocol::dnt::Dnt;
@@ -507,6 +508,19 @@ impl HttpClient {
     let save_data =
       SaveData::parse("on").map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Save-Data", save_data.header_value())))
+  }
+
+  /// Set bounded `DPR` request Client Hint metadata.
+  ///
+  /// The value must be one finite positive decimal ratio with optional
+  /// surrounding HTTP optional whitespace. This replaces any existing
+  /// case-insensitive `DPR` field and only declares request metadata; RTTP
+  /// does not negotiate content, emit `Accept-CH`, or generate this header
+  /// automatically.
+  pub fn dpr<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let dpr = Dpr::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("DPR", dpr.header_value())))
   }
 
   /// Set `DNT` request metadata from the declared tracking preference.

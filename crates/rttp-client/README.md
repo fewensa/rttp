@@ -1355,6 +1355,17 @@ representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy. Callers that need values outside the helper can retain
 raw-header control with `header(("Save-Data", "..."))`.
 
+## Bounded DPR request Client Hint metadata
+
+`HttpClient::dpr(value)` validates and emits one bounded `DPR` request field
+through the shared `Dpr` type, replacing any existing same-name field.
+`Dpr::ratio()` exposes the finite positive ratio and `Dpr::header_value()`
+returns the trimmed decimal text. Invalid, non-positive, non-finite,
+control-byte, duplicate, and oversized values are rejected before connecting.
+This helper declares metadata only; it does not negotiate content, emit
+`Accept-CH`, or generate Client Hints automatically. Raw values remain
+available through `header(("DPR", "..."))`.
+
 ## Bounded DNT request metadata
 
 `HttpClient::dnt(value)` emits one `DNT` field from the user's declared

@@ -23,13 +23,14 @@ use rttp_server::server::{
   HttpDepthParseError, HttpDnt, HttpDntParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
   HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
-  HttpDocumentPolicyValue, HttpEarlyData, HttpEarlyDataParseError, HttpEntityTag,
-  HttpExpectParseError, HttpExpectations, HttpExpiresParseError, HttpFrom, HttpFromParseError,
-  HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList,
-  HttpIfModifiedSince, HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate,
-  HttpIfResourceTag, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
-  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter,
-  HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
+  HttpDocumentPolicyValue, HttpDpr, HttpDprParseError, HttpEarlyData, HttpEarlyDataParseError,
+  HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpExpiresParseError, HttpFrom,
+  HttpFromParseError, HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf,
+  HttpIfCondition, HttpIfList, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
+  HttpIfParseError, HttpIfPredicate, HttpIfResourceTag, HttpIfScheduleTagMatch,
+  HttpIfScheduleTagMatchParseError, HttpIfStateToken, HttpIfUnmodifiedSince,
+  HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter, HttpImParseError,
+  HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
   HttpNegotiateDirective, HttpNegotiateParseError, HttpNoVarySearch, HttpNoVarySearchParams,
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
@@ -1798,6 +1799,38 @@ fn request_facade_parses_from_metadata_without_policy() {
     HttpFrom::parse("a".repeat(64 * 1024 + 1)).is_err(),
     "oversized From metadata should be rejected"
   );
+}
+
+#[test]
+fn request_facade_parses_dpr_metadata_without_negotiation() {
+  let request =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDPR: \t1.5 \t\r\n\r\n")
+      .expect("DPR request should parse");
+  let dpr: HttpDpr = request
+    .dpr()
+    .expect("DPR should parse")
+    .expect("DPR should be present");
+  assert_eq!(1.5, dpr.ratio());
+  assert_eq!("1.5", dpr.header_value());
+  assert_eq!(Some("1.5"), request.header("DPR"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without DPR should parse");
+  assert_eq!(None, absent.dpr().expect("missing DPR should be valid"));
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDPR: 1e1\r\n\r\n")
+      .expect("malformed DPR request should retain raw metadata");
+  assert!(malformed.dpr().is_err());
+  assert_eq!(Some("1e1"), malformed.header("DPR"));
+
+  let duplicate =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDPR: 1\r\nDPR: 2\r\n\r\n")
+      .expect("duplicate DPR request should retain raw metadata");
+  let _: HttpDprParseError = duplicate.dpr().expect_err("duplicate DPR should fail");
+  assert_eq!(Some("1"), duplicate.header("DPR"));
+
+  let _: HttpDprParseError = HttpDpr::parse("").expect_err("empty DPR should fail");
 }
 
 #[test]

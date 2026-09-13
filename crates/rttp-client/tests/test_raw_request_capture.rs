@@ -5845,6 +5845,73 @@ fn save_data_helper_emits_on_request_token() {
 }
 
 #[test]
+fn dpr_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("dpr", "2"))
+      .dpr("\t1.5\t")
+      .expect("DPR should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("1.5"), header_value(&request, "DPR"));
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line.to_ascii_lowercase().starts_with("dpr:"))
+      .count(),
+    "typed DPR should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn dpr_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "1".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    "0",
+    "1e1",
+    "1, 2",
+    "inf",
+    "1\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .dpr(value)
+        .expect_err("invalid DPR input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid DPR input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_dpr_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("DPR", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("legacy-token"), header_value(&request, "DPR"));
+}
+
+#[test]
 fn dnt_helper_emits_defined_preference_tokens() {
   let request = capture_request(|base_url| {
     client()
