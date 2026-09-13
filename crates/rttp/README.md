@@ -596,6 +596,16 @@ This is syntax-only metadata. RTTP does not fingerprint clients, discover
 platform details, apply product policy, synthesize a default through the typed
 accessor, or change behavior based on the declared user agent.
 
+## Bounded DPR request Client Hint metadata
+
+With the client feature, `HttpClient::dpr(value)` validates and emits one
+singleton `DPR` request field through `rttp::Dpr`, replacing any existing
+case-insensitive field. On the server facade, `Request::dpr()` and
+`HttpRequest::dpr()` parse received fields into `HttpDpr`; `ratio()` and
+`header_value()` expose the typed and preserved values. Parse errors leave
+the raw header available. These helpers only expose metadata: RTTP does not
+negotiate content, emit `Accept-CH`, or generate Client Hints automatically.
+
 ## Bounded Idempotency-Key request metadata
 
 `HttpClient::idempotency_key(value)` validates and emits one opaque

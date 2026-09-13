@@ -15,6 +15,7 @@ use rttp_server::server::{
 
 const FROM_CANONICAL: &str = "Ops Team <ops@example.test>";
 const REFERER_CANONICAL: &str = "https://shop.example/checkout?step=pay";
+const DPR_CANONICAL: &str = "1.5";
 const ACCEPT_PATCH_WIRE: &str = r#"Text/Plain; title="a,b\"c", application/json"#;
 const ACCEPT_POST_WIRE: &str = "application/json, text/plain; charset=utf-8";
 const RATE_LIMIT_LIMIT_WIRE: &str = "100, 50;w=3600";
@@ -46,6 +47,9 @@ struct ObservedRequestMetadata {
   raw_from: Option<String>,
   referer: Result<Option<String>, String>,
   raw_referer: Option<String>,
+  dpr: Result<Option<String>, String>,
+  dpr_ratio: Option<f64>,
+  raw_dpr: Option<String>,
 }
 
 fn client() -> HttpClient {
@@ -78,6 +82,12 @@ fn observe_request(request: &Request) -> ObservedRequestMetadata {
       .map(|referer| referer.map(|referer| referer.header_value()))
       .map_err(|error| error.to_string()),
     raw_referer: request.header("Referer").map(str::to_string),
+    dpr: request
+      .dpr()
+      .map(|dpr| dpr.map(|dpr| dpr.header_value()))
+      .map_err(|error| error.to_string()),
+    dpr_ratio: request.dpr().ok().flatten().map(|dpr| dpr.ratio()),
+    raw_dpr: request.header("DPR").map(str::to_string),
   }
 }
 
@@ -135,6 +145,8 @@ fn attach_valid_client_metadata(client: &mut HttpClient) -> &mut HttpClient {
     .expect("From should be accepted")
     .referer("\thttps://shop.example/checkout?step=pay\t")
     .expect("Referer should be accepted")
+    .dpr("\t1.5\t")
+    .expect("DPR should be accepted")
 }
 
 fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
@@ -145,6 +157,9 @@ fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
   assert_eq!(Some(FROM_CANONICAL.to_string()), observed.raw_from);
   assert_eq!(Ok(Some(REFERER_CANONICAL.to_string())), observed.referer);
   assert_eq!(Some(REFERER_CANONICAL.to_string()), observed.raw_referer);
+  assert_eq!(Ok(Some(DPR_CANONICAL.to_string())), observed.dpr);
+  assert_eq!(Some(1.5), observed.dpr_ratio);
+  assert_eq!(Some(DPR_CANONICAL.to_string()), observed.raw_dpr);
 }
 
 fn assert_valid_response_metadata(response: &Response) {
@@ -527,6 +542,12 @@ fn typed_request_helpers_reject_malformed_values_before_connect() {
   reject_before_connect("oversized Referer", |client| {
     client.referer("a".repeat(64 * 1024 + 1))
   });
+  reject_before_connect("malformed DPR", |client| client.dpr("1e1"));
+  reject_before_connect("non-positive DPR", |client| client.dpr("0"));
+  reject_before_connect("DPR with control byte", |client| client.dpr("1\0"));
+  reject_before_connect("oversized DPR", |client| {
+    client.dpr("1".repeat(64 * 1024 + 1))
+  });
 }
 
 #[test]
@@ -585,6 +606,7 @@ fn facade_server_preserves_raw_headers_when_typed_request_helpers_reject_malform
 Host: example.test\r\n\
 From: ops\r\n\
 Referer: https://example.test/path#frag\r\n\
+DPR: 1e1\r\n\
 Connection: close\r\n\
 \r\n",
     )
@@ -605,6 +627,8 @@ Connection: close\r\n\
     Some("https://example.test/path#frag".to_string()),
     observed.raw_referer
   );
+  assert!(observed.dpr.is_err());
+  assert_eq!(Some("1e1".to_string()), observed.raw_dpr);
   assert!(
     response.starts_with("HTTP/1.1 200 "),
     "malformed typed metadata must not fail the HTTP exchange: {response}"
@@ -630,6 +654,8 @@ From: ops@example.test\r\n\
 from: other@example.test\r\n\
 Referer: https://shop.example/a\r\n\
 referer: https://shop.example/b\r\n\
+DPR: 1\r\n\
+dpr: 2\r\n\
 Connection: close\r\n\
 \r\n",
     )
@@ -645,6 +671,8 @@ Connection: close\r\n\
     Some("https://shop.example/a".to_string()),
     observed.raw_referer
   );
+  assert!(observed.dpr.is_err());
+  assert_eq!(Some("1".to_string()), observed.raw_dpr);
   handle.join().expect("duplicate request server thread");
 }
 

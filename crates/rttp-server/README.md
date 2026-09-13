@@ -484,6 +484,13 @@ when the field is absent.
 The helpers only declare and inspect metadata. The server does not retain
 per-client opt-ins, select hints, alter response policy, or trigger retries.
 
+`Request::dpr()` parses a singleton `DPR` request Client Hint into
+`HttpDpr`, exposing its finite positive ratio through `ratio()` and the
+trimmed wire value through `header_value()`. Malformed or duplicate fields
+return `HttpDprParseError` while `Request::header("DPR")` preserves the raw
+value. This is metadata-only: the server does not negotiate content or emit
+Client Hints automatically.
+
 ## Digest response metadata
 
 `HttpResponse::with_digest(value)` and `HttpResponse::with_repr_digest(value)`

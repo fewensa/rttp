@@ -46,6 +46,7 @@ pub use rttp_protocol::cdn_loop::{
   CdnLoop as HttpCdnLoop, CdnLoopMember as HttpCdnLoopMember,
   CdnLoopParameter as HttpCdnLoopParameter, CdnLoopParseError as HttpCdnLoopParseError,
 };
+pub use rttp_protocol::client_hints::{Dpr as HttpDpr, DprParseError as HttpDprParseError};
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
 };
@@ -487,6 +488,16 @@ impl Request {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `DPR` request Client Hint metadata without
+  /// negotiating content or emitting Client Hints.
+  pub fn dpr(&self) -> Result<Option<HttpDpr>, HttpDprParseError> {
+    let values: Vec<&str> = self.headers_named("DPR").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDpr::parse_values(values).map(Some)
   }
 
   /// Parses received `Sec-Fetch-Site` metadata without enforcing browser policy.
@@ -2795,6 +2806,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSaveData::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `DPR` request Client Hint metadata without
+  /// negotiating content or emitting Client Hints.
+  pub fn dpr(&self) -> Result<Option<HttpDpr>, HttpDprParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("DPR"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDpr::parse_values(values).map(Some)
   }
 
   /// Parses received `DNT` tracking-preference metadata without applying
