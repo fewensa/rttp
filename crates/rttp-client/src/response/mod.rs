@@ -229,4 +229,5 @@ pub use rttp_protocol::www_authenticate::{
 pub use rttp_protocol::x_content_type_options::{
   XContentTypeOptions, XContentTypeOptionsParseError,
 };
+pub use rttp_protocol::x_download_options::{XDownloadOptions, XDownloadOptionsParseError};
 pub use rttp_protocol::x_frame_options::{XFrameOptions, XFrameOptionsParseError};

@@ -144,6 +144,7 @@ pub mod want_repr_digest;
 pub mod warning;
 pub mod www_authenticate;
 pub mod x_content_type_options;
+pub mod x_download_options;
 pub mod x_forwarded_for;
 pub mod x_forwarded_host;
 pub mod x_forwarded_proto;

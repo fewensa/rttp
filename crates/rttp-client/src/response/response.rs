@@ -98,6 +98,7 @@ use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::variant_vary::VariantVary;
 use rttp_protocol::vary::Vary;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
+use rttp_protocol::x_download_options::XDownloadOptions;
 use rttp_protocol::x_frame_options::XFrameOptions;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
@@ -940,6 +941,17 @@ impl Response {
       return Ok(None);
     }
     XContentTypeOptions::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `X-Download-Options` response metadata without applying download handling policy.
+  pub fn x_download_options(&self) -> error::Result<Option<XDownloadOptions>> {
+    let values = self.header_values("x-download-options");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    XDownloadOptions::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

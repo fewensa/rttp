@@ -2616,6 +2616,85 @@ fn x_content_type_options_helpers_preserve_raw_metadata_and_report_parse_errors(
 }
 
 #[test]
+fn x_download_options_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("X-Download-Options", "noopen")
+    .header("x-download-options", "noopen")
+    .with_x_download_options("NoOpen")
+    .expect("X-Download-Options should be accepted");
+
+  assert_eq!(
+    "noopen",
+    response
+      .x_download_options()
+      .expect("X-Download-Options should parse")
+      .expect("X-Download-Options should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("X-Download-Options", "noopen")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn x_download_options_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("X-Download-Options", "NoOpen");
+  assert_eq!(
+    "noopen",
+    raw
+      .x_download_options()
+      .expect("raw NoOpen should parse")
+      .expect("X-Download-Options should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("NoOpen"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("X-Download-Options"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("X-Download-Options", "unknown");
+  assert!(malformed.x_download_options().is_err());
+  assert!(HttpResponse::ok([])
+    .with_x_download_options("unknown")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .x_download_options()
+      .expect("absent X-Download-Options should parse")
+  );
+  for value in ["noopen", "NoOpen", "NOOPEN"] {
+    assert_eq!(
+      "noopen",
+      HttpResponse::ok([])
+        .with_x_download_options(value)
+        .expect("valid X-Download-Options should be accepted")
+        .x_download_options()
+        .expect("X-Download-Options should parse")
+        .expect("X-Download-Options should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("X-Download-Options", "noopen")
+    .header("x-download-options", "noopen");
+  assert!(duplicate.x_download_options().is_err());
+  assert!(HttpResponse::ok([])
+    .with_x_download_options("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
 fn x_frame_options_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("X-Frame-Options", "deny")
