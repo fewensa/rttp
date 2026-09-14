@@ -23,14 +23,14 @@ use rttp_server::server::{
   HttpDepthParseError, HttpDnt, HttpDntParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
   HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
-  HttpDocumentPolicyValue, HttpDpr, HttpDprParseError, HttpEarlyData, HttpEarlyDataParseError,
-  HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpExpiresParseError, HttpFrom,
-  HttpFromParseError, HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf,
-  HttpIfCondition, HttpIfList, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
-  HttpIfParseError, HttpIfPredicate, HttpIfResourceTag, HttpIfScheduleTagMatch,
-  HttpIfScheduleTagMatchParseError, HttpIfStateToken, HttpIfUnmodifiedSince,
-  HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter, HttpImParseError,
-  HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
+  HttpDocumentPolicyValue, HttpDownlink, HttpDownlinkParseError, HttpDpr, HttpDprParseError,
+  HttpEarlyData, HttpEarlyDataParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations,
+  HttpExpiresParseError, HttpFrom, HttpFromParseError, HttpHost, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList, HttpIfModifiedSince,
+  HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate, HttpIfResourceTag,
+  HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
+  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter,
+  HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
   HttpNegotiateDirective, HttpNegotiateParseError, HttpNoVarySearch, HttpNoVarySearchParams,
   HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginTrialParseError,
@@ -1832,6 +1832,56 @@ fn request_facade_parses_dpr_metadata_without_negotiation() {
   assert_eq!(Some("1"), duplicate.header("DPR"));
 
   let _: HttpDprParseError = HttpDpr::parse("").expect_err("empty DPR should fail");
+}
+
+#[test]
+fn request_facade_parses_downlink_metadata_without_negotiation() {
+  let request =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDownlink: \t1.5 \t\r\n\r\n")
+      .expect("Downlink request should parse");
+  let downlink: HttpDownlink = request
+    .downlink()
+    .expect("Downlink should parse")
+    .expect("Downlink should be present");
+  assert_eq!(1.5, downlink.mbps());
+  assert_eq!("1.5", downlink.header_value());
+  assert_eq!(Some("1.5"), request.header("Downlink"));
+
+  let zero =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDownlink: 0\r\n\r\n")
+      .expect("zero Downlink request should parse");
+  assert_eq!(
+    0.0,
+    zero
+      .downlink()
+      .expect("zero Downlink should parse")
+      .expect("zero Downlink should be present")
+      .mbps()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Downlink should parse");
+  assert_eq!(
+    None,
+    absent.downlink().expect("missing Downlink should be valid")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDownlink: 1e1\r\n\r\n")
+      .expect("malformed Downlink request should retain raw metadata");
+  assert!(malformed.downlink().is_err());
+  assert_eq!(Some("1e1"), malformed.header("Downlink"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDownlink: 1\r\nDownlink: 2\r\n\r\n",
+  )
+  .expect("duplicate Downlink request should retain raw metadata");
+  let _: HttpDownlinkParseError = duplicate
+    .downlink()
+    .expect_err("duplicate Downlink should fail");
+  assert_eq!(Some("1"), duplicate.header("Downlink"));
+
+  let _: HttpDownlinkParseError = HttpDownlink::parse("").expect_err("empty Downlink should fail");
 }
 
 #[test]
