@@ -1366,6 +1366,18 @@ This helper declares metadata only; it does not negotiate content, emit
 `Accept-CH`, or generate Client Hints automatically. Raw values remain
 available through `header(("DPR", "..."))`.
 
+## Bounded ECT request Client Hint metadata
+
+`HttpClient::ect(value)` validates and emits one bounded `ECT` request field
+through the shared `Ect` type, replacing any existing same-name field. The
+accepted tokens are `slow-2g`, `2g`, `3g`, and `4g`; surrounding SP or HTAB is
+trimmed and `Ect::header_value()` returns the canonical token. Missing,
+unknown, comma-list, control-byte, duplicate, and oversized values are
+rejected before connecting. This helper declares metadata only; it does not
+infer network conditions, emit `Accept-CH`, persist Client Hints policy,
+retry, or generate Client Hints automatically. Raw values remain available
+through `header(("ECT", "..."))`.
+
 ## Bounded DNT request metadata
 
 `HttpClient::dnt(value)` emits one `DNT` field from the user's declared

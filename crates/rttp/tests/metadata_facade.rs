@@ -13,15 +13,15 @@ use rttp::server::{
   HttpCrossOriginResourcePolicy, HttpDeltaBase, HttpDeltaBaseParseError, HttpDeprecation,
   HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDestination,
   HttpDestinationParseError, HttpDnt, HttpDntParseError, HttpEarlyData, HttpEarlyDataParseError,
-  HttpEntityTag, HttpExpectations, HttpFrom, HttpFromParseError, HttpIdempotencyKey,
-  HttpIdempotencyKeyParseError, HttpIf, HttpIfModifiedSince, HttpIfScheduleTagMatch,
-  HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError,
-  HttpMaxForwards, HttpMediaType, HttpMediaTypeParameter, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError,
-  HttpNel, HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginTrialParseError,
-  HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError,
-  HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpEct, HttpEctParseError, HttpEntityTag, HttpExpectations, HttpFrom, HttpFromParseError,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfModifiedSince,
+  HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken,
+  HttpLockTokenParseError, HttpMaxForwards, HttpMediaType, HttpMediaTypeParameter,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective,
+  HttpNegotiateParseError, HttpNel, HttpOriginAgentCluster, HttpOriginAgentClusterParseError,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpSameSite,
@@ -290,6 +290,9 @@ fn compatibility_facade_exports_client_metadata_types() {
   let depth: rttp::Depth = rttp::Depth::parse("infinity").expect("Depth should parse");
   let _: rttp::DepthParseError =
     rttp::Depth::parse("2").expect_err("malformed Depth should be rejected");
+  let ect: rttp::Ect = rttp::Ect::parse("4g").expect("ECT should parse");
+  assert_eq!(rttp::Ect::FourG, ect);
+  let _: rttp::EctParseError = rttp::Ect::parse("5g").expect_err("unknown ECT should be rejected");
   let lock_token: rttp::LockToken =
     rttp::LockToken::parse("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
       .expect("Lock-Token should parse");
@@ -2189,6 +2192,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpDestination::parse("/relative");
   let depth: HttpDepth = HttpDepth::parse("infinity").expect("Depth should parse");
   let depth_error: Result<HttpDepth, HttpDepthParseError> = HttpDepth::parse("2");
+  let ect: HttpEct = HttpEct::parse("4g").expect("ECT should parse");
+  let ect_error: Result<HttpEct, HttpEctParseError> = HttpEct::parse("5g");
   let lock_token: HttpLockToken =
     HttpLockToken::parse("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
       .expect("Lock-Token should parse");
@@ -2402,6 +2407,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(HttpDepth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert!(depth_error.is_err());
+  assert_eq!(HttpEct::FourG, ect);
+  assert_eq!("4g", ect.header_value());
+  assert!(ect_error.is_err());
   assert_eq!(
     "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
     lock_token.as_str()

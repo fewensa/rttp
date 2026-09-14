@@ -4,6 +4,16 @@ use std::fmt;
 pub const MAX_CLIENT_HINT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_CLIENT_HINT_NAMES: usize = 256;
 pub const MAX_DPR_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
+
+/// Parsed, bounded `ECT` request Client Hint metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Ect {
+  Slow2g,
+  TwoG,
+  ThreeG,
+  FourG,
+}
 
 /// Parsed, bounded `DPR` request Client Hint metadata.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -31,6 +41,7 @@ pub struct ClientHintsParseError {
 pub type AcceptChParseError = ClientHintsParseError;
 pub type CriticalChParseError = ClientHintsParseError;
 pub type DprParseError = ClientHintsParseError;
+pub type EctParseError = ClientHintsParseError;
 
 impl ClientHintsParseError {
   fn new(message: impl Into<String>) -> Self {
@@ -47,6 +58,28 @@ impl fmt::Display for ClientHintsParseError {
 }
 
 impl Error for ClientHintsParseError {}
+
+impl Ect {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, EctParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, EctParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    parse_ect_singleton(values)
+  }
+
+  pub fn header_value(self) -> &'static str {
+    match self {
+      Self::Slow2g => "slow-2g",
+      Self::TwoG => "2g",
+      Self::ThreeG => "3g",
+      Self::FourG => "4g",
+    }
+  }
+}
 
 impl Dpr {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, DprParseError> {
@@ -171,6 +204,48 @@ where
     )));
   }
   Ok(client_hints)
+}
+
+fn parse_ect_singleton<'a, I>(values: I) -> Result<Ect, EctParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values.next().ok_or_else(invalid_ect_value)?;
+  validate_bounded_ect_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_ect_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new("duplicate ECT header fields"));
+  }
+
+  match value.trim_matches([' ', '\t']) {
+    "slow-2g" => Ok(Ect::Slow2g),
+    "2g" => Ok(Ect::TwoG),
+    "3g" => Ok(Ect::ThreeG),
+    "4g" => Ok(Ect::FourG),
+    _ => Err(invalid_ect_value()),
+  }
+}
+
+fn validate_bounded_ect_value(value: &str) -> Result<(), EctParseError> {
+  if value.len() > MAX_ECT_VALUE_BYTES {
+    return Err(ClientHintsParseError::new("ECT header value is too large"));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new("invalid ECT control byte"));
+  }
+  Ok(())
+}
+
+fn invalid_ect_value() -> EctParseError {
+  ClientHintsParseError::new("invalid ECT header value")
 }
 
 fn parse_dpr_singleton<'a, I>(values: I) -> Result<&'a str, DprParseError>

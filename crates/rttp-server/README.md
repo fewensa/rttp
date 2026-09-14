@@ -491,6 +491,14 @@ return `HttpDprParseError` while `Request::header("DPR")` preserves the raw
 value. This is metadata-only: the server does not negotiate content or emit
 Client Hints automatically.
 
+`Request::ect()` parses a singleton `ECT` request Client Hint into
+`HttpEct`, accepting only `slow-2g`, `2g`, `3g`, and `4g` after trimming
+optional SP or HTAB and exposing the canonical token through
+`header_value()`. Malformed, unknown, comma-list, or duplicate fields return
+`HttpEctParseError` while `Request::header("ECT")` preserves the raw value.
+This is metadata-only: the server does not infer network conditions, persist
+`Accept-CH` policy, or emit Client Hints automatically.
+
 ## Digest response metadata
 
 `HttpResponse::with_digest(value)` and `HttpResponse::with_repr_digest(value)`

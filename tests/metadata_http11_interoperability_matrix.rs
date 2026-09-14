@@ -16,6 +16,7 @@ use rttp_server::server::{
 const FROM_CANONICAL: &str = "Ops Team <ops@example.test>";
 const REFERER_CANONICAL: &str = "https://shop.example/checkout?step=pay";
 const DPR_CANONICAL: &str = "1.5";
+const ECT_CANONICAL: &str = "4g";
 const ORIGIN_AGENT_CLUSTER_CANONICAL: &str = "?1";
 const ACCEPT_PATCH_WIRE: &str = r#"Text/Plain; title="a,b\"c", application/json"#;
 const ACCEPT_POST_WIRE: &str = "application/json, text/plain; charset=utf-8";
@@ -51,6 +52,8 @@ struct ObservedRequestMetadata {
   dpr: Result<Option<String>, String>,
   dpr_ratio: Option<f64>,
   raw_dpr: Option<String>,
+  ect: Result<Option<String>, String>,
+  raw_ect: Option<String>,
 }
 
 fn client() -> HttpClient {
@@ -89,6 +92,11 @@ fn observe_request(request: &Request) -> ObservedRequestMetadata {
       .map_err(|error| error.to_string()),
     dpr_ratio: request.dpr().ok().flatten().map(|dpr| dpr.ratio()),
     raw_dpr: request.header("DPR").map(str::to_string),
+    ect: request
+      .ect()
+      .map(|ect| ect.map(|ect| ect.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_ect: request.header("ECT").map(str::to_string),
   }
 }
 
@@ -150,6 +158,8 @@ fn attach_valid_client_metadata(client: &mut HttpClient) -> &mut HttpClient {
     .expect("Referer should be accepted")
     .dpr("\t1.5\t")
     .expect("DPR should be accepted")
+    .ect("\t4g\t")
+    .expect("ECT should be accepted")
 }
 
 fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
@@ -163,6 +173,8 @@ fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
   assert_eq!(Ok(Some(DPR_CANONICAL.to_string())), observed.dpr);
   assert_eq!(Some(1.5), observed.dpr_ratio);
   assert_eq!(Some(DPR_CANONICAL.to_string()), observed.raw_dpr);
+  assert_eq!(Ok(Some(ECT_CANONICAL.to_string())), observed.ect);
+  assert_eq!(Some(ECT_CANONICAL.to_string()), observed.raw_ect);
 }
 
 fn assert_valid_response_metadata(response: &Response) {
@@ -490,6 +502,10 @@ fn http11_absent_metadata_returns_ok_none() {
   assert_eq!(None, observed.raw_from);
   assert_eq!(Ok(None), observed.referer);
   assert_eq!(None, observed.raw_referer);
+  assert_eq!(Ok(None), observed.dpr);
+  assert_eq!(None, observed.raw_dpr);
+  assert_eq!(Ok(None), observed.ect);
+  assert_eq!(None, observed.raw_ect);
 
   assert!(response
     .accept_patch()
@@ -567,6 +583,12 @@ fn typed_request_helpers_reject_malformed_values_before_connect() {
   reject_before_connect("oversized DPR", |client| {
     client.dpr("1".repeat(64 * 1024 + 1))
   });
+  reject_before_connect("malformed ECT", |client| client.ect("5g"));
+  reject_before_connect("ECT comma list", |client| client.ect("3g, 4g"));
+  reject_before_connect("ECT with control byte", |client| client.ect("3g\0"));
+  reject_before_connect("oversized ECT", |client| {
+    client.ect("4".repeat(64 * 1024 + 1))
+  });
 }
 
 #[test]
@@ -626,6 +648,7 @@ Host: example.test\r\n\
 From: ops\r\n\
 Referer: https://example.test/path#frag\r\n\
 DPR: 1e1\r\n\
+ECT: 5g\r\n\
 Connection: close\r\n\
 \r\n",
     )
@@ -648,6 +671,8 @@ Connection: close\r\n\
   );
   assert!(observed.dpr.is_err());
   assert_eq!(Some("1e1".to_string()), observed.raw_dpr);
+  assert!(observed.ect.is_err());
+  assert_eq!(Some("5g".to_string()), observed.raw_ect);
   assert!(
     response.starts_with("HTTP/1.1 200 "),
     "malformed typed metadata must not fail the HTTP exchange: {response}"
@@ -675,6 +700,8 @@ Referer: https://shop.example/a\r\n\
 referer: https://shop.example/b\r\n\
 DPR: 1\r\n\
 dpr: 2\r\n\
+ECT: 3g\r\n\
+ect: 4g\r\n\
 Connection: close\r\n\
 \r\n",
     )
@@ -692,6 +719,8 @@ Connection: close\r\n\
   );
   assert!(observed.dpr.is_err());
   assert_eq!(Some("1".to_string()), observed.raw_dpr);
+  assert!(observed.ect.is_err());
+  assert_eq!(Some("3g".to_string()), observed.raw_ect);
   handle.join().expect("duplicate request server thread");
 }
 
