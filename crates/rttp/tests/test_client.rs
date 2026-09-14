@@ -137,6 +137,10 @@ fn compatibility_facade_reexports_client_hints_response_metadata() {
   let _: rttp::ViewportWidthParseError =
     rttp::ViewportWidth::parse("1.0").expect_err("malformed Viewport-Width should fail");
 
+  let ect: rttp::Ect = rttp::Ect::parse("3G").expect("ECT should parse");
+  assert_eq!("3g", ect.header_value());
+  let _: rttp::EctParseError = rttp::Ect::parse("5g").expect_err("unknown ECT should fail");
+
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
     "Accept-CH: Sec-CH-UA, DPR\r\n",

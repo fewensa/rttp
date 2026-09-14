@@ -21,7 +21,7 @@ use rttp_protocol::access_control_request_private_network::AccessControlRequestP
 use rttp_protocol::authorization::Authorization;
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
-use rttp_protocol::client_hints::{Dpr, ViewportWidth, Width};
+use rttp_protocol::client_hints::{Dpr, Ect, ViewportWidth, Width};
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
 use rttp_protocol::dnt::Dnt;
@@ -521,6 +521,19 @@ impl HttpClient {
     let dpr = Dpr::parse(value.as_ref())
       .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
     Ok(self.header(Header::new("DPR", dpr.header_value())))
+  }
+
+  /// Set bounded `ECT` request Client Hint metadata.
+  ///
+  /// The value must be one of the standard `slow-2g`, `2g`, `3g`, or `4g`
+  /// tokens, with optional surrounding HTTP optional whitespace. This
+  /// replaces any existing case-insensitive `ECT` field and only declares
+  /// request metadata; RTTP does not infer network quality, negotiate content,
+  /// emit `Accept-CH`, retry, or apply Client Hints policy.
+  pub fn ect<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let ect = Ect::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("ECT", ect.header_value())))
   }
 
   /// Set bounded `Width` request Client Hint metadata.

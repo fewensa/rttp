@@ -506,6 +506,14 @@ fields return `HttpViewportWidthParseError` while the raw `Viewport-Width`
 field remains available. These helpers do not negotiate content, emit Client
 Hints, retry, track viewport size, or adapt representations.
 
+`Request::ect()` and `HttpRequest::ect()` parse a singleton `ECT` request Client
+Hint into `HttpEct`, exposing canonical lowercase text for the standard
+`slow-2g`, `2g`, `3g`, or `4g` tokens through `header_value()`. RFC 5234 token
+matching accepts ASCII case variants. Malformed, unknown, duplicate,
+control-byte, or oversized fields return `HttpEctParseError` while the raw
+`ECT` field remains available. These helpers do not infer network quality,
+negotiate content, emit Client Hints, retry, or apply Client Hints policy.
+
 ## Digest response metadata
 
 `HttpResponse::with_digest(value)` and `HttpResponse::with_repr_digest(value)`

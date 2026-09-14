@@ -628,6 +628,18 @@ raw header available. These helpers only expose metadata: RTTP does not
 negotiate content, emit `Accept-CH`, retry, track viewport size, or adapt
 representations.
 
+## Bounded ECT request Client Hint metadata
+
+With the client feature, `HttpClient::ect(value)` validates and emits one
+singleton `ECT` request field through `rttp::Ect`, replacing any existing
+case-insensitive field. On the server facade, `Request::ect()` and
+`HttpRequest::ect()` parse received fields into `HttpEct`; `header_value()`
+exposes canonical lowercase text for the standard `slow-2g`, `2g`, `3g`, or
+`4g` token, while RFC 5234 token matching accepts ASCII case variants. Parse
+errors leave the raw header available. These helpers only expose metadata:
+RTTP does not infer network quality, negotiate content, emit `Accept-CH`,
+retry, or apply Client Hints policy.
+
 ## Bounded Idempotency-Key request metadata
 
 `HttpClient::idempotency_key(value)` validates and emits one opaque

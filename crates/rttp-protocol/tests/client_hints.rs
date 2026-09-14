@@ -1,6 +1,6 @@
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, Downlink, Dpr, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
-  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
+  AcceptCh, CriticalCh, Downlink, Dpr, Ect, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
+  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
   MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
@@ -172,6 +172,63 @@ fn downlink_rejects_oversized_and_control_byte_values() {
 fn downlink_checks_duplicate_values_against_the_bound() {
   let oversized = "1".repeat(MAX_DOWNLINK_VALUE_BYTES + 1);
   assert!(Downlink::parse_values(["1.5", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn ect_parses_standard_tokens_case_insensitively_and_round_trips_canonically() {
+  for (value, ect, canonical) in [
+    ("slow-2g", Ect::Slow2g, "slow-2g"),
+    ("SLOW-2G", Ect::Slow2g, "slow-2g"),
+    ("2G", Ect::TwoG, "2g"),
+    ("3G", Ect::ThreeG, "3g"),
+    ("4g", Ect::FourG, "4g"),
+  ] {
+    let parsed = Ect::parse(value).expect("valid ECT");
+    assert_eq!(ect, parsed);
+    assert_eq!(canonical, parsed.header_value());
+    assert_eq!(
+      parsed,
+      Ect::parse(parsed.header_value()).expect("ECT roundtrip")
+    );
+  }
+}
+
+#[test]
+fn ect_trims_outer_optional_whitespace() {
+  let ect = Ect::parse("\t 3G \t").expect("OWS-padded ECT");
+  assert_eq!(Ect::ThreeG, ect);
+  assert_eq!("3g", ect.header_value());
+}
+
+#[test]
+fn ect_rejects_malformed_unknown_lists_parameters_quotes_and_duplicates() {
+  assert!(Ect::parse_values(["3g", "4g"]).is_err());
+
+  for value in [
+    "",
+    " ",
+    "\t",
+    "5g",
+    "slow-3g",
+    "slow-2g, 2g",
+    "slow-2g;foo",
+    "\"4g\"",
+    "3g\0",
+    "3g\u{7f}",
+  ] {
+    assert!(Ect::parse(value).is_err(), "{value:?} must be rejected");
+  }
+}
+
+#[test]
+fn ect_rejects_empty_input_control_bytes_and_oversized_values() {
+  assert!(Ect::parse_values([] as [&str; 0]).is_err());
+  assert!(Ect::parse("3g\r").is_err());
+  assert!(Ect::parse("3g\n").is_err());
+
+  let oversized = "3".repeat(MAX_ECT_VALUE_BYTES + 1);
+  assert!(Ect::parse(&oversized).is_err());
+  assert!(Ect::parse_values(["3g", oversized.as_str()]).is_err());
 }
 
 #[test]

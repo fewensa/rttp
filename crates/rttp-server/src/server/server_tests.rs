@@ -5931,6 +5931,131 @@ hello\r\n\
   }
 
   #[test]
+  fn ect_helpers_parse_bounded_metadata_without_network_policy() {
+    let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse");
+    assert_eq!(None, absent.ect().expect("missing ECT should be valid"));
+    let absent_http = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse");
+    assert_eq!(
+      None,
+      absent_http
+        .ect()
+        .expect("missing ECT should be valid")
+    );
+
+    for (value, expected) in [
+      ("slow-2g", "slow-2g"),
+      ("SLOW-2G", "slow-2g"),
+      ("2G", "2g"),
+      ("3g", "3g"),
+      ("4G", "4g"),
+    ] {
+      let raw = format!(
+        "GET / HTTP/1.1\r\nHost: example.test\r\neCt: \t{value} \t\r\n\r\n"
+      );
+      let request = Request::from_raw_frame(raw.as_bytes()).expect("request should parse");
+      let ect = request
+        .ect()
+        .expect("ECT should parse")
+        .expect("ECT should be present");
+      assert_eq!(expected, ect.header_value());
+      assert_eq!(Some(value), request.header("ECT"));
+
+      let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+      let http_ect = http_request
+        .ect()
+        .expect("ECT should parse")
+        .expect("ECT should be present");
+      assert_eq!(expected, http_ect.header_value());
+      assert_eq!(Some(value), http_request.header("ECT"));
+    }
+
+    for value in ["", "5g", "slow-2g, 2g", "4g;foo", "\"4g\""] {
+      let raw = format!("GET / HTTP/1.1\r\nHost: example.test\r\nECT: {value}\r\n\r\n");
+      let request = Request::from_raw_frame(raw.as_bytes()).expect("request should be retained");
+      assert!(request.ect().is_err(), "ECT should reject {value:?}");
+      assert_eq!(Some(value), request.header("ECT"));
+
+      let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should be retained");
+      assert!(http_request.ect().is_err(), "ECT should reject {value:?}");
+      assert_eq!(Some(value), http_request.header("ECT"));
+    }
+
+    let duplicate_raw = concat!(
+      "GET / HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "ECT: 3g\r\n",
+      "ect: 4G\r\n",
+      "\r\n"
+    );
+    let duplicate = Request::from_raw_frame(duplicate_raw.as_bytes())
+      .expect("duplicate metadata should be retained");
+    let _: HttpEctParseError = duplicate.ect().expect_err("duplicate ECT should fail");
+    assert_eq!(Some("3g"), duplicate.header("ECT"));
+    let duplicate_http = HttpRequest::parse(duplicate_raw.as_bytes())
+      .expect("duplicate metadata should be retained");
+    let _: HttpEctParseError = duplicate_http
+      .ect()
+      .expect_err("duplicate ECT should fail");
+    assert_eq!(Some("3g"), duplicate_http.header("ECT"));
+
+    let control = Request {
+      method: "GET".to_string(),
+      target: "/".to_string(),
+      version: "HTTP/1.1".to_string(),
+      headers: vec![
+        ("Host".to_string(), "example.test".to_string()),
+        ("ECT".to_string(), "3g\0".to_string()),
+      ],
+      trailers: Vec::new(),
+      body: Vec::new(),
+      content_length: None,
+      extended_connect_protocol: None,
+    };
+    assert!(control.ect().is_err());
+    assert_eq!(Some("3g\0"), control.header("ECT"));
+
+    let control_http = HttpRequest {
+      method: "GET".to_string(),
+      path: "/".to_string(),
+      query: None,
+      version: "HTTP/1.1".to_string(),
+      headers: vec![HttpHeader::new("ECT", "3g\0")],
+      body: Vec::new(),
+      content_length: None,
+    };
+    assert!(control_http.ect().is_err());
+    assert_eq!(Some("3g\0"), control_http.header("ECT"));
+
+    let oversized = "3".repeat(64 * 1024 + 1);
+    let oversized_request = Request {
+      method: "GET".to_string(),
+      target: "/".to_string(),
+      version: "HTTP/1.1".to_string(),
+      headers: vec![("ECT".to_string(), oversized.clone())],
+      trailers: Vec::new(),
+      body: Vec::new(),
+      content_length: None,
+      extended_connect_protocol: None,
+    };
+    assert!(oversized_request.ect().is_err());
+    assert_eq!(Some(oversized.as_str()), oversized_request.header("ECT"));
+
+    let oversized_http = HttpRequest {
+      method: "GET".to_string(),
+      path: "/".to_string(),
+      query: None,
+      version: "HTTP/1.1".to_string(),
+      headers: vec![HttpHeader::new("ECT", oversized.clone())],
+      body: Vec::new(),
+      content_length: None,
+    };
+    assert!(oversized_http.ect().is_err());
+    assert_eq!(Some(oversized.as_str()), oversized_http.header("ECT"));
+  }
+
+  #[test]
   fn referer_helpers_parse_bounded_metadata_without_policy() {
     let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
       .expect("request should parse");

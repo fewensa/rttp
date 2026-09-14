@@ -58,7 +58,7 @@ pub use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, AcceptDatetime, AcceptDatetimeParseError, Baggage,
   BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
   DestinationParseError, Dnt, DntParseError, Dpr, DprParseError, EarlyData, EarlyDataParseError,
-  Expect, ExpectParseError, From, FromParseError, If, IfCondition, IfList, IfParseError,
+  Ect, EctParseError, Expect, ExpectParseError, From, FromParseError, If, IfCondition, IfList,
   IfPredicate, IfResourceTag, IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken,
   LockToken, LockTokenParseError, Negotiate, NegotiateDirective, NegotiateParseError, Overwrite,
   OverwriteParseError, Referer, RefererParseError, SecFetchDest, SecFetchMode, SecFetchSite,

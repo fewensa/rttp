@@ -48,9 +48,9 @@ pub use rttp_protocol::cdn_loop::{
 };
 pub use rttp_protocol::client_hints::{
   Downlink as HttpDownlink, DownlinkParseError as HttpDownlinkParseError, Dpr as HttpDpr,
-  DprParseError as HttpDprParseError, ViewportWidth as HttpViewportWidth,
-  ViewportWidthParseError as HttpViewportWidthParseError, Width as HttpWidth,
-  WidthParseError as HttpWidthParseError,
+  DprParseError as HttpDprParseError, Ect as HttpEct, EctParseError as HttpEctParseError,
+  ViewportWidth as HttpViewportWidth, ViewportWidthParseError as HttpViewportWidthParseError,
+  Width as HttpWidth, WidthParseError as HttpWidthParseError,
 };
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
@@ -513,6 +513,17 @@ impl Request {
       return Ok(None);
     }
     HttpDownlink::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `ECT` request Client Hint metadata without
+  /// inferring network quality, negotiating content, or applying Client Hints
+  /// policy.
+  pub fn ect(&self) -> Result<Option<HttpEct>, HttpEctParseError> {
+    let values: Vec<&str> = self.headers_named("ECT").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpEct::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Width` request Client Hint metadata without
@@ -2871,6 +2882,22 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpDownlink::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `ECT` request Client Hint metadata without
+  /// inferring network quality, negotiating content, or applying Client Hints
+  /// policy.
+  pub fn ect(&self) -> Result<Option<HttpEct>, HttpEctParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("ECT"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpEct::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Width` request Client Hint metadata without

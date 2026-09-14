@@ -47,11 +47,11 @@ use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, AcceptDatetime, AcceptDatetimeParseError, Baggage,
   BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
   DestinationParseError, Dnt, DntParseError, Dpr, DprParseError, EarlyData, EarlyDataParseError,
-  Expect, ExpectParseError, From, FromParseError, HttpClient, If, IfCondition, IfList,
-  IfParseError, IfPredicate, IfResourceTag, IfScheduleTagMatch, IfScheduleTagMatchParseError,
-  IfStateToken, Negotiate, NegotiateDirective, NegotiateParseError, Overwrite, OverwriteParseError,
-  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose,
-  SecRequiredDocumentPolicy, SecRequiredDocumentPolicyDirective,
+  Ect, EctParseError, Expect, ExpectParseError, From, FromParseError, HttpClient, If, IfCondition,
+  IfList, IfParseError, IfPredicate, IfResourceTag, IfScheduleTagMatch,
+  IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective, NegotiateParseError,
+  Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc,
+  SecGpcParseError, SecPurpose, SecRequiredDocumentPolicy, SecRequiredDocumentPolicyDirective,
   SecRequiredDocumentPolicyParseError, SecRequiredDocumentPolicyValue, SecWebSocketKey,
   SecWebSocketKeyParseError, Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError,
   TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
@@ -101,6 +101,14 @@ fn client_facade_exports_dpr_metadata_types() {
   assert_eq!(1.5, dpr.ratio());
   assert_eq!("1.5", dpr.header_value());
   let _: DprParseError = Dpr::parse("0").expect_err("zero DPR should fail");
+}
+
+#[test]
+fn client_facade_exports_ect_metadata_types() {
+  let ect = Ect::parse("3G").expect("ECT metadata should parse");
+  assert_eq!(Ect::ThreeG, ect);
+  assert_eq!("3g", ect.header_value());
+  let _: EctParseError = Ect::parse("5g").expect_err("unknown ECT should fail");
 }
 
 #[test]
