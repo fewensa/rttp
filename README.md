@@ -1905,6 +1905,7 @@ gain additional HTTP/2 header-block handling.
 | DPR request Client Hint | `HttpClient::dpr` emits bounded singleton `DPR` request metadata through `Dpr`; server `Request::dpr()` and `HttpRequest::dpr()` parse received fields as `HttpDpr` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
 | Width request Client Hint | `HttpClient::width` emits bounded singleton `Width` request metadata through `Width`; server `Request::width()` and `HttpRequest::width()` parse received fields as `HttpWidth` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or content adaptation |
 | Viewport-Width request Client Hint | `HttpClient::viewport_width` emits bounded singleton `Viewport-Width` request metadata through `ViewportWidth`; server `Request::viewport_width()` and `HttpRequest::viewport_width()` parse received fields as `HttpViewportWidth` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, viewport tracking, or content adaptation |
+| ECT request Client Hint | `HttpClient::ect` emits bounded singleton `ECT` request metadata through `Ect`; server `Request::ect()` and `HttpRequest::ect()` parse the standard `slow-2g`, `2g`, `3g`, or `4g` tokens as `HttpEct` while preserving raw values on errors | No network-quality inference, content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or Client Hints policy |
 | Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
 | Access-Control-Allow-Private-Network | Client `Response::access_control_allow_private_network` and server `HttpAccessControlAllowPrivateNetwork`, `HttpResponse::with_access_control_allow_private_network`, and `HttpResponse::access_control_allow_private_network` parse or declare bounded singleton `Access-Control-Allow-Private-Network` `true`-token metadata while preserving raw headers on parse failures | No private-network access grant, preflight decision, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
@@ -2760,6 +2761,19 @@ headers remain available.
 These helpers are metadata-only. RTTP does not negotiate content, emit
 `Accept-CH`, generate Client Hints automatically, retry, replay, redirect,
 track viewport size, or adapt representations from `Viewport-Width`.
+
+### Bounded ECT request Client Hint metadata
+
+`HttpClient::ect(value)` validates and emits one singleton `ECT` request Client
+Hint through the shared `Ect` type. `Request::ect()` and `HttpRequest::ect()`
+parse received fields into `HttpEct`, exposing the closed `slow-2g`, `2g`, `3g`,
+and `4g` token set through `header_value()`. Invalid, duplicate, case-variant,
+control-byte, and oversized values return parser errors while raw headers remain
+available.
+
+These helpers are metadata-only. RTTP does not infer network quality, negotiate
+content, emit `Accept-CH`, generate Client Hints automatically, retry, replay,
+redirect, or apply Client Hints policy from `ECT`.
 
 ### Bounded HTTP/1.1 Content-Disposition behavior
 

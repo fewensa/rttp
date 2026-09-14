@@ -6053,6 +6053,75 @@ fn raw_viewport_width_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn ect_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("ect", "2g"))
+      .ect("\t3g\t")
+      .expect("ECT should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("3g"), header_value(&request, "ECT"));
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line.to_ascii_lowercase().starts_with("ect:"))
+      .count(),
+    "typed ECT should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn ect_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "3".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    " ",
+    "5g",
+    "SLOW-2G",
+    "slow-2g, 2g",
+    "4g;foo",
+    "\"4g\"",
+    "3g\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .ect(value)
+        .expect_err("invalid ECT input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid ECT input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_ect_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("ECT", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("legacy-token"), header_value(&request, "ECT"));
+}
+
+#[test]
 fn dnt_helper_emits_defined_preference_tokens() {
   let request = capture_request(|base_url| {
     client()

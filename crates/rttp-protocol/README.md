@@ -635,6 +635,17 @@ overflowing, control-byte, and oversized values are errors. This parser reports
 request metadata only; it does not negotiate content, emit Client Hints, track
 viewport size, or adapt representations.
 
+## ECT
+
+`client_hints::Ect` parses a singleton HTTP `ECT` request Client Hint as one of
+the exact standard tokens `slow-2g`, `2g`, `3g`, or `4g`. The field value is
+bounded to 64 KiB, optional outer SP and HTAB are trimmed, and
+`header_value()` emits canonical lowercase text. Empty, unknown, list,
+parameterized, quoted, duplicate, case-variant, control-byte, and oversized
+values are errors. This parser reports request metadata only; it does not infer
+network quality, negotiate content, emit Client Hints, retry, or apply Client
+Hints policy.
+
 ## Memento-Datetime
 
 `memento_datetime` parses a singleton `Memento-Datetime` field as one

@@ -1389,6 +1389,17 @@ declares metadata only; it does not negotiate content, emit `Accept-CH`, track
 viewport size, or adapt representations. Raw values remain available through
 `header(("Viewport-Width", "..."))`.
 
+## Bounded ECT request Client Hint metadata
+
+`HttpClient::ect(value)` validates and emits one bounded `ECT` request field
+through the shared `Ect` type, replacing any existing same-name field.
+`Ect::header_value()` returns one canonical standard token: `slow-2g`, `2g`,
+`3g`, or `4g`. Invalid, unknown, case-variant, list, parameterized,
+control-byte, and oversized values are rejected before connecting. This helper
+declares metadata only; it does not infer network quality, negotiate content,
+emit `Accept-CH`, retry, or apply Client Hints policy. Raw values remain
+available through `header(("ECT", "..."))`.
+
 ## Bounded DNT request metadata
 
 `HttpClient::dnt(value)` emits one `DNT` field from the user's declared
