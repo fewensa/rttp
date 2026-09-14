@@ -46,7 +46,10 @@ pub use rttp_protocol::cdn_loop::{
   CdnLoop as HttpCdnLoop, CdnLoopMember as HttpCdnLoopMember,
   CdnLoopParameter as HttpCdnLoopParameter, CdnLoopParseError as HttpCdnLoopParseError,
 };
-pub use rttp_protocol::client_hints::{Dpr as HttpDpr, DprParseError as HttpDprParseError};
+pub use rttp_protocol::client_hints::{
+  Downlink as HttpDownlink, DownlinkParseError as HttpDownlinkParseError, Dpr as HttpDpr,
+  DprParseError as HttpDprParseError,
+};
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
 };
@@ -498,6 +501,16 @@ impl Request {
       return Ok(None);
     }
     HttpDpr::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Downlink` request Client Hint metadata without
+  /// negotiating content or emitting Client Hints.
+  pub fn downlink(&self) -> Result<Option<HttpDownlink>, HttpDownlinkParseError> {
+    let values: Vec<&str> = self.headers_named("Downlink").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDownlink::parse_values(values).map(Some)
   }
 
   /// Parses received `Sec-Fetch-Site` metadata without enforcing browser policy.
@@ -2821,6 +2834,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpDpr::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Downlink` request Client Hint metadata without
+  /// negotiating content or emitting Client Hints.
+  pub fn downlink(&self) -> Result<Option<HttpDownlink>, HttpDownlinkParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Downlink"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDownlink::parse_values(values).map(Some)
   }
 
   /// Parses received `DNT` tracking-preference metadata without applying

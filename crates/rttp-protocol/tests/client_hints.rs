@@ -1,6 +1,6 @@
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, Dpr, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
-  MAX_DPR_VALUE_BYTES,
+  AcceptCh, CriticalCh, Downlink, Dpr, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
+  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
 };
 
 #[test]
@@ -117,4 +117,63 @@ fn dpr_checks_duplicate_values_against_the_bound() {
 #[test]
 fn dpr_rejects_non_finite_oversized_digits() {
   assert!(Dpr::parse("9".repeat(400)).is_err());
+}
+
+#[test]
+fn downlink_parses_non_negative_finite_decimal_and_round_trips() {
+  for (value, mbps) in [
+    ("0", 0.0),
+    ("0.0", 0.0),
+    ("1", 1.0),
+    ("2.5", 2.5),
+    ("10.25", 10.25),
+  ] {
+    let downlink = Downlink::parse(value).expect("valid Downlink");
+    assert_eq!(mbps, downlink.mbps());
+    assert_eq!(value, downlink.header_value());
+    assert_eq!(
+      downlink,
+      Downlink::parse(downlink.header_value()).expect("Downlink roundtrip")
+    );
+  }
+}
+
+#[test]
+fn downlink_trims_outer_optional_whitespace() {
+  let downlink = Downlink::parse("\t 1.5 \t").expect("OWS-padded Downlink");
+  assert_eq!(1.5, downlink.mbps());
+  assert_eq!("1.5", downlink.header_value());
+}
+
+#[test]
+fn downlink_rejects_malformed_duplicate_empty_non_finite_and_negative_values() {
+  assert!(Downlink::parse_values(["1", "2"]).is_err());
+  assert!(Downlink::parse_values([]).is_err());
+
+  for value in [
+    "", " ", "-0", "-1", "2.", ".5", "+1", "1e1", "1E1", "1.5.0", "1, 2", "1 5", "inf", "nan",
+  ] {
+    assert!(
+      Downlink::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn downlink_rejects_oversized_and_control_byte_values() {
+  assert!(Downlink::parse("1".repeat(MAX_DOWNLINK_VALUE_BYTES + 1)).is_err());
+  assert!(Downlink::parse("1\r\nInjected: yes").is_err());
+  assert!(Downlink::parse("1\u{7f}").is_err());
+}
+
+#[test]
+fn downlink_checks_duplicate_values_against_the_bound() {
+  let oversized = "1".repeat(MAX_DOWNLINK_VALUE_BYTES + 1);
+  assert!(Downlink::parse_values(["1.5", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn downlink_rejects_non_finite_oversized_digits() {
+  assert!(Downlink::parse("9".repeat(400)).is_err());
 }
