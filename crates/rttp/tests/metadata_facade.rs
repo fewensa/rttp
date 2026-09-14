@@ -39,14 +39,33 @@ use rttp::server::{
   HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
   HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
   HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember, HttpUserAgentParseError,
-  HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
-  HttpXForwardedProto, HttpXForwardedProtoParseError,
+  HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpWidth,
+  HttpWidthParseError, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
+  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, UNIX_EPOCH};
+
+#[test]
+fn compatibility_facade_exports_width_request_metadata() {
+  let request =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: \t1440 \t\r\n\r\n")
+      .expect("Width request should parse");
+  let width: HttpWidth = request
+    .width()
+    .expect("Width should parse")
+    .expect("Width should be present");
+  assert_eq!(1440, width.value());
+  assert_eq!("1440", width.header_value());
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: 1.0\r\n\r\n")
+      .expect("malformed Width should remain available");
+  let _: HttpWidthParseError = malformed.width().expect_err("malformed Width should fail");
+  assert_eq!(Some("1.0"), malformed.header("Width"));
+}
 
 #[cfg(feature = "client")]
 fn header_value<'a>(message: &'a str, name: &str) -> Option<&'a str> {

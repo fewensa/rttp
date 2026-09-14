@@ -606,6 +606,16 @@ case-insensitive field. On the server facade, `Request::dpr()` and
 the raw header available. These helpers only expose metadata: RTTP does not
 negotiate content, emit `Accept-CH`, or generate Client Hints automatically.
 
+## Bounded Width request Client Hint metadata
+
+With the client feature, `HttpClient::width(value)` validates and emits one
+singleton `Width` request field through `rttp::Width`, replacing any existing
+case-insensitive field. On the server facade, `Request::width()` and
+`HttpRequest::width()` parse received fields into `HttpWidth`; `value()` and
+`header_value()` expose the typed and canonical values. Parse errors leave the
+raw header available. These helpers only expose metadata: RTTP does not
+negotiate content, emit `Accept-CH`, retry, or adapt representations.
+
 ## Bounded Idempotency-Key request metadata
 
 `HttpClient::idempotency_key(value)` validates and emits one opaque
