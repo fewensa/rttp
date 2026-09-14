@@ -39,9 +39,10 @@ use rttp::server::{
   HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
   HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
   HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember, HttpUserAgentParseError,
-  HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpWidth,
-  HttpWidthParseError, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
-  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError,
+  HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpViewportWidth,
+  HttpViewportWidthParseError, HttpWidth, HttpWidthParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -65,6 +66,28 @@ fn compatibility_facade_exports_width_request_metadata() {
       .expect("malformed Width should remain available");
   let _: HttpWidthParseError = malformed.width().expect_err("malformed Width should fail");
   assert_eq!(Some("1.0"), malformed.header("Width"));
+}
+
+#[test]
+fn compatibility_facade_exports_viewport_width_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: \t1440 \t\r\n\r\n",
+  )
+  .expect("Viewport-Width request should parse");
+  let viewport_width: HttpViewportWidth = request
+    .viewport_width()
+    .expect("Viewport-Width should parse")
+    .expect("Viewport-Width should be present");
+  assert_eq!(1440, viewport_width.value());
+  assert_eq!("1440", viewport_width.header_value());
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: 1.0\r\n\r\n")
+      .expect("malformed Viewport-Width should remain available");
+  let _: HttpViewportWidthParseError = malformed
+    .viewport_width()
+    .expect_err("malformed Viewport-Width should fail");
+  assert_eq!(Some("1.0"), malformed.header("Viewport-Width"));
 }
 
 #[cfg(feature = "client")]

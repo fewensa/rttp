@@ -64,12 +64,12 @@ use rttp_server::server::{
   HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
   HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
-  HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpWidth, HttpWidthParseError,
-  HttpWwwAuthenticate, HttpWwwAuthenticateChallenge, HttpWwwAuthenticateParameter,
-  HttpWwwAuthenticateParseError, HttpXForwardedFor, HttpXForwardedForParseError,
-  HttpXForwardedHost, HttpXForwardedHostParseError, HttpXForwardedProto,
-  HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
-  SecPurpose,
+  HttpViaParseError, HttpViewportWidth, HttpViewportWidthParseError, HttpWantContentDigest,
+  HttpWantReprDigest, HttpWidth, HttpWidthParseError, HttpWwwAuthenticate,
+  HttpWwwAuthenticateChallenge, HttpWwwAuthenticateParameter, HttpWwwAuthenticateParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -1934,6 +1934,70 @@ fn request_facade_parses_width_metadata_without_negotiation() {
   assert_eq!(Some("1"), duplicate.header("Width"));
 
   let _: HttpWidthParseError = HttpWidth::parse("").expect_err("empty Width should fail");
+}
+
+#[test]
+fn request_facade_parses_viewport_width_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: \t1440 \t\r\n\r\n",
+  )
+  .expect("Viewport-Width request should parse");
+  let viewport_width: HttpViewportWidth = request
+    .viewport_width()
+    .expect("Viewport-Width should parse")
+    .expect("Viewport-Width should be present");
+  assert_eq!(1440, viewport_width.value());
+  assert_eq!("1440", viewport_width.header_value());
+  assert_eq!(Some("1440"), request.header("Viewport-Width"));
+
+  let zero =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: 0\r\n\r\n")
+      .expect("zero Viewport-Width request should parse");
+  assert_eq!(
+    0,
+    zero
+      .viewport_width()
+      .expect("zero Viewport-Width should parse")
+      .expect("zero Viewport-Width should be present")
+      .value()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Viewport-Width should parse");
+  assert_eq!(
+    None,
+    absent
+      .viewport_width()
+      .expect("missing Viewport-Width should be valid")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: 1.0\r\n\r\n")
+      .expect("malformed Viewport-Width request should retain raw metadata");
+  assert!(malformed.viewport_width().is_err());
+  assert_eq!(Some("1.0"), malformed.header("Viewport-Width"));
+
+  let overflow = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: 18446744073709551616\r\n\r\n",
+  )
+  .expect("overflow Viewport-Width request should retain raw metadata");
+  assert!(overflow.viewport_width().is_err());
+  assert_eq!(
+    Some("18446744073709551616"),
+    overflow.header("Viewport-Width")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: 1\r\nviewport-width: 2\r\n\r\n",
+  )
+  .expect("duplicate Viewport-Width request should retain raw metadata");
+  let _: HttpViewportWidthParseError = duplicate
+    .viewport_width()
+    .expect_err("duplicate Viewport-Width should fail");
+  assert_eq!(Some("1"), duplicate.header("Viewport-Width"));
+
+  let _: HttpViewportWidthParseError =
+    HttpViewportWidth::parse("").expect_err("empty Viewport-Width should fail");
 }
 
 #[test]

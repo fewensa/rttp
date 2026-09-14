@@ -498,6 +498,14 @@ overflowing, control-byte, or oversized fields return `HttpWidthParseError`
 while the raw `Width` field remains available. These helpers do not negotiate
 content, emit Client Hints, retry, or adapt representations.
 
+`Request::viewport_width()` and `HttpRequest::viewport_width()` parse a
+singleton `Viewport-Width` request Client Hint into `HttpViewportWidth`,
+exposing its non-negative integer through `value()` and canonical text through
+`header_value()`. Malformed, duplicate, overflowing, control-byte, or oversized
+fields return `HttpViewportWidthParseError` while the raw `Viewport-Width`
+field remains available. These helpers do not negotiate content, emit Client
+Hints, retry, track viewport size, or adapt representations.
+
 ## Digest response metadata
 
 `HttpResponse::with_digest(value)` and `HttpResponse::with_repr_digest(value)`

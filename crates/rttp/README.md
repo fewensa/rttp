@@ -616,6 +616,18 @@ case-insensitive field. On the server facade, `Request::width()` and
 raw header available. These helpers only expose metadata: RTTP does not
 negotiate content, emit `Accept-CH`, retry, or adapt representations.
 
+## Bounded Viewport-Width request Client Hint metadata
+
+With the client feature, `HttpClient::viewport_width(value)` validates and
+emits one singleton `Viewport-Width` request field through
+`rttp::ViewportWidth`, replacing any existing case-insensitive field. On the
+server facade, `Request::viewport_width()` and `HttpRequest::viewport_width()`
+parse received fields into `HttpViewportWidth`; `value()` and
+`header_value()` expose the typed and canonical values. Parse errors leave the
+raw header available. These helpers only expose metadata: RTTP does not
+negotiate content, emit `Accept-CH`, retry, track viewport size, or adapt
+representations.
+
 ## Bounded Idempotency-Key request metadata
 
 `HttpClient::idempotency_key(value)` validates and emits one opaque
