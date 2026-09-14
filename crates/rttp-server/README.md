@@ -491,6 +491,13 @@ return `HttpDprParseError` while `Request::header("DPR")` preserves the raw
 value. This is metadata-only: the server does not negotiate content or emit
 Client Hints automatically.
 
+`Request::width()` and `HttpRequest::width()` parse a singleton `Width` request
+Client Hint into `HttpWidth`, exposing its non-negative integer through
+`value()` and canonical text through `header_value()`. Malformed, duplicate,
+overflowing, control-byte, or oversized fields return `HttpWidthParseError`
+while the raw `Width` field remains available. These helpers do not negotiate
+content, emit Client Hints, retry, or adapt representations.
+
 ## Digest response metadata
 
 `HttpResponse::with_digest(value)` and `HttpResponse::with_repr_digest(value)`

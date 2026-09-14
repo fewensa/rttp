@@ -5912,6 +5912,75 @@ fn raw_dpr_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn width_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("width", "2"))
+      .width("\t1440\t")
+      .expect("Width should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("1440"), header_value(&request, "Width"));
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line.to_ascii_lowercase().starts_with("width:"))
+      .count(),
+    "typed Width should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn width_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "1".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    "-1",
+    "+1",
+    "1.0",
+    "1e1",
+    "1, 2",
+    "18446744073709551616",
+    "1\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .width(value)
+        .expect_err("invalid Width input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Width input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_width_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Width", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("legacy-token"), header_value(&request, "Width"));
+}
+
+#[test]
 fn dnt_helper_emits_defined_preference_tokens() {
   let request = capture_request(|base_url| {
     client()

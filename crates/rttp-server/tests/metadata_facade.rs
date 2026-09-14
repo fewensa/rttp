@@ -64,11 +64,12 @@ use rttp_server::server::{
   HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
   HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
-  HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpWwwAuthenticate,
-  HttpWwwAuthenticateChallenge, HttpWwwAuthenticateParameter, HttpWwwAuthenticateParseError,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
-  HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecPurpose,
+  HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpWidth, HttpWidthParseError,
+  HttpWwwAuthenticate, HttpWwwAuthenticateChallenge, HttpWwwAuthenticateParameter,
+  HttpWwwAuthenticateParseError, HttpXForwardedFor, HttpXForwardedForParseError,
+  HttpXForwardedHost, HttpXForwardedHostParseError, HttpXForwardedProto,
+  HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  SecPurpose,
 };
 
 #[test]
@@ -1882,6 +1883,57 @@ fn request_facade_parses_downlink_metadata_without_negotiation() {
   assert_eq!(Some("1"), duplicate.header("Downlink"));
 
   let _: HttpDownlinkParseError = HttpDownlink::parse("").expect_err("empty Downlink should fail");
+}
+
+#[test]
+fn request_facade_parses_width_metadata_without_negotiation() {
+  let request =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: \t1440 \t\r\n\r\n")
+      .expect("Width request should parse");
+  let width: HttpWidth = request
+    .width()
+    .expect("Width should parse")
+    .expect("Width should be present");
+  assert_eq!(1440, width.value());
+  assert_eq!("1440", width.header_value());
+  assert_eq!(Some("1440"), request.header("Width"));
+
+  let zero = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: 0\r\n\r\n")
+    .expect("zero Width request should parse");
+  assert_eq!(
+    0,
+    zero
+      .width()
+      .expect("zero Width should parse")
+      .expect("zero Width should be present")
+      .value()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Width should parse");
+  assert_eq!(None, absent.width().expect("missing Width should be valid"));
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: 1.0\r\n\r\n")
+      .expect("malformed Width request should retain raw metadata");
+  assert!(malformed.width().is_err());
+  assert_eq!(Some("1.0"), malformed.header("Width"));
+
+  let overflow = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: 18446744073709551616\r\n\r\n",
+  )
+  .expect("overflow Width request should retain raw metadata");
+  assert!(overflow.width().is_err());
+  assert_eq!(Some("18446744073709551616"), overflow.header("Width"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: 1\r\nwidth: 2\r\n\r\n",
+  )
+  .expect("duplicate Width request should retain raw metadata");
+  let _: HttpWidthParseError = duplicate.width().expect_err("duplicate Width should fail");
+  assert_eq!(Some("1"), duplicate.header("Width"));
+
+  let _: HttpWidthParseError = HttpWidth::parse("").expect_err("empty Width should fail");
 }
 
 #[test]

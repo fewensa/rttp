@@ -66,8 +66,8 @@ pub use rttp_client::{
   SecRequiredDocumentPolicyParseError, SecRequiredDocumentPolicyValue, SecWebSocketKey,
   SecWebSocketKeyParseError, Timeout, TimeoutParseError, TimeoutType, TraceParent,
   TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError, UserAgent,
-  UserAgentMember, UserAgentParseError, Via, ViaMember, ViaParseError, XForwardedFor,
-  XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError, XForwardedHost,
+  UserAgentMember, UserAgentParseError, Via, ViaMember, ViaParseError, Width, WidthParseError,
+  XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError, XForwardedHost,
   XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 

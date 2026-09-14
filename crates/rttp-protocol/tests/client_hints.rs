@@ -1,6 +1,6 @@
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, Downlink, Dpr, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
-  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
+  AcceptCh, CriticalCh, Downlink, Dpr, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
+  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -176,4 +176,56 @@ fn downlink_checks_duplicate_values_against_the_bound() {
 #[test]
 fn downlink_rejects_non_finite_oversized_digits() {
   assert!(Downlink::parse("9".repeat(400)).is_err());
+}
+
+#[test]
+fn width_parses_non_negative_integer_and_round_trips() {
+  for (value, expected) in [
+    ("0", 0),
+    ("1", 1),
+    ("1440", 1440),
+    ("4294967296", 4294967296),
+  ] {
+    let width = Width::parse(value).expect("valid Width");
+    assert_eq!(expected, width.value());
+    assert_eq!(value, width.header_value());
+    assert_eq!(
+      width,
+      Width::parse(width.header_value()).expect("Width roundtrip")
+    );
+    assert_eq!(width, Width::new(expected));
+  }
+}
+
+#[test]
+fn width_trims_outer_optional_whitespace() {
+  let width = Width::parse("\t 1440 \t").expect("OWS-padded Width");
+  assert_eq!(1440, width.value());
+  assert_eq!("1440", width.header_value());
+}
+
+#[test]
+fn width_rejects_malformed_duplicate_empty_and_overflow_values() {
+  assert!(Width::parse_values(["1", "2"]).is_err());
+  assert!(Width::parse_values([]).is_err());
+
+  for value in [
+    "", " ", "-0", "-1", "+1", "1.0", "1e1", "1E1", "1, 2", "1 5", "1\0",
+  ] {
+    assert!(Width::parse(value).is_err(), "{value:?} must be rejected");
+  }
+  assert!(Width::parse("18446744073709551616").is_err());
+}
+
+#[test]
+fn width_rejects_oversized_and_control_byte_values() {
+  assert!(Width::parse("1".repeat(MAX_WIDTH_VALUE_BYTES + 1)).is_err());
+  assert!(Width::parse("1\r\nInjected: yes").is_err());
+  assert!(Width::parse("1\u{7f}").is_err());
+}
+
+#[test]
+fn width_checks_duplicate_values_against_the_bound() {
+  let oversized = "1".repeat(MAX_WIDTH_VALUE_BYTES + 1);
+  assert!(Width::parse_values(["1440", oversized.as_str()]).is_err());
 }
