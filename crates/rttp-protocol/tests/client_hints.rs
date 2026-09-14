@@ -1,6 +1,6 @@
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, Downlink, Dpr, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
-  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
+  AcceptCh, CriticalCh, Downlink, Dpr, Ect, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
+  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
   MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
@@ -177,6 +177,31 @@ fn downlink_checks_duplicate_values_against_the_bound() {
 #[test]
 fn downlink_rejects_non_finite_oversized_digits() {
   assert!(Downlink::parse("9".repeat(400)).is_err());
+}
+
+#[test]
+fn ect_accepts_case_insensitive_tokens_and_canonicalizes_them() {
+  for (value, canonical) in [
+    ("slow-2G", "slow-2g"),
+    ("2G", "2g"),
+    ("3g", "3g"),
+    ("4G", "4g"),
+  ] {
+    let ect = Ect::parse(format!("\t{value} \t")).expect("valid ECT");
+    assert_eq!(canonical, ect.header_value());
+    assert_eq!(ect, Ect::parse(ect.header_value()).expect("ECT roundtrip"));
+  }
+}
+
+#[test]
+fn ect_rejects_invalid_duplicate_oversized_and_list_values() {
+  assert!(Ect::parse_values(["4g", "3g"]).is_err());
+  assert!(Ect::parse("4g, 3g").is_err());
+  assert!(Ect::parse("5g").is_err());
+  assert!(Ect::parse("").is_err());
+  assert!(Ect::parse("4g\r\nInjected: yes").is_err());
+  assert!(Ect::parse("4g\u{7f}").is_err());
+  assert!(Ect::parse("a".repeat(MAX_ECT_VALUE_BYTES + 1)).is_err());
 }
 
 #[test]

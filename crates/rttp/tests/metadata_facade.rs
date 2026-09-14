@@ -13,15 +13,15 @@ use rttp::server::{
   HttpCrossOriginResourcePolicy, HttpDeltaBase, HttpDeltaBaseParseError, HttpDeprecation,
   HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDestination,
   HttpDestinationParseError, HttpDnt, HttpDntParseError, HttpEarlyData, HttpEarlyDataParseError,
-  HttpEntityTag, HttpExpectations, HttpFrom, HttpFromParseError, HttpIdempotencyKey,
-  HttpIdempotencyKeyParseError, HttpIf, HttpIfModifiedSince, HttpIfScheduleTagMatch,
-  HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError,
-  HttpMaxForwards, HttpMediaType, HttpMediaTypeParameter, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError,
-  HttpNel, HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginTrialParseError,
-  HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError,
-  HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpEct, HttpEctParseError, HttpEntityTag, HttpExpectations, HttpFrom, HttpFromParseError,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfModifiedSince,
+  HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken,
+  HttpLockTokenParseError, HttpMaxForwards, HttpMediaType, HttpMediaTypeParameter,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective,
+  HttpNegotiateParseError, HttpNel, HttpOriginAgentCluster, HttpOriginAgentClusterParseError,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpSameSite,
@@ -88,6 +88,18 @@ fn compatibility_facade_exports_viewport_width_request_metadata() {
     .viewport_width()
     .expect_err("malformed Viewport-Width should fail");
   assert_eq!(Some("1.0"), malformed.header("Viewport-Width"));
+}
+
+#[test]
+fn compatibility_facade_exports_ect_request_metadata() {
+  let request = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: 4G\r\n\r\n")
+    .expect("ECT request should parse");
+  let ect: HttpEct = request
+    .ect()
+    .expect("ECT should parse")
+    .expect("ECT should be present");
+  assert_eq!("4g", ect.header_value());
+  let _: HttpEctParseError = HttpEct::parse("5g").expect_err("invalid ECT should fail");
 }
 
 #[cfg(feature = "client")]
