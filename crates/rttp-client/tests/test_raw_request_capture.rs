@@ -5981,6 +5981,78 @@ fn raw_width_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn viewport_width_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("viewport-width", "2"))
+      .viewport_width("\t1440\t")
+      .expect("Viewport-Width should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("1440"), header_value(&request, "Viewport-Width"));
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line.to_ascii_lowercase().starts_with("viewport-width:"))
+      .count(),
+    "typed Viewport-Width should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn viewport_width_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "1".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    "-1",
+    "+1",
+    "1.0",
+    "1e1",
+    "1, 2",
+    "18446744073709551616",
+    "1\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .viewport_width(value)
+        .expect_err("invalid Viewport-Width input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Viewport-Width input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_viewport_width_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Viewport-Width", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request, "Viewport-Width")
+  );
+}
+
+#[test]
 fn dnt_helper_emits_defined_preference_tokens() {
   let request = capture_request(|base_url| {
     client()

@@ -1,6 +1,7 @@
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, Downlink, Dpr, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
-  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  AcceptCh, CriticalCh, Downlink, Dpr, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
+  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
+  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -228,4 +229,60 @@ fn width_rejects_oversized_and_control_byte_values() {
 fn width_checks_duplicate_values_against_the_bound() {
   let oversized = "1".repeat(MAX_WIDTH_VALUE_BYTES + 1);
   assert!(Width::parse_values(["1440", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn viewport_width_parses_non_negative_integer_and_round_trips() {
+  for (value, expected) in [
+    ("0", 0),
+    ("1", 1),
+    ("1440", 1440),
+    ("4294967296", 4294967296),
+    ("18446744073709551615", u64::MAX),
+  ] {
+    let viewport_width = ViewportWidth::parse(value).expect("valid Viewport-Width");
+    assert_eq!(expected, viewport_width.value());
+    assert_eq!(value, viewport_width.header_value());
+    assert_eq!(
+      viewport_width,
+      ViewportWidth::parse(viewport_width.header_value()).expect("Viewport-Width roundtrip")
+    );
+    assert_eq!(viewport_width, ViewportWidth::new(expected));
+  }
+}
+
+#[test]
+fn viewport_width_trims_outer_optional_whitespace() {
+  let viewport_width = ViewportWidth::parse("\t 1440 \t").expect("OWS-padded Viewport-Width");
+  assert_eq!(1440, viewport_width.value());
+  assert_eq!("1440", viewport_width.header_value());
+}
+
+#[test]
+fn viewport_width_rejects_malformed_duplicate_empty_and_overflow_values() {
+  assert!(ViewportWidth::parse_values(["1", "2"]).is_err());
+  assert!(ViewportWidth::parse_values([]).is_err());
+
+  for value in [
+    "", " ", "-0", "-1", "+1", "1.0", "1e1", "1E1", "1, 2", "1 5", "1\0",
+  ] {
+    assert!(
+      ViewportWidth::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+  assert!(ViewportWidth::parse("18446744073709551616").is_err());
+}
+
+#[test]
+fn viewport_width_rejects_oversized_and_control_byte_values() {
+  assert!(ViewportWidth::parse("1".repeat(MAX_VIEWPORT_WIDTH_VALUE_BYTES + 1)).is_err());
+  assert!(ViewportWidth::parse("1\r\nInjected: yes").is_err());
+  assert!(ViewportWidth::parse("1{7f}").is_err());
+}
+
+#[test]
+fn viewport_width_checks_duplicate_values_against_the_bound() {
+  let oversized = "1".repeat(MAX_VIEWPORT_WIDTH_VALUE_BYTES + 1);
+  assert!(ViewportWidth::parse_values(["1440", oversized.as_str()]).is_err());
 }
