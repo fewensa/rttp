@@ -126,6 +126,12 @@ fn compatibility_facade_roundtrips_accept_post_metadata_over_http11() {
 #[test]
 #[cfg(any(feature = "all", feature = "client"))]
 fn compatibility_facade_reexports_client_hints_response_metadata() {
+  let downlink: rttp::Downlink = rttp::Downlink::parse("10.25").expect("Downlink should parse");
+  assert_eq!(10.25, downlink.mbps());
+  assert_eq!("10.25", downlink.header_value());
+  let _: rttp::DownlinkParseError =
+    rttp::Downlink::parse("-1").expect_err("negative Downlink should fail");
+
   let width: rttp::Width = rttp::Width::parse("1440").expect("Width should parse");
   assert_eq!(1440, width.value());
   let _: rttp::WidthParseError =

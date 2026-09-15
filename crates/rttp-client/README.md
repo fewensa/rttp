@@ -1366,6 +1366,18 @@ This helper declares metadata only; it does not negotiate content, emit
 `Accept-CH`, or generate Client Hints automatically. Raw values remain
 available through `header(("DPR", "..."))`.
 
+## Bounded Downlink request Client Hint metadata
+
+`HttpClient::downlink(value)` validates and emits one bounded `Downlink`
+request field through the shared `Downlink` type, replacing any existing
+case-insensitive field. `Downlink::mbps()` exposes the non-negative finite
+decimal Mbps value and `Downlink::header_value()` returns the trimmed decimal
+text. Invalid, negative, non-finite, malformed, control-byte, duplicate, and
+oversized values are rejected before connecting. This helper declares metadata
+only; it does not negotiate content, emit `Accept-CH`, or generate Client Hints
+automatically. Raw values remain available through
+`header(("Downlink", "..."))`.
+
 ## Bounded ECT request Client Hint metadata
 
 `HttpClient::ect(value)` validates and emits one bounded `ECT` request field

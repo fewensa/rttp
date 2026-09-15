@@ -114,6 +114,56 @@ fn sync_client_and_server_exchange_case_insensitive_ect_metadata() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_canonical_downlink_metadata() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Downlink server");
+  let addr = server.local_addr().expect("Downlink server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request.header("Downlink").map(str::to_string),
+          request
+            .downlink()
+            .map(|downlink| downlink.map(|downlink| downlink.header_value()))
+            .map_err(|error| error.to_string()),
+          request
+            .downlink()
+            .ok()
+            .flatten()
+            .map(|downlink| downlink.mbps()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Downlink metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Downlink metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .downlink("\t10.25 ")
+    .expect("Downlink should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (
+      Some("10.25".to_string()),
+      Ok(Some("10.25".to_string())),
+      Some(10.25)
+    ),
+    observed_rx
+      .recv()
+      .expect("server should observe Downlink metadata")
+  );
+  handle.join().expect("Downlink server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_canonical_rtt_metadata() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind RTT server");
   let addr = server.local_addr().expect("RTT server addr");

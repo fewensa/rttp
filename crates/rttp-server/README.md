@@ -491,6 +491,14 @@ return `HttpDprParseError` while `Request::header("DPR")` preserves the raw
 value. This is metadata-only: the server does not negotiate content or emit
 Client Hints automatically.
 
+`Request::downlink()` and `HttpRequest::downlink()` parse a singleton
+`Downlink` request Client Hint into `HttpDownlink`, exposing its non-negative
+finite decimal Mbps value through `mbps()` and the trimmed wire value through
+`header_value()`. Malformed, negative, non-finite, duplicate, control-byte, or
+oversized fields return `HttpDownlinkParseError` while the raw `Downlink` field
+remains available. This is metadata-only: the server does not negotiate
+content, emit Client Hints automatically, or change transport.
+
 `Request::ect()` parses a singleton `ECT` request Client Hint into
 `HttpEct`, accepting only `slow-2g`, `2g`, `3g`, and `4g` after trimming
 optional SP or HTAB and exposing the canonical token through
