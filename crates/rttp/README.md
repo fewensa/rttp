@@ -618,6 +618,19 @@ and preserved text. Parse errors leave the raw header available, and raw
 expose metadata: RTTP does not negotiate content, emit `Accept-CH`, generate
 Client Hints automatically, retry, or change transport.
 
+## Bounded Device-Memory request Client Hint metadata
+
+With the client feature, `HttpClient::device_memory(value)` validates and emits
+one singleton `Device-Memory` request field through `rttp::DeviceMemory`,
+replacing any existing case-insensitive field. On the server facade,
+`Request::device_memory()` and `HttpRequest::device_memory()` parse received
+fields into `HttpDeviceMemory`; `gib()` and `header_value()` expose the
+non-negative finite decimal GiB value and preserved text. Parse errors leave
+the raw header available, and raw `header(("Device-Memory", "..."))` remains
+an escape hatch. These helpers only expose metadata: RTTP does not negotiate
+content, emit `Accept-CH`, generate Client Hints automatically, adapt
+representations, retry, or change transport.
+
 ## Bounded ECT request Client Hint metadata
 
 With the client feature, `HttpClient::ect(value)` validates and emits one

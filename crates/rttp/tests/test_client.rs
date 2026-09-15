@@ -132,6 +132,13 @@ fn compatibility_facade_reexports_client_hints_response_metadata() {
   let _: rttp::DownlinkParseError =
     rttp::Downlink::parse("-1").expect_err("negative Downlink should fail");
 
+  let device_memory: rttp::DeviceMemory =
+    rttp::DeviceMemory::parse("8").expect("Device-Memory should parse");
+  assert_eq!(8.0, device_memory.gib());
+  assert_eq!("8", device_memory.header_value());
+  let _: rttp::DeviceMemoryParseError =
+    rttp::DeviceMemory::parse("-1").expect_err("negative Device-Memory should fail");
+
   let width: rttp::Width = rttp::Width::parse("1440").expect("Width should parse");
   assert_eq!(1440, width.value());
   let _: rttp::WidthParseError =

@@ -636,6 +636,17 @@ malformed, duplicate, negative, non-finite, control-byte, and oversized values
 are errors. This parser reports request metadata only; it does not negotiate
 content, emit Client Hints, or change transport.
 
+## Device-Memory
+
+`client_hints::DeviceMemory` parses a singleton HTTP `Device-Memory` request
+Client Hint as a non-negative finite decimal GiB value. The field value is
+bounded to 64 KiB, optional outer SP and HTAB are trimmed, and the accepted
+decimal text is preserved by `header_value()`; `gib()` exposes the parsed
+value. Empty, malformed, duplicate, negative, non-finite, control-byte, and
+oversized values are errors. This parser reports request metadata only; it
+does not negotiate content, emit Client Hints, adapt representations, or
+change transport.
+
 ## Width
 
 `client_hints::Width` parses a singleton HTTP `Width` request Client Hint as a

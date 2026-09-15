@@ -1904,6 +1904,7 @@ gain additional HTTP/2 header-block handling.
 | Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, CORS policy, or Private Network Access policy |
 | DPR request Client Hint | `HttpClient::dpr` emits bounded singleton `DPR` request metadata through `Dpr`; server `Request::dpr()` and `HttpRequest::dpr()` parse received fields as `HttpDpr` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
 | Downlink request Client Hint | `HttpClient::downlink` emits bounded singleton `Downlink` request metadata through `Downlink`; server `Request::downlink()` and `HttpRequest::downlink()` parse non-negative finite decimal Mbps values while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
+| Device-Memory request Client Hint | `HttpClient::device_memory` emits bounded singleton `Device-Memory` request metadata through `DeviceMemory`; server `Request::device_memory()` and `HttpRequest::device_memory()` parse non-negative finite decimal GiB values while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, content adaptation, retry, or transport changes |
 | ECT request Client Hint | `HttpClient::ect` emits bounded singleton `ECT` request metadata through `Ect` using tokens `slow-2g`, `2g`, `3g`, and `4g`; server `Request::ect()` and `HttpRequest::ect()` parse received fields as `HttpEct` while preserving raw values on errors | No network-condition inference, `Accept-CH` emission, Client Hints policy persistence, automatic Client Hints generation, retry, or transport changes |
 | Width request Client Hint | `HttpClient::width` emits bounded singleton `Width` request metadata through `Width`; server `Request::width()` and `HttpRequest::width()` parse received fields as `HttpWidth` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or content adaptation |
 | Viewport-Width request Client Hint | `HttpClient::viewport_width` emits bounded singleton `Viewport-Width` request metadata through `ViewportWidth`; server `Request::viewport_width()` and `HttpRequest::viewport_width()` parse received fields as `HttpViewportWidth` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, viewport tracking, or content adaptation |
@@ -1930,6 +1931,7 @@ gain additional HTTP/2 header-block handling.
 | Content-DPR | `Response::content_dpr` and `ContentDpr::parse` parse bounded singleton response `Content-DPR` decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | DPR | `Dpr::parse`, `HttpClient::dpr`, `Request::dpr`, and `HttpRequest::dpr` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
 | Downlink | `Downlink::parse`, `HttpClient::downlink`, `Request::downlink`, and `HttpRequest::downlink` validate, emit, or parse bounded singleton non-negative finite decimal Mbps request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
+| Device-Memory | `DeviceMemory::parse`, `HttpClient::device_memory`, `Request::device_memory`, and `HttpRequest::device_memory` validate, emit, or parse bounded singleton non-negative finite decimal GiB request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, content adaptation, retry, or transport changes |
 | ECT | `Ect::parse`, `HttpClient::ect`, `Request::ect`, and `HttpRequest::ect` validate, emit, or parse bounded singleton `slow-2g`/`2g`/`3g`/`4g` request Client Hint metadata while preserving raw headers on errors | No network-condition inference, `Accept-CH` emission, Client Hints policy persistence, automatic Client Hints generation, retry, or transport changes |
 | Width | `Width::parse`, `HttpClient::width`, `Request::width`, and `HttpRequest::width` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or content adaptation |
 | Viewport-Width | `ViewportWidth::parse`, `HttpClient::viewport_width`, `Request::viewport_width`, and `HttpRequest::viewport_width` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, viewport tracking, or content adaptation |
@@ -2754,6 +2756,22 @@ for unvalidated values.
 These helpers are metadata-only. RTTP does not negotiate content, emit
 `Accept-CH`, generate Client Hints automatically, retry, replay, redirect, or
 change transport from `Downlink`.
+
+### Bounded Device-Memory request Client Hint metadata
+
+`HttpClient::device_memory(value)` validates and emits one singleton
+`Device-Memory` request Client Hint through the shared `DeviceMemory` type.
+`Request::device_memory()` and `HttpRequest::device_memory()` parse received
+fields into `HttpDeviceMemory`, exposing the non-negative finite decimal GiB
+value with `gib()` and the trimmed decimal text with `header_value()`. Invalid,
+duplicate, non-finite, negative, control-byte, and oversized values return
+parser errors while raw headers remain available;
+`header(("Device-Memory", "..."))` remains an escape hatch for unvalidated
+values.
+
+These helpers are metadata-only. RTTP does not negotiate content, emit
+`Accept-CH`, generate Client Hints automatically, adapt representations, retry,
+replay, redirect, or change transport from `Device-Memory`.
 
 ### Bounded ECT request Client Hint metadata
 

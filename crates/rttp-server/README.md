@@ -499,6 +499,15 @@ oversized fields return `HttpDownlinkParseError` while the raw `Downlink` field
 remains available. This is metadata-only: the server does not negotiate
 content, emit Client Hints automatically, or change transport.
 
+`Request::device_memory()` and `HttpRequest::device_memory()` parse a singleton
+`Device-Memory` request Client Hint into `HttpDeviceMemory`, exposing its
+non-negative finite decimal GiB value through `gib()` and the trimmed wire
+value through `header_value()`. Malformed, negative, non-finite, duplicate,
+control-byte, or oversized fields return `HttpDeviceMemoryParseError` while
+the raw `Device-Memory` field remains available. This is metadata-only: the
+server does not negotiate content, emit Client Hints automatically, adapt
+representations, or change transport.
+
 `Request::ect()` parses a singleton `ECT` request Client Hint into
 `HttpEct`, accepting only `slow-2g`, `2g`, `3g`, and `4g` after trimming
 optional SP or HTAB and exposing the canonical token through

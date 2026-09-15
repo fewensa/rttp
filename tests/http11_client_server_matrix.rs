@@ -164,6 +164,53 @@ fn sync_client_and_server_exchange_canonical_downlink_metadata() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_canonical_device_memory_metadata() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Device-Memory server");
+  let addr = server.local_addr().expect("Device-Memory server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request.header("Device-Memory").map(str::to_string),
+          request
+            .device_memory()
+            .map(|device_memory| device_memory.map(|device_memory| device_memory.header_value()))
+            .map_err(|error| error.to_string()),
+          request
+            .device_memory()
+            .ok()
+            .flatten()
+            .map(|device_memory| device_memory.gib()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Device-Memory metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Device-Memory metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .device_memory("\t8 ")
+    .expect("Device-Memory should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (Some("8".to_string()), Ok(Some("8".to_string())), Some(8.0)),
+    observed_rx
+      .recv()
+      .expect("server should observe Device-Memory metadata")
+  );
+  handle.join().expect("Device-Memory server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_canonical_rtt_metadata() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind RTT server");
   let addr = server.local_addr().expect("RTT server addr");

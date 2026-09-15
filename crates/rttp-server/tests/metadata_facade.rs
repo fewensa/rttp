@@ -20,17 +20,18 @@ use rttp_server::server::{
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeltaBase,
   HttpDeltaBaseParseError, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
-  HttpDepthParseError, HttpDnt, HttpDntParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
-  HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
-  HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
-  HttpDocumentPolicyValue, HttpDownlink, HttpDownlinkParseError, HttpDpr, HttpDprParseError,
-  HttpEarlyData, HttpEarlyDataParseError, HttpEct, HttpEctParseError, HttpEntityTag,
-  HttpExpectParseError, HttpExpectations, HttpExpiresParseError, HttpFrom, HttpFromParseError,
-  HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList,
-  HttpIfModifiedSince, HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate,
-  HttpIfResourceTag, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
-  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter,
-  HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
+  HttpDepthParseError, HttpDeviceMemory, HttpDeviceMemoryParseError, HttpDnt, HttpDntParseError,
+  HttpDocumentPolicy, HttpDocumentPolicyDirective, HttpDocumentPolicyParseError,
+  HttpDocumentPolicyReportOnly, HttpDocumentPolicyReportOnlyParseError,
+  HttpDocumentPolicyReportOnlyValue, HttpDocumentPolicyValue, HttpDownlink, HttpDownlinkParseError,
+  HttpDpr, HttpDprParseError, HttpEarlyData, HttpEarlyDataParseError, HttpEct, HttpEctParseError,
+  HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpExpiresParseError, HttpFrom,
+  HttpFromParseError, HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf,
+  HttpIfCondition, HttpIfList, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
+  HttpIfParseError, HttpIfPredicate, HttpIfResourceTag, HttpIfScheduleTagMatch,
+  HttpIfScheduleTagMatchParseError, HttpIfStateToken, HttpIfUnmodifiedSince,
+  HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter, HttpImParseError,
+  HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
   HttpNegotiateDirective, HttpNegotiateParseError, HttpNoVarySearch, HttpNoVarySearchParams,
   HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginTrialParseError,
@@ -1912,6 +1913,60 @@ fn request_facade_parses_downlink_metadata_without_negotiation() {
   assert_eq!(Some("1"), duplicate.header("Downlink"));
 
   let _: HttpDownlinkParseError = HttpDownlink::parse("").expect_err("empty Downlink should fail");
+}
+
+#[test]
+fn request_facade_parses_device_memory_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDevice-Memory: \t8 \t\r\n\r\n",
+  )
+  .expect("Device-Memory request should parse");
+  let device_memory: HttpDeviceMemory = request
+    .device_memory()
+    .expect("Device-Memory should parse")
+    .expect("Device-Memory should be present");
+  assert_eq!(8.0, device_memory.gib());
+  assert_eq!("8", device_memory.header_value());
+  assert_eq!(Some("8"), request.header("Device-Memory"));
+
+  let zero =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDevice-Memory: 0\r\n\r\n")
+      .expect("zero Device-Memory request should parse");
+  assert_eq!(
+    0.0,
+    zero
+      .device_memory()
+      .expect("zero Device-Memory should parse")
+      .expect("zero Device-Memory should be present")
+      .gib()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Device-Memory should parse");
+  assert_eq!(
+    None,
+    absent
+      .device_memory()
+      .expect("missing Device-Memory should be valid")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDevice-Memory: 1e1\r\n\r\n")
+      .expect("malformed Device-Memory request should retain raw metadata");
+  assert!(malformed.device_memory().is_err());
+  assert_eq!(Some("1e1"), malformed.header("Device-Memory"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDevice-Memory: 1\r\nDevice-Memory: 2\r\n\r\n",
+  )
+  .expect("duplicate Device-Memory request should retain raw metadata");
+  let _: HttpDeviceMemoryParseError = duplicate
+    .device_memory()
+    .expect_err("duplicate Device-Memory should fail");
+  assert_eq!(Some("1"), duplicate.header("Device-Memory"));
+
+  let _: HttpDeviceMemoryParseError =
+    HttpDeviceMemory::parse("").expect_err("empty Device-Memory should fail");
 }
 
 #[test]
