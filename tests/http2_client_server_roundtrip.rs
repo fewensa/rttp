@@ -527,6 +527,182 @@ fn h2c_rtt_helper_reaches_server_accessor() {
 }
 
 #[test]
+fn h2c_downlink_helper_reaches_server_accessor() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c Downlink server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.target().to_string(),
+          request.header("Downlink").map(str::to_string),
+          request
+            .downlink()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value()))
+            .map_err(|error| error.to_string()),
+          request
+            .downlink()
+            .ok()
+            .flatten()
+            .map(|metadata| metadata.mbps()),
+        ))
+        .expect("record Downlink");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve h2c Downlink request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .downlink("\t10.25\t")
+    .expect("Downlink should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (
+      "/asset".to_string(),
+      Some("10.25".to_string()),
+      Ok(Some("10.25".to_string())),
+      Some(10.25)
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded Downlink")
+  );
+  handle.join().expect("h2c Downlink server thread");
+}
+
+#[test]
+fn h2c_malformed_downlink_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c malformed Downlink server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("Downlink").map(str::to_string),
+          request.downlink().is_err(),
+        ))
+        .expect("record malformed Downlink");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve malformed h2c Downlink request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Downlink", "1e1"))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some("1e1".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded malformed Downlink")
+  );
+  handle.join().expect("malformed h2c Downlink server thread");
+}
+
+#[test]
+fn h2c_duplicate_downlink_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c duplicate Downlink server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("Downlink").map(str::to_string),
+          request.downlink().is_err(),
+        ))
+        .expect("record duplicate Downlink");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve duplicate h2c Downlink request");
+  });
+
+  let authority = addr.to_string();
+  let _stream = send_h2c_prior_knowledge_headers(
+    addr,
+    &[
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", "/asset"),
+      (":authority", authority.as_str()),
+      ("Downlink", "1"),
+      ("downlink", "2"),
+    ],
+  );
+
+  assert_eq!(
+    (Some("1".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded duplicate Downlink")
+  );
+  handle.join().expect("duplicate h2c Downlink server thread");
+}
+
+#[test]
+fn h2c_oversized_downlink_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c oversized Downlink server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)))
+    .with_http2_policy(Http2ServerPolicy::new().with_max_header_list_size(256 * 1024));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let raw = request.header("Downlink").map(str::to_string);
+        tx.send((
+          raw.as_ref().map(String::len),
+          request.downlink().is_err(),
+          raw.is_some(),
+        ))
+        .expect("record oversized Downlink");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve oversized h2c Downlink request");
+  });
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Downlink", oversized.as_str()))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some(64 * 1024 + 1), true, true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded oversized Downlink")
+  );
+  handle.join().expect("oversized h2c Downlink server thread");
+}
+
+#[test]
 fn h2c_malformed_dnt_reaches_server_accessor() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c malformed DNT server")

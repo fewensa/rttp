@@ -606,6 +606,18 @@ case-insensitive field. On the server facade, `Request::dpr()` and
 the raw header available. These helpers only expose metadata: RTTP does not
 negotiate content, emit `Accept-CH`, or generate Client Hints automatically.
 
+## Bounded Downlink request Client Hint metadata
+
+With the client feature, `HttpClient::downlink(value)` validates and emits one
+singleton `Downlink` request field through `rttp::Downlink`, replacing any
+existing case-insensitive field. On the server facade, `Request::downlink()`
+and `HttpRequest::downlink()` parse received fields into `HttpDownlink`;
+`mbps()` and `header_value()` expose the non-negative finite decimal Mbps value
+and preserved text. Parse errors leave the raw header available, and raw
+`header(("Downlink", "..."))` remains an escape hatch. These helpers only
+expose metadata: RTTP does not negotiate content, emit `Accept-CH`, generate
+Client Hints automatically, retry, or change transport.
+
 ## Bounded ECT request Client Hint metadata
 
 With the client feature, `HttpClient::ect(value)` validates and emits one
