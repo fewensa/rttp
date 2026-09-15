@@ -39,33 +39,33 @@ use rttp_server::server::{
   HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpPrefersColorScheme,
-  HttpPrefersColorSchemeParseError, HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError,
-  HttpProxyAuthenticate, HttpProxyAuthenticateChallenge, HttpProxyAuthenticateParameter,
-  HttpProxyAuthenticateParseError, HttpProxyAuthenticationInfo,
-  HttpProxyAuthenticationInfoParameter, HttpProxyAuthenticationInfoParseError,
-  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit,
-  HttpRateLimitLimitItem, HttpRateLimitLimitParseError, HttpRateLimitParseError,
-  HttpRateLimitRemaining, HttpRateLimitRemainingParseError, HttpRateLimitReset,
-  HttpRateLimitResetParseError, HttpReferer, HttpRefererParseError, HttpRequest,
-  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpResponseDate,
-  HttpResponseDateParseError, HttpResponseExpires, HttpResponseLastModified,
-  HttpResponseLastModifiedParseError, HttpRetryAfter, HttpRetryAfterParseError, HttpRtt,
-  HttpRttParseError, HttpSameSite, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag,
-  HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
-  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
-  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
-  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
-  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpPrefersColorSchemeParseError, HttpPrefersContrast, HttpPrefersContrastParseError,
+  HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError, HttpProxyAuthenticate,
+  HttpProxyAuthenticateChallenge, HttpProxyAuthenticateParameter, HttpProxyAuthenticateParseError,
+  HttpProxyAuthenticationInfo, HttpProxyAuthenticationInfoParameter,
+  HttpProxyAuthenticationInfoParseError, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
+  HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
+  HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
+  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
+  HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
+  HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
+  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
+  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
   HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
   HttpViaParseError, HttpViewportWidth, HttpViewportWidthParseError, HttpWantContentDigest,
@@ -1973,6 +1973,58 @@ fn request_facade_parses_prefers_reduced_motion_metadata_without_negotiation() {
     HttpPrefersReducedMotion::parse("reduce\0").expect_err("control byte should fail");
   assert!(
     HttpPrefersReducedMotion::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized value should fail"
+  );
+}
+
+#[test]
+fn request_facade_parses_prefers_contrast_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nsec-ch-prefers-contrast: \tMoRe \t\r\n\r\n",
+  )
+  .expect("Prefers-Contrast request should parse");
+  let contrast: HttpPrefersContrast = request
+    .prefers_contrast()
+    .expect("Prefers-Contrast should parse")
+    .expect("Prefers-Contrast should be present");
+  assert_eq!("more", contrast.header_value());
+  assert_eq!(Some("MoRe"), request.header("Sec-CH-Prefers-Contrast"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Prefers-Contrast should parse");
+  assert_eq!(
+    None,
+    absent
+      .prefers_contrast()
+      .expect("missing Prefers-Contrast should be valid")
+  );
+
+  for value in ["", "auto", "more, less"] {
+    let raw = format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: {value}\r\n\r\n"
+    );
+    let malformed = HttpRequest::parse(raw.as_bytes())
+      .expect("malformed Prefers-Contrast should remain available");
+    let _: HttpPrefersContrastParseError = malformed
+      .prefers_contrast()
+      .expect_err("malformed Prefers-Contrast should fail");
+    assert_eq!(Some(value), malformed.header("Sec-CH-Prefers-Contrast"));
+  }
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: no-preference\r\nsec-ch-prefers-contrast: custom\r\n\r\n",
+  )
+  .expect("duplicate Prefers-Contrast request should retain raw metadata");
+  assert!(duplicate.prefers_contrast().is_err());
+  assert_eq!(
+    Some("no-preference"),
+    duplicate.header("Sec-CH-Prefers-Contrast")
+  );
+
+  let _: HttpPrefersContrastParseError =
+    HttpPrefersContrast::parse("more\0").expect_err("control byte should fail");
+  assert!(
+    HttpPrefersContrast::parse("a".repeat(64 * 1024 + 1)).is_err(),
     "oversized value should fail"
   );
 }

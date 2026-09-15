@@ -1907,6 +1907,7 @@ gain additional HTTP/2 header-block handling.
 | Device-Memory request Client Hint | `HttpClient::device_memory` emits bounded singleton `Device-Memory` request metadata through `DeviceMemory`; server `Request::device_memory()` and `HttpRequest::device_memory()` parse non-negative finite decimal GiB values while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, content adaptation, retry, or transport changes |
 | Sec-CH-Prefers-Color-Scheme request Client Hint | `HttpClient::prefers_color_scheme` emits bounded singleton `Sec-CH-Prefers-Color-Scheme` metadata through `PrefersColorScheme`; server `Request::prefers_color_scheme()` and `HttpRequest::prefers_color_scheme()` parse case-insensitive `light`/`dark` tokens and preserve raw values on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-Prefers-Reduced-Motion request Client Hint | `HttpClient::prefers_reduced_motion` emits bounded singleton `Sec-CH-Prefers-Reduced-Motion` metadata through `PrefersReducedMotion`; server `Request::prefers_reduced_motion()` and `HttpRequest::prefers_reduced_motion()` parse case-insensitive `no-preference`/`reduce` tokens and preserve raw values on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
+| Sec-CH-Prefers-Contrast request Client Hint | `HttpClient::prefers_contrast` emits a bounded (64 KiB) singleton `Sec-CH-Prefers-Contrast` metadata field through `PrefersContrast`; server `Request::prefers_contrast()` and `HttpRequest::prefers_contrast()` parse case-insensitive `no-preference`/`more`/`less`/`custom` tokens and preserve raw values on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | ECT request Client Hint | `HttpClient::ect` emits bounded singleton `ECT` request metadata through `Ect` using tokens `slow-2g`, `2g`, `3g`, and `4g`; server `Request::ect()` and `HttpRequest::ect()` parse received fields as `HttpEct` while preserving raw values on errors | No network-condition inference, `Accept-CH` emission, Client Hints policy persistence, automatic Client Hints generation, retry, or transport changes |
 | Width request Client Hint | `HttpClient::width` emits bounded singleton `Width` request metadata through `Width`; server `Request::width()` and `HttpRequest::width()` parse received fields as `HttpWidth` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or content adaptation |
 | Viewport-Width request Client Hint | `HttpClient::viewport_width` emits bounded singleton `Viewport-Width` request metadata through `ViewportWidth`; server `Request::viewport_width()` and `HttpRequest::viewport_width()` parse received fields as `HttpViewportWidth` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, viewport tracking, or content adaptation |
@@ -1936,6 +1937,7 @@ gain additional HTTP/2 header-block handling.
 | Device-Memory | `DeviceMemory::parse`, `HttpClient::device_memory`, `Request::device_memory`, and `HttpRequest::device_memory` validate, emit, or parse bounded singleton non-negative finite decimal GiB request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, content adaptation, retry, or transport changes |
 | Sec-CH-Prefers-Color-Scheme | `PrefersColorScheme::parse`, `HttpClient::prefers_color_scheme`, `Request::prefers_color_scheme`, and `HttpRequest::prefers_color_scheme` validate, emit, or parse bounded singleton `light`/`dark` request Client Hint metadata with case-insensitive parsing and lowercase formatting while preserving raw headers on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-Prefers-Reduced-Motion | `PrefersReducedMotion::parse`, `HttpClient::prefers_reduced_motion`, `Request::prefers_reduced_motion`, and `HttpRequest::prefers_reduced_motion` validate, emit, or parse bounded singleton `no-preference`/`reduce` request Client Hint metadata with case-insensitive parsing and lowercase formatting while preserving raw headers on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
+| Sec-CH-Prefers-Contrast | `PrefersContrast::parse`, `HttpClient::prefers_contrast`, `Request::prefers_contrast`, and `HttpRequest::prefers_contrast` validate, emit, or parse bounded (64 KiB) singleton `no-preference`/`more`/`less`/`custom` request Client Hint metadata with case-insensitive parsing and lowercase formatting while preserving raw headers on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | ECT | `Ect::parse`, `HttpClient::ect`, `Request::ect`, and `HttpRequest::ect` validate, emit, or parse bounded singleton `slow-2g`/`2g`/`3g`/`4g` request Client Hint metadata while preserving raw headers on errors | No network-condition inference, `Accept-CH` emission, Client Hints policy persistence, automatic Client Hints generation, retry, or transport changes |
 | Width | `Width::parse`, `HttpClient::width`, `Request::width`, and `HttpRequest::width` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or content adaptation |
 | Viewport-Width | `ViewportWidth::parse`, `HttpClient::viewport_width`, `Request::viewport_width`, and `HttpRequest::viewport_width` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, viewport tracking, or content adaptation |
@@ -2809,6 +2811,23 @@ an escape hatch.
 These helpers are metadata-only. RTTP does not infer a user preference, adapt
 content, negotiate `Accept-CH`, generate Client Hints automatically, retry,
 replay, redirect, or apply browser policy from `Sec-CH-Prefers-Reduced-Motion`.
+
+### Bounded Sec-CH-Prefers-Contrast request Client Hint metadata
+
+`HttpClient::prefers_contrast(value)` validates and emits one singleton
+`Sec-CH-Prefers-Contrast` request Client Hint, bounded to 64 KiB, through the shared
+`PrefersContrast` type. `Request::prefers_contrast()` and
+`HttpRequest::prefers_contrast()` parse received fields into
+`HttpPrefersContrast`, accepting `no-preference`, `more`, `less`, and `custom`
+case-insensitively after trimming optional SP or HTAB and exposing lowercase
+canonical text through `header_value()`. Empty, unknown, comma-list, duplicate,
+control-byte, and oversized values return parser errors while raw headers
+remain available; `header(("Sec-CH-Prefers-Contrast", "..."))` remains an
+escape hatch.
+
+These helpers are metadata-only. RTTP does not infer a user preference, adapt
+content, negotiate `Accept-CH`, generate Client Hints automatically, retry,
+replay, redirect, or apply browser policy from `Sec-CH-Prefers-Contrast`.
 
 ### Bounded ECT request Client Hint metadata
 

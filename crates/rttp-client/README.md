@@ -1418,6 +1418,19 @@ content, negotiate `Accept-CH`, generate Client Hints automatically, retry, or
 apply browser policy. Raw values remain available through
 `header(("Sec-CH-Prefers-Reduced-Motion", "..."))`.
 
+## Bounded Sec-CH-Prefers-Contrast request Client Hint metadata
+
+`HttpClient::prefers_contrast(value)` validates and emits one bounded (64 KiB)
+`Sec-CH-Prefers-Contrast` request field through the shared `PrefersContrast`
+type, replacing any existing case-insensitive field. `PrefersContrast::parse()`
+accepts `no-preference`, `more`, `less`, and `custom` case-insensitively with
+optional surrounding SP or HTAB, while `header_value()` emits lowercase
+canonical text. Empty, unknown, comma-list, duplicate, control-byte, and
+oversized values are rejected before connecting. This helper declares metadata
+only; it does not infer a preference, adapt content, negotiate `Accept-CH`,
+generate Client Hints automatically, retry, or apply browser policy. Raw values
+remain available through `header(("Sec-CH-Prefers-Contrast", "..."))`.
+
 ## Bounded ECT request Client Hint metadata
 
 `HttpClient::ect(value)` validates and emits one bounded `ECT` request field

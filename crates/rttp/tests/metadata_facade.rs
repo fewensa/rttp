@@ -22,29 +22,29 @@ use rttp::server::{
   HttpNegotiateParseError, HttpNel, HttpOriginAgentCluster, HttpOriginAgentClusterParseError,
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpPrefersColorScheme,
-  HttpPrefersColorSchemeParseError, HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError,
-  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit,
-  HttpRateLimitLimitItem, HttpRateLimitLimitParseError, HttpRateLimitParseError,
-  HttpRateLimitRemaining, HttpRateLimitRemainingParseError, HttpRateLimitReset,
-  HttpRateLimitResetParseError, HttpReferer, HttpRefererParseError, HttpRequest,
-  HttpRequestAcceptCharsets, HttpResponse, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
-  HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
-  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
-  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn,
-  HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
-  HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
-  HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember, HttpUserAgentParseError,
-  HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpViewportWidth,
-  HttpViewportWidthParseError, HttpWidth, HttpWidthParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpPrefersColorSchemeParseError, HttpPrefersContrast, HttpPrefersContrastParseError,
+  HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
+  HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
+  HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
+  HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
+  HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
+  HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError,
+  HttpViewportWidth, HttpViewportWidthParseError, HttpWidth, HttpWidthParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -203,6 +203,43 @@ fn compatibility_facade_exports_prefers_reduced_motion_request_metadata() {
     Some("no-preference"),
     duplicate.header("Sec-CH-Prefers-Reduced-Motion")
   );
+}
+
+#[test]
+fn compatibility_facade_exports_prefers_contrast_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: \tLeSs \t\r\n\r\n",
+  )
+  .expect("Prefers-Contrast request should parse");
+  let contrast: HttpPrefersContrast = request
+    .prefers_contrast()
+    .expect("Prefers-Contrast should parse")
+    .expect("Prefers-Contrast should be present");
+  assert_eq!("less", contrast.header_value());
+  assert_eq!(Some("LeSs"), request.header("Sec-CH-Prefers-Contrast"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Prefers-Contrast should parse");
+  assert_eq!(
+    None,
+    absent.prefers_contrast().expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: auto\r\n\r\n",
+  )
+  .expect("malformed Prefers-Contrast should remain available");
+  let _: HttpPrefersContrastParseError = malformed
+    .prefers_contrast()
+    .expect_err("unknown Prefers-Contrast should fail");
+  assert_eq!(Some("auto"), malformed.header("Sec-CH-Prefers-Contrast"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: more\r\nsec-ch-prefers-contrast: less\r\n\r\n",
+  )
+  .expect("duplicate Prefers-Contrast fields should remain parseable");
+  assert!(duplicate.prefers_contrast().is_err());
+  assert_eq!(Some("more"), duplicate.header("Sec-CH-Prefers-Contrast"));
 }
 
 #[test]

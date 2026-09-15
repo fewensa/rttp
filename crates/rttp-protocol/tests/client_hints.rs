@@ -1,10 +1,10 @@
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersReducedMotion,
-  Rtt, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
-  MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
-  MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES,
-  MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES,
-  MAX_WIDTH_VALUE_BYTES,
+  AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
+  PrefersReducedMotion, Rtt, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
+  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES,
+  MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES,
+  MAX_PREFERS_CONTRAST_VALUE_BYTES, MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES,
+  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -336,6 +336,62 @@ fn prefers_reduced_motion_rejects_invalid_duplicate_oversized_and_control_values
   let oversized = "a".repeat(MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES + 1);
   assert!(PrefersReducedMotion::parse(&oversized).is_err());
   assert!(PrefersReducedMotion::parse_values(["reduce", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn prefers_contrast_accepts_case_insensitive_tokens_and_canonicalizes_them() {
+  assert_eq!(
+    "no-preference",
+    PrefersContrast::NoPreference.header_value()
+  );
+  assert_eq!("more", PrefersContrast::More.header_value());
+  assert_eq!("less", PrefersContrast::Less.header_value());
+  assert_eq!("custom", PrefersContrast::Custom.header_value());
+
+  for (value, expected, canonical) in [
+    (
+      "No-Preference",
+      PrefersContrast::NoPreference,
+      "no-preference",
+    ),
+    ("MORE", PrefersContrast::More, "more"),
+    ("LeSs", PrefersContrast::Less, "less"),
+    ("CuStOm", PrefersContrast::Custom, "custom"),
+  ] {
+    let contrast =
+      PrefersContrast::parse(format!("\t{value} \t")).expect("valid prefers-contrast value");
+    assert_eq!(expected, contrast);
+    assert_eq!(canonical, contrast.header_value());
+    assert_eq!(
+      contrast,
+      PrefersContrast::parse(contrast.header_value()).expect("roundtrip")
+    );
+  }
+}
+
+#[test]
+fn prefers_contrast_rejects_invalid_duplicate_oversized_and_control_values() {
+  assert!(PrefersContrast::parse_values(["more", "less"]).is_err());
+  assert!(PrefersContrast::parse_values([]).is_err());
+
+  for value in [
+    "",
+    " ",
+    "auto",
+    "more, less",
+    "more\0",
+    "more\r\nInjected: yes",
+    "less\u{7f}",
+  ] {
+    assert!(
+      PrefersContrast::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let oversized = "a".repeat(MAX_PREFERS_CONTRAST_VALUE_BYTES + 1);
+  assert!(PrefersContrast::parse(&oversized).is_err());
+  assert!(PrefersContrast::parse_values(["custom", oversized.as_str()]).is_err());
 }
 
 #[test]
