@@ -2123,10 +2123,17 @@ pub fn bind_socket2_tcp_listener(name: &str) -> (TcpListener, SocketAddr) {
   (listener, addr)
 }
 
+#[derive(Clone, Copy)]
+enum HttpRequestFraming {
+  HeaderOnly,
+  FixedLength(usize),
+  Chunked(usize),
+}
+
 pub fn read_http_request<R: Read>(stream: &mut R) -> Vec<u8> {
   let mut request = Vec::new();
   let mut buf = [0u8; 1024];
-  let mut content_length = None;
+  let mut framing = None;
 
   while let Ok(read) = stream.read(&mut buf) {
     if read == 0 {
@@ -2135,33 +2142,93 @@ pub fn read_http_request<R: Read>(stream: &mut R) -> Vec<u8> {
 
     request.extend_from_slice(&buf[..read]);
 
-    let header_end = request.windows(4).position(|window| window == b"\r\n\r\n");
-    if content_length.is_none() {
-      if let Some(header_end) = header_end {
-        let headers = String::from_utf8_lossy(&request[..header_end + 4]);
-        content_length = headers
-          .lines()
-          .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            if name.eq_ignore_ascii_case("content-length") {
-              value.trim().parse::<usize>().ok()
-            } else {
-              None
-            }
-          })
-          .or(Some(0));
+    if framing.is_none() {
+      if let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+        framing = Some(request_framing(&request[..header_end + 4], header_end + 4));
       }
     }
 
-    if let (Some(header_end), Some(content_length)) = (header_end, content_length) {
-      let expected_len = header_end + 4 + content_length;
-      if request.len() >= expected_len {
-        break;
+    match framing {
+      Some(HttpRequestFraming::HeaderOnly) => break,
+      Some(HttpRequestFraming::FixedLength(expected_len)) if request.len() >= expected_len => break,
+      Some(HttpRequestFraming::Chunked(body_start))
+        if chunked_request_end(&request, body_start).is_some() =>
+      {
+        break
       }
+      _ => {}
     }
   }
 
   request
+}
+
+fn request_framing(headers: &[u8], body_start: usize) -> HttpRequestFraming {
+  let headers = String::from_utf8_lossy(headers);
+  if headers.lines().any(|line| {
+    let Some((name, value)) = line.split_once(':') else {
+      return false;
+    };
+    name.eq_ignore_ascii_case("transfer-encoding")
+      && value
+        .split(',')
+        .any(|coding| coding.trim().eq_ignore_ascii_case("chunked"))
+  }) {
+    return HttpRequestFraming::Chunked(body_start);
+  }
+
+  let content_length = headers.lines().find_map(|line| {
+    let (name, value) = line.split_once(':')?;
+    if name.eq_ignore_ascii_case("content-length") {
+      value.trim().parse::<usize>().ok()
+    } else {
+      None
+    }
+  });
+
+  content_length
+    .map(|length| HttpRequestFraming::FixedLength(body_start.saturating_add(length)))
+    .unwrap_or(HttpRequestFraming::HeaderOnly)
+}
+
+fn chunked_request_end(request: &[u8], body_start: usize) -> Option<usize> {
+  let mut cursor = body_start;
+
+  loop {
+    let line_end = find_crlf(request, cursor)?;
+    let size = request[cursor..line_end]
+      .split(|byte| *byte == b';')
+      .next()
+      .and_then(|size| std::str::from_utf8(size).ok())
+      .and_then(|size| usize::from_str_radix(size.trim(), 16).ok())?;
+    cursor = line_end.checked_add(2)?;
+
+    if size == 0 {
+      if request.get(cursor..)?.starts_with(b"\r\n") {
+        return cursor.checked_add(2);
+      }
+
+      let trailer_end = request[cursor..]
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")?;
+      return cursor.checked_add(trailer_end)?.checked_add(4);
+    }
+
+    let data_end = cursor.checked_add(size)?;
+    let chunk_end = data_end.checked_add(2)?;
+    if request.len() < chunk_end || &request[data_end..chunk_end] != b"\r\n" {
+      return None;
+    }
+    cursor = chunk_end;
+  }
+}
+
+fn find_crlf(bytes: &[u8], start: usize) -> Option<usize> {
+  bytes
+    .get(start..)?
+    .windows(2)
+    .position(|window| window == b"\r\n")
+    .map(|position| start + position)
 }
 
 pub fn spawn_socket2_raw_response_server(
@@ -2261,7 +2328,7 @@ fn request_content_length(request: &[u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-  use super::{request, serve_expect_continue_stream};
+  use super::{read_http_request, request, serve_expect_continue_stream};
   use std::io::{self, Read, Write};
 
   struct InMemoryStream {
@@ -2296,6 +2363,70 @@ mod tests {
     fn flush(&mut self) -> io::Result<()> {
       Ok(())
     }
+  }
+
+  struct FragmentedReader {
+    read: Vec<u8>,
+    fragment_size: usize,
+  }
+
+  impl FragmentedReader {
+    fn new(read: &[u8], fragment_size: usize) -> Self {
+      Self {
+        read: read.to_vec(),
+        fragment_size,
+      }
+    }
+  }
+
+  impl Read for FragmentedReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+      let read = self.fragment_size.min(buf.len()).min(self.read.len());
+      buf[..read].copy_from_slice(&self.read[..read]);
+      self.read.drain(..read);
+      Ok(read)
+    }
+  }
+
+  #[test]
+  fn read_http_request_captures_chunked_body_and_trailers() {
+    let fixture = request::chunked_with_extensions_and_trailers();
+    let mut stream = FragmentedReader::new(fixture.raw, 3);
+
+    let captured = read_http_request(&mut stream);
+
+    assert_eq!(fixture.raw, captured.as_slice());
+  }
+
+  #[test]
+  fn read_http_request_returns_truncated_chunked_input() {
+    let fixture = request::chunked_with_extensions_and_trailers();
+    let truncated = &fixture.raw[..fixture.raw.len() - 2];
+    let mut stream = FragmentedReader::new(truncated, 2);
+
+    let captured = read_http_request(&mut stream);
+
+    assert_eq!(truncated, captured.as_slice());
+  }
+
+  #[test]
+  fn read_http_request_preserves_fixed_length_framing() {
+    let fixture = request::fixed_length_post();
+    let mut stream = FragmentedReader::new(fixture.raw, 4);
+
+    let captured = read_http_request(&mut stream);
+
+    assert_eq!(fixture.raw, captured.as_slice());
+  }
+
+  #[test]
+  fn read_http_request_preserves_header_only_framing() {
+    let raw = b"GET /matrix HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    let mut stream = FragmentedReader::new(raw, 1);
+
+    let captured = read_http_request(&mut stream);
+
+    assert_eq!(raw, captured.as_slice());
   }
 
   #[test]
