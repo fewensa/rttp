@@ -181,6 +181,9 @@ fn downlink_rejects_non_finite_oversized_digits() {
 
 #[test]
 fn ect_accepts_case_insensitive_tokens_and_canonicalizes_them() {
+  const FOUR_G_HEADER: &str = Ect::FourG.header_value();
+  assert_eq!("4g", FOUR_G_HEADER);
+
   for (value, canonical) in [
     ("sLoW-2G", "slow-2g"),
     ("2G", "2g"),

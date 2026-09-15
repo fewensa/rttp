@@ -1903,6 +1903,7 @@ gain additional HTTP/2 header-block handling.
 | Accept-Language | Client `accept_language` emits bounded `Accept-Language` request metadata through the protocol `AcceptLanguage` type; server `Request::accept_language()` and `HttpRequest::accept_language()` parse typed received values as `HttpAcceptLanguages` while preserving raw headers on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, CORS policy, or Private Network Access policy |
 | DPR request Client Hint | `HttpClient::dpr` emits bounded singleton `DPR` request metadata through `Dpr`; server `Request::dpr()` and `HttpRequest::dpr()` parse received fields as `HttpDpr` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
+| ECT request Client Hint | `HttpClient::ect` emits bounded singleton `ECT` request metadata through `Ect` using tokens `slow-2g`, `2g`, `3g`, and `4g`; server `Request::ect()` and `HttpRequest::ect()` parse received fields as `HttpEct` while preserving raw values on errors | No network-condition inference, `Accept-CH` emission, Client Hints policy persistence, automatic Client Hints generation, retry, or transport changes |
 | Width request Client Hint | `HttpClient::width` emits bounded singleton `Width` request metadata through `Width`; server `Request::width()` and `HttpRequest::width()` parse received fields as `HttpWidth` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or content adaptation |
 | Viewport-Width request Client Hint | `HttpClient::viewport_width` emits bounded singleton `Viewport-Width` request metadata through `ViewportWidth`; server `Request::viewport_width()` and `HttpRequest::viewport_width()` parse received fields as `HttpViewportWidth` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, viewport tracking, or content adaptation |
 | Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
@@ -1926,6 +1927,7 @@ gain additional HTTP/2 header-block handling.
 | Service-Worker-Allowed | `Response::service_worker_allowed` and `ServiceWorkerAllowed::parse` parse bounded singleton response `Service-Worker-Allowed` path metadata while preserving raw headers | No service-worker registration, scope evaluation, script-URL resolution, or application routing policy |
 | Content-DPR | `Response::content_dpr` and `ContentDpr::parse` parse bounded singleton response `Content-DPR` decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | DPR | `Dpr::parse`, `HttpClient::dpr`, `Request::dpr`, and `HttpRequest::dpr` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
+| ECT | `Ect::parse`, `HttpClient::ect`, `Request::ect`, and `HttpRequest::ect` validate, emit, or parse bounded singleton `slow-2g`/`2g`/`3g`/`4g` request Client Hint metadata while preserving raw headers on errors | No network-condition inference, `Accept-CH` emission, Client Hints policy persistence, automatic Client Hints generation, retry, or transport changes |
 | Width | `Width::parse`, `HttpClient::width`, `Request::width`, and `HttpRequest::width` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or content adaptation |
 | Viewport-Width | `ViewportWidth::parse`, `HttpClient::viewport_width`, `Request::viewport_width`, and `HttpRequest::viewport_width` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, viewport tracking, or content adaptation |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
@@ -2734,6 +2736,19 @@ These helpers are metadata-only. RTTP does not negotiate content, emit
 `Accept-CH`, generate Client Hints automatically, retry, replay, redirect, or
 change transport from `DPR`.
 
+### Bounded ECT request Client Hint metadata
+
+`HttpClient::ect(value)` validates and emits one singleton `ECT` request
+Client Hint through the shared `Ect` type. `Request::ect()` and
+`HttpRequest::ect()` parse received fields into `HttpEct`, accepting only the
+tokens `slow-2g`, `2g`, `3g`, and `4g` after trimming optional SP or HTAB and
+exposing the canonical token with `header_value()`. Invalid, unknown,
+comma-list, duplicate, control-byte, and oversized values return parser
+errors while raw headers remain available.
+
+These helpers are metadata-only. RTTP does not infer network conditions, emit
+`Accept-CH`, persist Client Hints policy, generate Client Hints automatically,
+retry, replay, redirect, or change transport from `ECT`.
 ### Bounded Width request Client Hint metadata
 
 `HttpClient::width(value)` validates and emits one singleton `Width` request
