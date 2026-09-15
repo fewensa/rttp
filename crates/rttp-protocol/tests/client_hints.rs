@@ -1,10 +1,10 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
-  PrefersReducedMotion, Rtt, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
+  PrefersReducedMotion, Rtt, SecChUaMobile, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
   MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES,
   MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES,
   MAX_PREFERS_CONTRAST_VALUE_BYTES, MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES,
-  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  MAX_SEC_CH_UA_MOBILE_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -284,6 +284,59 @@ fn prefers_color_scheme_rejects_invalid_duplicate_oversized_and_control_values()
   let oversized = "a".repeat(MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES + 1);
   assert!(PrefersColorScheme::parse(&oversized).is_err());
   assert!(PrefersColorScheme::parse_values(["light", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn sec_ch_ua_mobile_accepts_ows_around_structured_boolean_tokens_and_canonicalizes_them() {
+  assert_eq!("?0", SecChUaMobile::NotMobile.header_value());
+  assert_eq!("?1", SecChUaMobile::Mobile.header_value());
+  assert!(!SecChUaMobile::NotMobile.is_mobile());
+  assert!(SecChUaMobile::Mobile.is_mobile());
+
+  for (value, expected, canonical) in [
+    ("?0", SecChUaMobile::NotMobile, "?0"),
+    ("?1", SecChUaMobile::Mobile, "?1"),
+  ] {
+    let mobile =
+      SecChUaMobile::parse(format!("\t{value} \t")).expect("valid Sec-CH-UA-Mobile value");
+    assert_eq!(expected, mobile);
+    assert_eq!(canonical, mobile.header_value());
+    assert_eq!(
+      mobile,
+      SecChUaMobile::parse(mobile.header_value()).expect("roundtrip")
+    );
+  }
+}
+
+#[test]
+fn sec_ch_ua_mobile_rejects_invalid_duplicate_oversized_and_control_values() {
+  assert!(SecChUaMobile::parse_values(["?0", "?1"]).is_err());
+  assert!(SecChUaMobile::parse_values([]).is_err());
+
+  for value in [
+    "",
+    " ",
+    "true",
+    "false",
+    "?2",
+    "?1, ?1",
+    "?1;foo=?1",
+    "(?1)",
+    "\"?1\"",
+    "1",
+    "?1\0",
+    "?1\r\nInjected: yes",
+    "?1\u{7f}",
+  ] {
+    assert!(
+      SecChUaMobile::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let oversized = "a".repeat(MAX_SEC_CH_UA_MOBILE_VALUE_BYTES + 1);
+  assert!(SecChUaMobile::parse(&oversized).is_err());
+  assert!(SecChUaMobile::parse_values(["?1", oversized.as_str()]).is_err());
 }
 
 #[test]

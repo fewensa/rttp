@@ -136,7 +136,8 @@ pub use rttp_protocol::client_hints::{
   DeviceMemory, DeviceMemoryParseError, Downlink, DownlinkParseError, Dpr, DprParseError, Ect,
   EctParseError, PrefersColorScheme, PrefersColorSchemeParseError, PrefersContrast,
   PrefersContrastParseError, PrefersReducedMotion, PrefersReducedMotionParseError, Rtt,
-  RttParseError, ViewportWidth, ViewportWidthParseError, Width, WidthParseError,
+  RttParseError, SecChUaMobile, SecChUaMobileParseError, ViewportWidth, ViewportWidthParseError,
+  Width, WidthParseError,
 };
 pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
 pub use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};

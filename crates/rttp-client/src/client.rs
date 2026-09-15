@@ -23,7 +23,7 @@ use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::client_hints::{
   DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast, PrefersReducedMotion, Rtt,
-  ViewportWidth, Width,
+  SecChUaMobile, ViewportWidth, Width,
 };
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -566,6 +566,22 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-CH-Prefers-Color-Scheme",
       prefers_color_scheme.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-CH-UA-Mobile` request Client Hint metadata.
+  ///
+  /// The value must be the Structured Fields boolean token `?0` or `?1`, with
+  /// optional surrounding HTTP optional whitespace. This replaces any existing
+  /// case-insensitive `Sec-CH-UA-Mobile` field and only declares request
+  /// metadata; RTTP does not infer a mobile preference, negotiate the UA brands
+  /// family, emit `Accept-CH`, or generate this header automatically.
+  pub fn sec_ch_ua_mobile<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_ch_ua_mobile = SecChUaMobile::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-CH-UA-Mobile",
+      sec_ch_ua_mobile.header_value(),
     )))
   }
 

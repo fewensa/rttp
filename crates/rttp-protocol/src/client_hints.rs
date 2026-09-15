@@ -7,6 +7,7 @@ pub const MAX_DPR_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DOWNLINK_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DEVICE_MEMORY_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_MOBILE_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_CONTRAST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
@@ -37,6 +38,13 @@ pub struct DeviceMemory {
 pub enum PrefersColorScheme {
   Light,
   Dark,
+}
+
+/// Parsed, bounded `Sec-CH-UA-Mobile` request Client Hint metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SecChUaMobile {
+  NotMobile,
+  Mobile,
 }
 
 /// Parsed, bounded `Sec-CH-Prefers-Reduced-Motion` request Client Hint metadata.
@@ -99,6 +107,7 @@ pub type DprParseError = ClientHintsParseError;
 pub type DownlinkParseError = ClientHintsParseError;
 pub type DeviceMemoryParseError = ClientHintsParseError;
 pub type PrefersColorSchemeParseError = ClientHintsParseError;
+pub type SecChUaMobileParseError = ClientHintsParseError;
 pub type PrefersReducedMotionParseError = ClientHintsParseError;
 pub type PrefersContrastParseError = ClientHintsParseError;
 pub type EctParseError = ClientHintsParseError;
@@ -225,6 +234,38 @@ impl PrefersColorScheme {
     match self {
       Self::Light => "light",
       Self::Dark => "dark",
+    }
+  }
+}
+
+impl SecChUaMobile {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, SecChUaMobileParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, SecChUaMobileParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let value = parse_sec_ch_ua_mobile_singleton(values)?;
+    let value = value.trim_matches([' ', '\t']);
+    if value == "?0" {
+      Ok(Self::NotMobile)
+    } else if value == "?1" {
+      Ok(Self::Mobile)
+    } else {
+      Err(invalid_sec_ch_ua_mobile_value())
+    }
+  }
+
+  pub const fn is_mobile(self) -> bool {
+    matches!(self, Self::Mobile)
+  }
+
+  pub const fn header_value(self) -> &'static str {
+    match self {
+      Self::NotMobile => "?0",
+      Self::Mobile => "?1",
     }
   }
 }
@@ -678,6 +719,43 @@ fn validate_bounded_prefers_color_scheme_value(
   Ok(())
 }
 
+fn parse_sec_ch_ua_mobile_singleton<'a, I>(values: I) -> Result<&'a str, SecChUaMobileParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values.next().ok_or_else(invalid_sec_ch_ua_mobile_value)?;
+  validate_bounded_sec_ch_ua_mobile_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_sec_ch_ua_mobile_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(
+      "duplicate Sec-CH-UA-Mobile header fields",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_bounded_sec_ch_ua_mobile_value(value: &str) -> Result<(), SecChUaMobileParseError> {
+  if value.len() > MAX_SEC_CH_UA_MOBILE_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-UA-Mobile header value is too large",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-UA-Mobile control byte",
+    ));
+  }
+  Ok(())
+}
+
 fn parse_prefers_reduced_motion_singleton<'a, I>(
   values: I,
 ) -> Result<&'a str, PrefersReducedMotionParseError>
@@ -943,6 +1021,10 @@ fn invalid_device_memory_value() -> DeviceMemoryParseError {
 
 fn invalid_prefers_color_scheme_value() -> PrefersColorSchemeParseError {
   ClientHintsParseError::new("invalid Sec-CH-Prefers-Color-Scheme header value")
+}
+
+fn invalid_sec_ch_ua_mobile_value() -> SecChUaMobileParseError {
+  ClientHintsParseError::new("invalid Sec-CH-UA-Mobile header value")
 }
 
 fn invalid_prefers_reduced_motion_value() -> PrefersReducedMotionParseError {
