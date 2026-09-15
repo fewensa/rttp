@@ -18,6 +18,11 @@ use rttp::server::{
   HttpScheduleTag, HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
 };
 
+use rttp::server::{
+  HttpAccessControlExposeHeaders, HttpAccessControlExposeHeadersParseError,
+  HttpAccessControlMaxAge, HttpAccessControlMaxAgeParseError,
+};
+
 #[test]
 fn response_schedule_tag_helper_validates_and_preserves_raw_headers() {
   let schedule_tag = HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
@@ -111,6 +116,39 @@ fn response_access_control_allow_methods_helper_validates_and_preserves_raw_head
       .access_control_allow_methods()
       .expect("absent Access-Control-Allow-Methods should parse")
   );
+}
+
+#[test]
+fn response_access_control_expose_headers_and_max_age_are_available_through_compatibility_facade() {
+  let response = HttpResponse::ok("body")
+    .header("Access-Control-Expose-Headers", "X-Legacy")
+    .header("Access-Control-Max-Age", "60")
+    .with_access_control_expose_headers("X-Request-Id, ETag")
+    .expect("Access-Control-Expose-Headers should be accepted")
+    .with_access_control_max_age("600")
+    .expect("Access-Control-Max-Age should be accepted");
+
+  let expose_headers: HttpAccessControlExposeHeaders = response
+    .access_control_expose_headers()
+    .expect("Access-Control-Expose-Headers should parse")
+    .expect("Access-Control-Expose-Headers should be present");
+  assert_eq!(expose_headers.field_names(), ["x-request-id", "etag"]);
+  let max_age: HttpAccessControlMaxAge = response
+    .access_control_max_age()
+    .expect("Access-Control-Max-Age should parse")
+    .expect("Access-Control-Max-Age should be present");
+  assert_eq!(600, max_age.seconds());
+
+  let _: HttpAccessControlExposeHeadersParseError =
+    HttpAccessControlExposeHeaders::parse("X-Request Id")
+      .expect_err("malformed Access-Control-Expose-Headers should fail");
+  let _: HttpAccessControlMaxAgeParseError = HttpAccessControlMaxAge::parse("sixty")
+    .expect_err("malformed Access-Control-Max-Age should fail");
+  assert!(HttpResponse::ok("")
+    .header("Access-Control-Max-Age", "60")
+    .header("access-control-max-age", "120")
+    .access_control_max_age()
+    .is_err());
 }
 
 #[test]

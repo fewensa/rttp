@@ -30,6 +30,14 @@ pub use rttp_protocol::access_control_allow_private_network::{
   AccessControlAllowPrivateNetwork as HttpAccessControlAllowPrivateNetwork,
   AccessControlAllowPrivateNetworkParseError as HttpAccessControlAllowPrivateNetworkParseError,
 };
+pub use rttp_protocol::access_control_expose_headers::{
+  AccessControlExposeHeaders as HttpAccessControlExposeHeaders,
+  AccessControlExposeHeadersParseError as HttpAccessControlExposeHeadersParseError,
+};
+pub use rttp_protocol::access_control_max_age::{
+  AccessControlMaxAge as HttpAccessControlMaxAge,
+  AccessControlMaxAgeParseError as HttpAccessControlMaxAgeParseError,
+};
 pub use rttp_protocol::allow::{
   Allow as HttpAllowedMethods, AllowParseError as HttpAllowParseError,
 };
@@ -1435,6 +1443,42 @@ impl HttpResponse {
     self.headers.push(HttpHeader::new(
       "Access-Control-Allow-Headers",
       allow_headers.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Access-Control-Expose-Headers` response metadata
+  /// without applying CORS policy.
+  pub fn with_access_control_expose_headers(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAccessControlExposeHeadersParseError> {
+    let expose_headers = HttpAccessControlExposeHeaders::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Access-Control-Expose-Headers")
+    });
+    self.headers.push(HttpHeader::new(
+      "Access-Control-Expose-Headers",
+      expose_headers.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Access-Control-Max-Age` response metadata without
+  /// applying CORS policy.
+  pub fn with_access_control_max_age(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAccessControlMaxAgeParseError> {
+    let max_age = HttpAccessControlMaxAge::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Access-Control-Max-Age"));
+    self.headers.push(HttpHeader::new(
+      "Access-Control-Max-Age",
+      max_age.header_value(),
     ));
     Ok(self)
   }
@@ -2873,6 +2917,44 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAccessControlAllowHeaders::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Access-Control-Expose-Headers` response metadata without
+  /// applying CORS policy.
+  pub fn access_control_expose_headers(
+    &self,
+  ) -> Result<Option<HttpAccessControlExposeHeaders>, HttpAccessControlExposeHeadersParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Access-Control-Expose-Headers")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlExposeHeaders::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Access-Control-Max-Age` response metadata without
+  /// applying CORS policy.
+  pub fn access_control_max_age(
+    &self,
+  ) -> Result<Option<HttpAccessControlMaxAge>, HttpAccessControlMaxAgeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Access-Control-Max-Age"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlMaxAge::parse_values(values).map(Some)
   }
 
   /// Parses attached `Cross-Origin-Resource-Policy` response metadata without

@@ -3735,6 +3735,142 @@ fn access_control_allow_headers_helpers_validate_replace_and_parse_response_meta
 }
 
 #[test]
+fn access_control_expose_headers_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Access-Control-Expose-Headers", "X-Legacy")
+    .header("access-control-expose-headers", "X-Deprecated")
+    .with_access_control_expose_headers("X-Request-Id, ETag")
+    .expect("Access-Control-Expose-Headers should be accepted");
+
+  let expose_headers = response
+    .access_control_expose_headers()
+    .expect("Access-Control-Expose-Headers should parse")
+    .expect("Access-Control-Expose-Headers should be present");
+  assert_eq!(["x-request-id", "etag"], expose_headers.field_names());
+  assert_eq!(
+    vec![(
+      "Access-Control-Expose-Headers",
+      "x-request-id, etag"
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .access_control_expose_headers()
+      .expect("absent Access-Control-Expose-Headers should parse")
+  );
+
+  let malformed = HttpResponse::ok([]).header("Access-Control-Expose-Headers", "X-Request Id");
+  assert!(malformed.access_control_expose_headers().is_err());
+  assert_eq!(
+    Some("X-Request Id"),
+    malformed
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Access-Control-Expose-Headers"))
+      .map(|header| header.value.as_str())
+  );
+  assert!(HttpResponse::ok([])
+    .with_access_control_expose_headers("X-Request Id")
+    .is_err());
+
+  let duplicate = HttpResponse::ok([])
+    .header("Access-Control-Expose-Headers", "X-Request-Id")
+    .header("access-control-expose-headers", "x-request-id, ETag");
+  assert_eq!(
+    ["x-request-id", "etag"],
+    duplicate
+      .access_control_expose_headers()
+      .expect("duplicate Access-Control-Expose-Headers values should parse")
+      .expect("Access-Control-Expose-Headers should be present")
+      .field_names()
+  );
+
+  let unchanged = HttpResponse::ok([]).header("Access-Control-Expose-Headers", "X-Legacy");
+  assert!(unchanged
+    .clone()
+    .with_access_control_expose_headers("X-Request Id")
+    .is_err());
+  assert_eq!(
+    vec![("Access-Control-Expose-Headers", "X-Legacy")],
+    unchanged
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn access_control_max_age_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Access-Control-Max-Age", "60")
+    .header("access-control-max-age", "120")
+    .with_access_control_max_age(" 600 ")
+    .expect("Access-Control-Max-Age should be accepted");
+
+  let max_age = response
+    .access_control_max_age()
+    .expect("Access-Control-Max-Age should parse")
+    .expect("Access-Control-Max-Age should be present");
+  assert_eq!(600, max_age.seconds());
+  assert_eq!(
+    vec![("Access-Control-Max-Age", "600")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .access_control_max_age()
+      .expect("absent Access-Control-Max-Age should parse")
+  );
+
+  let malformed = HttpResponse::ok([]).header("Access-Control-Max-Age", "sixty");
+  assert!(malformed.access_control_max_age().is_err());
+  assert_eq!(
+    Some("sixty"),
+    malformed
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Access-Control-Max-Age"))
+      .map(|header| header.value.as_str())
+  );
+  assert!(HttpResponse::ok([])
+    .with_access_control_max_age("sixty")
+    .is_err());
+
+  let duplicate = HttpResponse::ok([])
+    .header("Access-Control-Max-Age", "60")
+    .header("access-control-max-age", "120");
+  assert!(duplicate.access_control_max_age().is_err());
+
+  let unchanged = HttpResponse::ok([]).header("Access-Control-Max-Age", "60");
+  assert!(unchanged
+    .clone()
+    .with_access_control_max_age("sixty")
+    .is_err());
+  assert_eq!(
+    vec![("Access-Control-Max-Age", "60")],
+    unchanged
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn access_control_allow_headers_helpers_preserve_raw_metadata_and_report_parse_errors() {
   let malformed = HttpResponse::ok([]).header("Access-Control-Allow-Headers", "X-Request Id");
   assert!(malformed.access_control_allow_headers().is_err());
