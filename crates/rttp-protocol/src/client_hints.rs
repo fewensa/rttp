@@ -8,6 +8,7 @@ pub const MAX_DOWNLINK_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DEVICE_MEMORY_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_PREFERS_CONTRAST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_WIDTH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_VIEWPORT_WIDTH_VALUE_BYTES: usize = 64 * 1024;
@@ -43,6 +44,15 @@ pub enum PrefersColorScheme {
 pub enum PrefersReducedMotion {
   NoPreference,
   Reduce,
+}
+
+/// Parsed, bounded `Sec-CH-Prefers-Contrast` request Client Hint metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PrefersContrast {
+  NoPreference,
+  More,
+  Less,
+  Custom,
 }
 
 /// Parsed, bounded `ECT` request Client Hint metadata.
@@ -90,6 +100,7 @@ pub type DownlinkParseError = ClientHintsParseError;
 pub type DeviceMemoryParseError = ClientHintsParseError;
 pub type PrefersColorSchemeParseError = ClientHintsParseError;
 pub type PrefersReducedMotionParseError = ClientHintsParseError;
+pub type PrefersContrastParseError = ClientHintsParseError;
 pub type EctParseError = ClientHintsParseError;
 pub type WidthParseError = ClientHintsParseError;
 pub type ViewportWidthParseError = ClientHintsParseError;
@@ -242,6 +253,40 @@ impl PrefersReducedMotion {
     match self {
       Self::NoPreference => "no-preference",
       Self::Reduce => "reduce",
+    }
+  }
+}
+
+impl PrefersContrast {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, PrefersContrastParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, PrefersContrastParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let value = parse_prefers_contrast_singleton(values)?;
+    let value = value.trim_matches([' ', '\t']);
+    if value.eq_ignore_ascii_case("no-preference") {
+      Ok(Self::NoPreference)
+    } else if value.eq_ignore_ascii_case("more") {
+      Ok(Self::More)
+    } else if value.eq_ignore_ascii_case("less") {
+      Ok(Self::Less)
+    } else if value.eq_ignore_ascii_case("custom") {
+      Ok(Self::Custom)
+    } else {
+      Err(invalid_prefers_contrast_value())
+    }
+  }
+
+  pub const fn header_value(self) -> &'static str {
+    match self {
+      Self::NoPreference => "no-preference",
+      Self::More => "more",
+      Self::Less => "less",
+      Self::Custom => "custom",
     }
   }
 }
@@ -676,6 +721,43 @@ fn validate_bounded_prefers_reduced_motion_value(
   Ok(())
 }
 
+fn parse_prefers_contrast_singleton<'a, I>(values: I) -> Result<&'a str, PrefersContrastParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values.next().ok_or_else(invalid_prefers_contrast_value)?;
+  validate_bounded_prefers_contrast_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_prefers_contrast_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(
+      "duplicate Sec-CH-Prefers-Contrast header fields",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_bounded_prefers_contrast_value(value: &str) -> Result<(), PrefersContrastParseError> {
+  if value.len() > MAX_PREFERS_CONTRAST_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-Prefers-Contrast header value is too large",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-Prefers-Contrast control byte",
+    ));
+  }
+  Ok(())
+}
+
 fn parse_ect_singleton<'a, I>(values: I) -> Result<&'a str, EctParseError>
 where
   I: IntoIterator<Item = &'a str>,
@@ -865,6 +947,10 @@ fn invalid_prefers_color_scheme_value() -> PrefersColorSchemeParseError {
 
 fn invalid_prefers_reduced_motion_value() -> PrefersReducedMotionParseError {
   ClientHintsParseError::new("invalid Sec-CH-Prefers-Reduced-Motion header value")
+}
+
+fn invalid_prefers_contrast_value() -> PrefersContrastParseError {
+  ClientHintsParseError::new("invalid Sec-CH-Prefers-Contrast header value")
 }
 
 fn invalid_ect_value() -> EctParseError {

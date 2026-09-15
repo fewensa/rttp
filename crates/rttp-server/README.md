@@ -528,6 +528,16 @@ while the raw field remains available. This is metadata-only: the server does
 not infer a preference, adapt content, negotiate `Accept-CH`, retry, or apply
 browser policy.
 
+`Request::prefers_contrast()` and `HttpRequest::prefers_contrast()` parse a
+bounded (64 KiB) singleton `Sec-CH-Prefers-Contrast` request Client Hint into
+`HttpPrefersContrast`, accepting `no-preference`, `more`, `less`, and `custom`
+case-insensitively after optional SP or HTAB trimming and exposing lowercase
+canonical text through `header_value()`. Empty, unknown, comma-list, duplicate,
+control-byte, or oversized fields return `HttpPrefersContrastParseError` while
+the raw field remains available. This is metadata-only: the server does not
+infer a preference, adapt content, negotiate `Accept-CH`, retry, or apply
+browser policy.
+
 `Request::ect()` parses a singleton `ECT` request Client Hint into
 `HttpEct`, accepting only `slow-2g`, `2g`, `3g`, and `4g` after trimming
 optional SP or HTAB and exposing the canonical token through

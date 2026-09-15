@@ -22,8 +22,8 @@ use rttp_protocol::authorization::Authorization;
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::client_hints::{
-  DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersReducedMotion, Rtt, ViewportWidth,
-  Width,
+  DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast, PrefersReducedMotion, Rtt,
+  ViewportWidth, Width,
 };
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -583,6 +583,23 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-CH-Prefers-Reduced-Motion",
       prefers_reduced_motion.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-CH-Prefers-Contrast` request Client Hint metadata.
+  ///
+  /// The value must be the `no-preference`, `more`, `less`, or `custom` token,
+  /// matched case-insensitively with optional surrounding HTTP optional
+  /// whitespace. This replaces any existing case-insensitive
+  /// `Sec-CH-Prefers-Contrast` field and only declares request metadata; RTTP
+  /// does not infer preferences, negotiate content, emit `Accept-CH`, or
+  /// generate this header automatically.
+  pub fn prefers_contrast<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let prefers_contrast = PrefersContrast::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-CH-Prefers-Contrast",
+      prefers_contrast.header_value(),
     )))
   }
 

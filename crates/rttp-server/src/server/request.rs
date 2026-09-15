@@ -52,6 +52,8 @@ pub use rttp_protocol::client_hints::{
   DprParseError as HttpDprParseError, Ect as HttpEct, EctParseError as HttpEctParseError,
   PrefersColorScheme as HttpPrefersColorScheme,
   PrefersColorSchemeParseError as HttpPrefersColorSchemeParseError,
+  PrefersContrast as HttpPrefersContrast,
+  PrefersContrastParseError as HttpPrefersContrastParseError,
   PrefersReducedMotion as HttpPrefersReducedMotion,
   PrefersReducedMotionParseError as HttpPrefersReducedMotionParseError, Rtt as HttpRtt,
   RttParseError as HttpRttParseError, ViewportWidth as HttpViewportWidth,
@@ -557,6 +559,19 @@ impl Request {
       return Ok(None);
     }
     HttpPrefersReducedMotion::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Prefers-Contrast` request Client Hint
+  /// metadata without inferring preferences, negotiating content, or emitting
+  /// Client Hints.
+  pub fn prefers_contrast(
+    &self,
+  ) -> Result<Option<HttpPrefersContrast>, HttpPrefersContrastParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-Prefers-Contrast").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPrefersContrast::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `ECT` request Client Hint metadata without
@@ -2994,6 +3009,24 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpPrefersReducedMotion::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Prefers-Contrast` request Client Hint
+  /// metadata without inferring preferences, negotiating content, or emitting
+  /// Client Hints.
+  pub fn prefers_contrast(
+    &self,
+  ) -> Result<Option<HttpPrefersContrast>, HttpPrefersContrastParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-CH-Prefers-Contrast"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPrefersContrast::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `ECT` request Client Hint metadata without

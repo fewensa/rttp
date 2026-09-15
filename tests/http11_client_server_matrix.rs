@@ -206,6 +206,50 @@ fn sync_client_and_server_exchange_canonical_prefers_reduced_motion_metadata() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_canonical_prefers_contrast_metadata() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Prefers-Contrast server");
+  let addr = server.local_addr().expect("Prefers-Contrast server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .header("Sec-CH-Prefers-Contrast")
+            .map(str::to_string),
+          request
+            .prefers_contrast()
+            .map(|contrast| contrast.map(|contrast| contrast.header_value().to_string()))
+            .map_err(|error| error.to_string()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Prefers-Contrast metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Prefers-Contrast metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .prefers_contrast("\tCuStOm ")
+    .expect("Prefers-Contrast should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (Some("custom".to_string()), Ok(Some("custom".to_string()))),
+    observed_rx
+      .recv()
+      .expect("server should observe Prefers-Contrast metadata")
+  );
+  handle.join().expect("Prefers-Contrast server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_canonical_downlink_metadata() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Downlink server");
   let addr = server.local_addr().expect("Downlink server addr");

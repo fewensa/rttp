@@ -145,6 +145,12 @@ fn compatibility_facade_reexports_client_hints_response_metadata() {
   let _: rttp::PrefersColorSchemeParseError = rttp::PrefersColorScheme::parse("system")
     .expect_err("unknown Prefers-Color-Scheme should fail");
 
+  let prefers_contrast: rttp::PrefersContrast =
+    rttp::PrefersContrast::parse("CuStOm").expect("Prefers-Contrast should parse");
+  assert_eq!("custom", prefers_contrast.header_value());
+  let _: rttp::PrefersContrastParseError =
+    rttp::PrefersContrast::parse("auto").expect_err("unknown Prefers-Contrast should fail");
+
   let prefers_reduced_motion: rttp::PrefersReducedMotion =
     rttp::PrefersReducedMotion::parse("ReDuCe").expect("Prefers-Reduced-Motion should parse");
   assert_eq!("reduce", prefers_reduced_motion.header_value());

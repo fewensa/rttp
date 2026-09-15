@@ -6242,6 +6242,83 @@ fn raw_prefers_reduced_motion_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn prefers_contrast_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-prefers-contrast", "legacy"))
+      .prefers_contrast("\tCuStOm \t")
+      .expect("Sec-CH-Prefers-Contrast should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("custom"),
+    header_value(&request, "Sec-CH-Prefers-Contrast")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| {
+        line
+          .to_ascii_lowercase()
+          .starts_with("sec-ch-prefers-contrast:")
+      })
+      .count(),
+    "typed Sec-CH-Prefers-Contrast should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn prefers_contrast_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    " ",
+    "auto",
+    "more, less",
+    "custom\0",
+    "custom\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .prefers_contrast(value)
+        .expect_err("invalid Sec-CH-Prefers-Contrast input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-Prefers-Contrast input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_prefers_contrast_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-Prefers-Contrast", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request, "Sec-CH-Prefers-Contrast")
+  );
+}
+
+#[test]
 fn raw_dpr_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()
