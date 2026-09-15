@@ -182,9 +182,9 @@ fn downlink_rejects_non_finite_oversized_digits() {
 #[test]
 fn ect_accepts_case_insensitive_tokens_and_canonicalizes_them() {
   for (value, canonical) in [
-    ("slow-2G", "slow-2g"),
+    ("sLoW-2G", "slow-2g"),
     ("2G", "2g"),
-    ("3g", "3g"),
+    ("3G", "3g"),
     ("4G", "4g"),
   ] {
     let ect = Ect::parse(format!("\t{value} \t")).expect("valid ECT");
