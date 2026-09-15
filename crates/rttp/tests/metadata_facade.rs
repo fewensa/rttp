@@ -21,8 +21,9 @@ use rttp::server::{
   HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective,
   HttpNegotiateParseError, HttpNel, HttpOriginAgentCluster, HttpOriginAgentClusterParseError,
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpPrefersColorScheme,
+  HttpPrefersColorSchemeParseError, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
@@ -108,6 +109,51 @@ fn compatibility_facade_exports_rtt_request_metadata() {
       .expect("malformed RTT should remain available");
   let _: HttpRttParseError = malformed.rtt().expect_err("malformed RTT should fail");
   assert_eq!(Some("1.0"), malformed.header("RTT"));
+}
+
+#[test]
+fn compatibility_facade_exports_prefers_color_scheme_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Color-Scheme: \tLiGhT \t\r\n\r\n",
+  )
+  .expect("Prefers-Color-Scheme request should parse");
+  let scheme: HttpPrefersColorScheme = request
+    .prefers_color_scheme()
+    .expect("Prefers-Color-Scheme should parse")
+    .expect("Prefers-Color-Scheme should be present");
+  assert_eq!("light", scheme.header_value());
+  assert_eq!(Some("LiGhT"), request.header("Sec-CH-Prefers-Color-Scheme"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Prefers-Color-Scheme should parse");
+  assert_eq!(
+    None,
+    absent
+      .prefers_color_scheme()
+      .expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Color-Scheme: system\r\n\r\n",
+  )
+  .expect("malformed Prefers-Color-Scheme should remain available");
+  let _: HttpPrefersColorSchemeParseError = malformed
+    .prefers_color_scheme()
+    .expect_err("unknown Prefers-Color-Scheme should fail");
+  assert_eq!(
+    Some("system"),
+    malformed.header("Sec-CH-Prefers-Color-Scheme")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Color-Scheme: light\r\nsec-ch-prefers-color-scheme: dark\r\n\r\n",
+  )
+  .expect("duplicate Prefers-Color-Scheme fields should remain parseable");
+  assert!(duplicate.prefers_color_scheme().is_err());
+  assert_eq!(
+    Some("light"),
+    duplicate.header("Sec-CH-Prefers-Color-Scheme")
+  );
 }
 
 #[test]

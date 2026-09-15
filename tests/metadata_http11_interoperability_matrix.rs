@@ -18,6 +18,7 @@ const REFERER_CANONICAL: &str = "https://shop.example/checkout?step=pay";
 const DPR_CANONICAL: &str = "1.5";
 const DOWNLINK_CANONICAL: &str = "10.25";
 const ECT_CANONICAL: &str = "4g";
+const PREFERS_COLOR_SCHEME_CANONICAL: &str = "dark";
 const RTT_CANONICAL: &str = "150";
 const ORIGIN_AGENT_CLUSTER_CANONICAL: &str = "?1";
 const ACCEPT_PATCH_WIRE: &str = r#"Text/Plain; title="a,b\"c", application/json"#;
@@ -59,6 +60,8 @@ struct ObservedRequestMetadata {
   raw_downlink: Option<String>,
   ect: Result<Option<String>, String>,
   raw_ect: Option<String>,
+  prefers_color_scheme: Result<Option<String>, String>,
+  raw_prefers_color_scheme: Option<String>,
   rtt: Result<Option<String>, String>,
   raw_rtt: Option<String>,
 }
@@ -114,6 +117,13 @@ fn observe_request(request: &Request) -> ObservedRequestMetadata {
       .map(|ect| ect.map(|ect| ect.header_value().to_string()))
       .map_err(|error| error.to_string()),
     raw_ect: request.header("ECT").map(str::to_string),
+    prefers_color_scheme: request
+      .prefers_color_scheme()
+      .map(|scheme| scheme.map(|scheme| scheme.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_prefers_color_scheme: request
+      .header("Sec-CH-Prefers-Color-Scheme")
+      .map(str::to_string),
     rtt: request
       .rtt()
       .map(|rtt| rtt.map(|rtt| rtt.header_value()))
@@ -184,6 +194,8 @@ fn attach_valid_client_metadata(client: &mut HttpClient) -> &mut HttpClient {
     .expect("Downlink should be accepted")
     .ect("\t4G\t")
     .expect("mixed-case ECT should be accepted")
+    .prefers_color_scheme("\tDARK\t")
+    .expect("mixed-case Prefers-Color-Scheme should be accepted")
     .rtt("\t150\t")
     .expect("RTT should be accepted")
 }
@@ -204,6 +216,14 @@ fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
   assert_eq!(Some(DOWNLINK_CANONICAL.to_string()), observed.raw_downlink);
   assert_eq!(Ok(Some(ECT_CANONICAL.to_string())), observed.ect);
   assert_eq!(Some(ECT_CANONICAL.to_string()), observed.raw_ect);
+  assert_eq!(
+    Ok(Some(PREFERS_COLOR_SCHEME_CANONICAL.to_string())),
+    observed.prefers_color_scheme
+  );
+  assert_eq!(
+    Some(PREFERS_COLOR_SCHEME_CANONICAL.to_string()),
+    observed.raw_prefers_color_scheme
+  );
   assert_eq!(Ok(Some(RTT_CANONICAL.to_string())), observed.rtt);
   assert_eq!(Some(RTT_CANONICAL.to_string()), observed.raw_rtt);
 }
@@ -540,6 +560,8 @@ fn http11_absent_metadata_returns_ok_none() {
   assert_eq!(None, observed.raw_downlink);
   assert_eq!(Ok(None), observed.ect);
   assert_eq!(None, observed.raw_ect);
+  assert_eq!(Ok(None), observed.prefers_color_scheme);
+  assert_eq!(None, observed.raw_prefers_color_scheme);
   assert_eq!(Ok(None), observed.rtt);
   assert_eq!(None, observed.raw_rtt);
 
@@ -638,6 +660,18 @@ fn typed_request_helpers_reject_malformed_values_before_connect() {
   });
   reject_before_connect("oversized Device-Memory", |client| {
     client.device_memory("1".repeat(64 * 1024 + 1))
+  });
+  reject_before_connect("unknown Prefers-Color-Scheme", |client| {
+    client.prefers_color_scheme("system")
+  });
+  reject_before_connect("duplicate Prefers-Color-Scheme", |client| {
+    client.prefers_color_scheme("light, dark")
+  });
+  reject_before_connect("Prefers-Color-Scheme with control byte", |client| {
+    client.prefers_color_scheme("light\0")
+  });
+  reject_before_connect("oversized Prefers-Color-Scheme", |client| {
+    client.prefers_color_scheme("a".repeat(64 * 1024 + 1))
   });
   reject_before_connect("malformed ECT", |client| client.ect("5g"));
   reject_before_connect("ECT comma list", |client| client.ect("3g, 4g"));

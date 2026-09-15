@@ -134,8 +134,8 @@ pub use rttp_protocol::accept_datetime::{AcceptDatetime, AcceptDatetimeParseErro
 pub use rttp_protocol::baggage::{Baggage, BaggageMember, BaggageParseError, BaggageProperty};
 pub use rttp_protocol::client_hints::{
   DeviceMemory, DeviceMemoryParseError, Downlink, DownlinkParseError, Dpr, DprParseError, Ect,
-  EctParseError, Rtt, RttParseError, ViewportWidth, ViewportWidthParseError, Width,
-  WidthParseError,
+  EctParseError, PrefersColorScheme, PrefersColorSchemeParseError, Rtt, RttParseError,
+  ViewportWidth, ViewportWidthParseError, Width, WidthParseError,
 };
 pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
 pub use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};

@@ -139,6 +139,12 @@ fn compatibility_facade_reexports_client_hints_response_metadata() {
   let _: rttp::DeviceMemoryParseError =
     rttp::DeviceMemory::parse("-1").expect_err("negative Device-Memory should fail");
 
+  let prefers_color_scheme: rttp::PrefersColorScheme =
+    rttp::PrefersColorScheme::parse("DaRk").expect("Prefers-Color-Scheme should parse");
+  assert_eq!("dark", prefers_color_scheme.header_value());
+  let _: rttp::PrefersColorSchemeParseError = rttp::PrefersColorScheme::parse("system")
+    .expect_err("unknown Prefers-Color-Scheme should fail");
+
   let width: rttp::Width = rttp::Width::parse("1440").expect("Width should parse");
   assert_eq!(1440, width.value());
   let _: rttp::WidthParseError =

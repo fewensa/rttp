@@ -21,7 +21,9 @@ use rttp_protocol::access_control_request_private_network::AccessControlRequestP
 use rttp_protocol::authorization::Authorization;
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
-use rttp_protocol::client_hints::{DeviceMemory, Downlink, Dpr, Ect, Rtt, ViewportWidth, Width};
+use rttp_protocol::client_hints::{
+  DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, Rtt, ViewportWidth, Width,
+};
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
 use rttp_protocol::dnt::Dnt;
@@ -547,6 +549,23 @@ impl HttpClient {
     let device_memory = DeviceMemory::parse(value.as_ref())
       .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
     Ok(self.header(Header::new("Device-Memory", device_memory.header_value())))
+  }
+
+  /// Set bounded `Sec-CH-Prefers-Color-Scheme` request Client Hint metadata.
+  ///
+  /// The value must be the `light` or `dark` token, matched
+  /// case-insensitively with optional surrounding HTTP optional whitespace.
+  /// This replaces any existing case-insensitive
+  /// `Sec-CH-Prefers-Color-Scheme` field and only declares request metadata;
+  /// RTTP does not infer preferences, negotiate content, emit `Accept-CH`, or
+  /// generate this header automatically.
+  pub fn prefers_color_scheme<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let prefers_color_scheme = PrefersColorScheme::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-CH-Prefers-Color-Scheme",
+      prefers_color_scheme.header_value(),
+    )))
   }
 
   /// Set bounded `ECT` request Client Hint metadata.
