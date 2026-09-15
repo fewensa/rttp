@@ -47,8 +47,10 @@ pub use rttp_protocol::cdn_loop::{
   CdnLoopParameter as HttpCdnLoopParameter, CdnLoopParseError as HttpCdnLoopParseError,
 };
 pub use rttp_protocol::client_hints::{
-  Dpr as HttpDpr, DprParseError as HttpDprParseError, Ect as HttpEct,
-  EctParseError as HttpEctParseError,
+  Downlink as HttpDownlink, DownlinkParseError as HttpDownlinkParseError, Dpr as HttpDpr,
+  DprParseError as HttpDprParseError, Ect as HttpEct, EctParseError as HttpEctParseError,
+  ViewportWidth as HttpViewportWidth, ViewportWidthParseError as HttpViewportWidthParseError,
+  Width as HttpWidth, WidthParseError as HttpWidthParseError,
 };
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
@@ -503,14 +505,44 @@ impl Request {
     HttpDpr::parse_values(values).map(Some)
   }
 
+  /// Parses received bounded `Downlink` request Client Hint metadata without
+  /// negotiating content or emitting Client Hints.
+  pub fn downlink(&self) -> Result<Option<HttpDownlink>, HttpDownlinkParseError> {
+    let values: Vec<&str> = self.headers_named("Downlink").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDownlink::parse_values(values).map(Some)
+  }
+
   /// Parses received bounded `ECT` request Client Hint metadata without
-  /// inferring network conditions or emitting Client Hints.
+  /// negotiating content or emitting Client Hints.
   pub fn ect(&self) -> Result<Option<HttpEct>, HttpEctParseError> {
     let values: Vec<&str> = self.headers_named("ECT").collect();
     if values.is_empty() {
       return Ok(None);
     }
     HttpEct::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Width` request Client Hint metadata without
+  /// negotiating content or emitting Client Hints.
+  pub fn width(&self) -> Result<Option<HttpWidth>, HttpWidthParseError> {
+    let values: Vec<&str> = self.headers_named("Width").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpWidth::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Viewport-Width` request Client Hint metadata
+  /// without negotiating content or emitting Client Hints.
+  pub fn viewport_width(&self) -> Result<Option<HttpViewportWidth>, HttpViewportWidthParseError> {
+    let values: Vec<&str> = self.headers_named("Viewport-Width").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpViewportWidth::parse_values(values).map(Some)
   }
 
   /// Parses received `Sec-Fetch-Site` metadata without enforcing browser policy.
@@ -2836,8 +2868,23 @@ impl HttpRequest {
     HttpDpr::parse_values(values).map(Some)
   }
 
+  /// Parses received bounded `Downlink` request Client Hint metadata without
+  /// negotiating content or emitting Client Hints.
+  pub fn downlink(&self) -> Result<Option<HttpDownlink>, HttpDownlinkParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Downlink"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDownlink::parse_values(values).map(Some)
+  }
+
   /// Parses received bounded `ECT` request Client Hint metadata without
-  /// inferring network conditions or emitting Client Hints.
+  /// negotiating content or emitting Client Hints.
   pub fn ect(&self) -> Result<Option<HttpEct>, HttpEctParseError> {
     let values: Vec<&str> = self
       .headers
@@ -2849,6 +2896,36 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpEct::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Width` request Client Hint metadata without
+  /// negotiating content or emitting Client Hints.
+  pub fn width(&self) -> Result<Option<HttpWidth>, HttpWidthParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Width"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpWidth::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Viewport-Width` request Client Hint metadata
+  /// without negotiating content or emitting Client Hints.
+  pub fn viewport_width(&self) -> Result<Option<HttpViewportWidth>, HttpViewportWidthParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Viewport-Width"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpViewportWidth::parse_values(values).map(Some)
   }
 
   /// Parses received `DNT` tracking-preference metadata without applying

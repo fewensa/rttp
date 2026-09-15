@@ -1378,6 +1378,29 @@ infer network conditions, emit `Accept-CH`, persist Client Hints policy,
 retry, or generate Client Hints automatically. Raw values remain available
 through `header(("ECT", "..."))`.
 
+## Bounded Width request Client Hint metadata
+
+`HttpClient::width(value)` validates and emits one bounded `Width` request
+field through the shared `Width` type, replacing any existing same-name field.
+`Width::value()` exposes the non-negative unsigned integer and
+`Width::header_value()` returns canonical decimal text. Invalid, signed,
+fractional, overflowing, control-byte, duplicate, and oversized values are
+rejected before connecting. This helper declares metadata only; it does not
+negotiate content, emit `Accept-CH`, or adapt representations. Raw values
+remain available through `header(("Width", "..."))`.
+
+## Bounded Viewport-Width request Client Hint metadata
+
+`HttpClient::viewport_width(value)` validates and emits one bounded
+`Viewport-Width` request field through the shared `ViewportWidth` type,
+replacing any existing same-name field. `ViewportWidth::value()` exposes the
+non-negative unsigned integer and `ViewportWidth::header_value()` returns
+canonical decimal text. Invalid, signed, fractional, overflowing, control-byte,
+duplicate, and oversized values are rejected before connecting. This helper
+declares metadata only; it does not negotiate content, emit `Accept-CH`, track
+viewport size, or adapt representations. Raw values remain available through
+`header(("Viewport-Width", "..."))`.
+
 ## Bounded DNT request metadata
 
 `HttpClient::dnt(value)` emits one `DNT` field from the user's declared

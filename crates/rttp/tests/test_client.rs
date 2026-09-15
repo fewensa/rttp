@@ -126,6 +126,17 @@ fn compatibility_facade_roundtrips_accept_post_metadata_over_http11() {
 #[test]
 #[cfg(any(feature = "all", feature = "client"))]
 fn compatibility_facade_reexports_client_hints_response_metadata() {
+  let width: rttp::Width = rttp::Width::parse("1440").expect("Width should parse");
+  assert_eq!(1440, width.value());
+  let _: rttp::WidthParseError =
+    rttp::Width::parse("1.0").expect_err("malformed Width should fail");
+
+  let viewport_width: rttp::ViewportWidth =
+    rttp::ViewportWidth::parse("1440").expect("Viewport-Width should parse");
+  assert_eq!(1440, viewport_width.value());
+  let _: rttp::ViewportWidthParseError =
+    rttp::ViewportWidth::parse("1.0").expect_err("malformed Viewport-Width should fail");
+
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
     "Accept-CH: Sec-CH-UA, DPR\r\n",

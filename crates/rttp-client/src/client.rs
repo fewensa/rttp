@@ -21,7 +21,7 @@ use rttp_protocol::access_control_request_private_network::AccessControlRequestP
 use rttp_protocol::authorization::Authorization;
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
-use rttp_protocol::client_hints::{Dpr, Ect};
+use rttp_protocol::client_hints::{Dpr, Ect, ViewportWidth, Width};
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
 use rttp_protocol::dnt::Dnt;
@@ -525,16 +525,41 @@ impl HttpClient {
 
   /// Set bounded `ECT` request Client Hint metadata.
   ///
-  /// The value must be one of the standardized effective-connection-type
-  /// tokens `slow-2g`, `2g`, `3g`, or `4g`, with optional surrounding HTTP
-  /// optional whitespace. This replaces any existing case-insensitive `ECT`
-  /// field and only declares request metadata; RTTP does not infer network
-  /// conditions, emit `Accept-CH`, persist Client Hints policy, retry, or
-  /// generate this header automatically.
+  /// The value must be one of the standard `slow-2g`, `2g`, `3g`, or `4g`
+  /// tokens, with optional surrounding HTTP optional whitespace. This
+  /// replaces any existing case-insensitive `ECT` field and only declares
+  /// request metadata; RTTP does not negotiate content or emit Client Hints
+  /// automatically.
   pub fn ect<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
     let ect = Ect::parse(value.as_ref())
       .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
     Ok(self.header(Header::new("ECT", ect.header_value())))
+  }
+
+  /// Set bounded `Width` request Client Hint metadata.
+  ///
+  /// The value must be one non-negative decimal integer with optional
+  /// surrounding HTTP optional whitespace. This replaces any existing
+  /// case-insensitive `Width` field and only declares request metadata; RTTP
+  /// does not negotiate content, emit `Accept-CH`, or generate this header
+  /// automatically.
+  pub fn width<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let width = Width::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Width", width.header_value())))
+  }
+
+  /// Set bounded `Viewport-Width` request Client Hint metadata.
+  ///
+  /// The value must be one non-negative decimal integer with optional
+  /// surrounding HTTP optional whitespace. This replaces any existing
+  /// case-insensitive `Viewport-Width` field and only declares request
+  /// metadata; RTTP does not negotiate content, emit `Accept-CH`, track
+  /// viewport size, or generate this header automatically.
+  pub fn viewport_width<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let viewport_width = ViewportWidth::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Viewport-Width", viewport_width.header_value())))
   }
 
   /// Set `DNT` request metadata from the declared tracking preference.

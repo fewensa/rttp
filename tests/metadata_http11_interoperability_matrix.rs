@@ -158,8 +158,8 @@ fn attach_valid_client_metadata(client: &mut HttpClient) -> &mut HttpClient {
     .expect("Referer should be accepted")
     .dpr("\t1.5\t")
     .expect("DPR should be accepted")
-    .ect("\t4g\t")
-    .expect("ECT should be accepted")
+    .ect("\t4G\t")
+    .expect("mixed-case ECT should be accepted")
 }
 
 fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {

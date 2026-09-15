@@ -1,6 +1,7 @@
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, Dpr, Ect, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
-  MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
+  AcceptCh, CriticalCh, Downlink, Dpr, Ect, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
+  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
+  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -120,46 +121,196 @@ fn dpr_rejects_non_finite_oversized_digits() {
 }
 
 #[test]
-fn ect_parses_standardized_tokens_and_emits_canonical_values() {
-  for (value, expected) in [
-    ("slow-2g", Ect::Slow2g),
-    ("2g", Ect::TwoG),
-    ("3g", Ect::ThreeG),
-    ("4g", Ect::FourG),
+fn downlink_parses_non_negative_finite_decimal_and_round_trips() {
+  for (value, mbps) in [
+    ("0", 0.0),
+    ("0.0", 0.0),
+    ("1", 1.0),
+    ("2.5", 2.5),
+    ("10.25", 10.25),
   ] {
-    let ect = Ect::parse(value).expect("valid ECT");
-    assert_eq!(expected, ect);
-    assert_eq!(value, ect.header_value());
+    let downlink = Downlink::parse(value).expect("valid Downlink");
+    assert_eq!(mbps, downlink.mbps());
+    assert_eq!(value, downlink.header_value());
+    assert_eq!(
+      downlink,
+      Downlink::parse(downlink.header_value()).expect("Downlink roundtrip")
+    );
+  }
+}
+
+#[test]
+fn downlink_trims_outer_optional_whitespace() {
+  let downlink = Downlink::parse("\t 1.5 \t").expect("OWS-padded Downlink");
+  assert_eq!(1.5, downlink.mbps());
+  assert_eq!("1.5", downlink.header_value());
+}
+
+#[test]
+fn downlink_rejects_malformed_duplicate_empty_non_finite_and_negative_values() {
+  assert!(Downlink::parse_values(["1", "2"]).is_err());
+  assert!(Downlink::parse_values([]).is_err());
+
+  for value in [
+    "", " ", "-0", "-1", "2.", ".5", "+1", "1e1", "1E1", "1.5.0", "1, 2", "1 5", "inf", "nan",
+  ] {
+    assert!(
+      Downlink::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn downlink_rejects_oversized_and_control_byte_values() {
+  assert!(Downlink::parse("1".repeat(MAX_DOWNLINK_VALUE_BYTES + 1)).is_err());
+  assert!(Downlink::parse("1\r\nInjected: yes").is_err());
+  assert!(Downlink::parse("1\u{7f}").is_err());
+}
+
+#[test]
+fn downlink_checks_duplicate_values_against_the_bound() {
+  let oversized = "1".repeat(MAX_DOWNLINK_VALUE_BYTES + 1);
+  assert!(Downlink::parse_values(["1.5", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn downlink_rejects_non_finite_oversized_digits() {
+  assert!(Downlink::parse("9".repeat(400)).is_err());
+}
+
+#[test]
+fn ect_accepts_case_insensitive_tokens_and_canonicalizes_them() {
+  const FOUR_G_HEADER: &str = Ect::FourG.header_value();
+  assert_eq!("4g", FOUR_G_HEADER);
+
+  for (value, canonical) in [
+    ("sLoW-2G", "slow-2g"),
+    ("2G", "2g"),
+    ("3G", "3g"),
+    ("4G", "4g"),
+  ] {
+    let ect = Ect::parse(format!("\t{value} \t")).expect("valid ECT");
+    assert_eq!(canonical, ect.header_value());
     assert_eq!(ect, Ect::parse(ect.header_value()).expect("ECT roundtrip"));
   }
 }
 
 #[test]
-fn ect_trims_outer_optional_whitespace() {
-  let ect = Ect::parse("\t 3g \t").expect("OWS-padded ECT");
-  assert_eq!(Ect::ThreeG, ect);
-  assert_eq!("3g", ect.header_value());
+fn ect_rejects_invalid_duplicate_oversized_and_list_values() {
+  assert!(Ect::parse_values(["4g", "3g"]).is_err());
+  assert!(Ect::parse("4g, 3g").is_err());
+  assert!(Ect::parse("5g").is_err());
+  assert!(Ect::parse("").is_err());
+  assert!(Ect::parse("4g\r\nInjected: yes").is_err());
+  assert!(Ect::parse("4g\u{7f}").is_err());
+  assert!(Ect::parse("a".repeat(MAX_ECT_VALUE_BYTES + 1)).is_err());
 }
 
 #[test]
-fn ect_rejects_missing_duplicate_list_unknown_and_empty_values() {
-  assert!(Ect::parse_values([]).is_err());
-  assert!(Ect::parse_values(["3g", "4g"]).is_err());
-
-  for value in ["", " ", "5g", "4G", "lte", "3g, 4g", "3g,", ",3g"] {
-    assert!(Ect::parse(value).is_err(), "{value:?} must be rejected");
+fn width_parses_non_negative_integer_and_round_trips() {
+  for (value, expected) in [
+    ("0", 0),
+    ("1", 1),
+    ("1440", 1440),
+    ("4294967296", 4294967296),
+  ] {
+    let width = Width::parse(value).expect("valid Width");
+    assert_eq!(expected, width.value());
+    assert_eq!(value, width.header_value());
+    assert_eq!(
+      width,
+      Width::parse(width.header_value()).expect("Width roundtrip")
+    );
+    assert_eq!(width, Width::new(expected));
   }
 }
 
 #[test]
-fn ect_rejects_oversized_and_control_byte_values() {
-  assert!(Ect::parse("4".repeat(MAX_ECT_VALUE_BYTES + 1)).is_err());
-  assert!(Ect::parse("3g\r\nInjected: yes").is_err());
-  assert!(Ect::parse("3g\u{7f}").is_err());
+fn width_trims_outer_optional_whitespace() {
+  let width = Width::parse("\t 1440 \t").expect("OWS-padded Width");
+  assert_eq!(1440, width.value());
+  assert_eq!("1440", width.header_value());
 }
 
 #[test]
-fn ect_checks_duplicate_values_against_the_bound() {
-  let oversized = "4".repeat(MAX_ECT_VALUE_BYTES + 1);
-  assert!(Ect::parse_values(["3g", oversized.as_str()]).is_err());
+fn width_rejects_malformed_duplicate_empty_and_overflow_values() {
+  assert!(Width::parse_values(["1", "2"]).is_err());
+  assert!(Width::parse_values([]).is_err());
+
+  for value in [
+    "", " ", "-0", "-1", "+1", "1.0", "1e1", "1E1", "1, 2", "1 5", "1\0",
+  ] {
+    assert!(Width::parse(value).is_err(), "{value:?} must be rejected");
+  }
+  assert!(Width::parse("18446744073709551616").is_err());
+}
+
+#[test]
+fn width_rejects_oversized_and_control_byte_values() {
+  assert!(Width::parse("1".repeat(MAX_WIDTH_VALUE_BYTES + 1)).is_err());
+  assert!(Width::parse("1\r\nInjected: yes").is_err());
+  assert!(Width::parse("1\u{7f}").is_err());
+}
+
+#[test]
+fn width_checks_duplicate_values_against_the_bound() {
+  let oversized = "1".repeat(MAX_WIDTH_VALUE_BYTES + 1);
+  assert!(Width::parse_values(["1440", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn viewport_width_parses_non_negative_integer_and_round_trips() {
+  for (value, expected) in [
+    ("0", 0),
+    ("1", 1),
+    ("1440", 1440),
+    ("4294967296", 4294967296),
+    ("18446744073709551615", u64::MAX),
+  ] {
+    let viewport_width = ViewportWidth::parse(value).expect("valid Viewport-Width");
+    assert_eq!(expected, viewport_width.value());
+    assert_eq!(value, viewport_width.header_value());
+    assert_eq!(
+      viewport_width,
+      ViewportWidth::parse(viewport_width.header_value()).expect("Viewport-Width roundtrip")
+    );
+    assert_eq!(viewport_width, ViewportWidth::new(expected));
+  }
+}
+
+#[test]
+fn viewport_width_trims_outer_optional_whitespace() {
+  let viewport_width = ViewportWidth::parse("\t 1440 \t").expect("OWS-padded Viewport-Width");
+  assert_eq!(1440, viewport_width.value());
+  assert_eq!("1440", viewport_width.header_value());
+}
+
+#[test]
+fn viewport_width_rejects_malformed_duplicate_empty_and_overflow_values() {
+  assert!(ViewportWidth::parse_values(["1", "2"]).is_err());
+  assert!(ViewportWidth::parse_values([]).is_err());
+
+  for value in [
+    "", " ", "-0", "-1", "+1", "1.0", "1e1", "1E1", "1, 2", "1 5", "1\0",
+  ] {
+    assert!(
+      ViewportWidth::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+  assert!(ViewportWidth::parse("18446744073709551616").is_err());
+}
+
+#[test]
+fn viewport_width_rejects_oversized_and_control_byte_values() {
+  assert!(ViewportWidth::parse("1".repeat(MAX_VIEWPORT_WIDTH_VALUE_BYTES + 1)).is_err());
+  assert!(ViewportWidth::parse("1\r\nInjected: yes").is_err());
+  assert!(ViewportWidth::parse("1{7f}").is_err());
+}
+
+#[test]
+fn viewport_width_checks_duplicate_values_against_the_bound() {
+  let oversized = "1".repeat(MAX_VIEWPORT_WIDTH_VALUE_BYTES + 1);
+  assert!(ViewportWidth::parse_values(["1440", oversized.as_str()]).is_err());
 }

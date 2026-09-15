@@ -72,6 +72,47 @@ fn http11_client_and_server_exchange_dav_metadata_without_policy() {
   handle.join().expect("DAV server thread");
 }
 
+#[test]
+fn sync_client_and_server_exchange_case_insensitive_ect_metadata() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind ECT server");
+  let addr = server.local_addr().expect("ECT server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request.header("ECT").map(str::to_string),
+          request
+            .ect()
+            .map(|ect| ect.map(|ect| ect.header_value().to_string()))
+            .map_err(|error| error.to_string()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed ECT metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve ECT metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .ect("\t4G ")
+    .expect("ECT should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (Some("4g".to_string()), Ok(Some("4g".to_string()))),
+    observed_rx
+      .recv()
+      .expect("server should observe ECT metadata")
+  );
+  handle.join().expect("ECT server thread");
+}
+
 #[derive(Debug, PartialEq)]
 struct ObservedAcceptMetadata {
   raw_accept: Option<String>,

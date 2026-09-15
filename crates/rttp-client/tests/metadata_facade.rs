@@ -57,8 +57,8 @@ use rttp_client::{
   TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
   TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, UserAgent,
   UserAgentMember, UserAgentParseError, Via as ClientVia, ViaParseError as ClientViaParseError,
-  XForwardedFor, XForwardedForParseError, XForwardedHost, XForwardedHostParseError,
-  XForwardedProto, XForwardedProtoParseError,
+  Width, WidthParseError, XForwardedFor, XForwardedForParseError, XForwardedHost,
+  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 use rttp_test_support as support;
 
@@ -105,10 +105,17 @@ fn client_facade_exports_dpr_metadata_types() {
 
 #[test]
 fn client_facade_exports_ect_metadata_types() {
-  let ect = Ect::parse("\t4g\t").expect("ECT metadata should parse");
-  assert_eq!(Ect::FourG, ect);
-  assert_eq!("4g", ect.header_value());
-  let _: EctParseError = Ect::parse("5g").expect_err("unknown ECT should fail");
+  let ect = Ect::parse("SLOW-2G").expect("ECT metadata should parse");
+  assert_eq!("slow-2g", ect.header_value());
+  let _: EctParseError = Ect::parse("5g").expect_err("invalid ECT should fail");
+}
+
+#[test]
+fn client_facade_exports_width_metadata_types() {
+  let width = Width::parse("1440").expect("Width metadata should parse");
+  assert_eq!(1440, width.value());
+  assert_eq!("1440", width.header_value());
+  let _: WidthParseError = Width::parse("not-an-integer").expect_err("invalid Width should fail");
 }
 
 #[test]

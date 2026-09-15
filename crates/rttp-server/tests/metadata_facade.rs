@@ -23,12 +23,12 @@ use rttp_server::server::{
   HttpDepthParseError, HttpDnt, HttpDntParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
   HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
-  HttpDocumentPolicyValue, HttpDpr, HttpDprParseError, HttpEarlyData, HttpEarlyDataParseError,
-  HttpEct, HttpEctParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations,
-  HttpExpiresParseError, HttpFrom, HttpFromParseError, HttpHost, HttpIdempotencyKey,
-  HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList, HttpIfModifiedSince,
-  HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate, HttpIfResourceTag,
-  HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
+  HttpDocumentPolicyValue, HttpDownlink, HttpDownlinkParseError, HttpDpr, HttpDprParseError,
+  HttpEarlyData, HttpEarlyDataParseError, HttpEct, HttpEctParseError, HttpEntityTag,
+  HttpExpectParseError, HttpExpectations, HttpExpiresParseError, HttpFrom, HttpFromParseError,
+  HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList,
+  HttpIfModifiedSince, HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate,
+  HttpIfResourceTag, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
   HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter,
   HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
@@ -64,7 +64,8 @@ use rttp_server::server::{
   HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
   HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
-  HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpWwwAuthenticate,
+  HttpViaParseError, HttpViewportWidth, HttpViewportWidthParseError, HttpWantContentDigest,
+  HttpWantReprDigest, HttpWidth, HttpWidthParseError, HttpWwwAuthenticate,
   HttpWwwAuthenticateChallenge, HttpWwwAuthenticateParameter, HttpWwwAuthenticateParseError,
   HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
@@ -1835,17 +1836,16 @@ fn request_facade_parses_dpr_metadata_without_negotiation() {
 }
 
 #[test]
-fn request_facade_parses_ect_metadata_without_negotiation() {
+fn request_facade_parses_case_insensitive_ect_metadata_without_negotiation() {
   let request =
-    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: \t4g \t\r\n\r\n")
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: \tSLoW-2G \t\r\n\r\n")
       .expect("ECT request should parse");
   let ect: HttpEct = request
     .ect()
     .expect("ECT should parse")
     .expect("ECT should be present");
-  assert_eq!(HttpEct::FourG, ect);
-  assert_eq!("4g", ect.header_value());
-  assert_eq!(Some("4g"), request.header("ECT"));
+  assert_eq!("slow-2g", ect.header_value());
+  assert_eq!(Some("SLoW-2G"), request.header("ECT"));
 
   let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request without ECT should parse");
@@ -1854,16 +1854,178 @@ fn request_facade_parses_ect_metadata_without_negotiation() {
   let malformed =
     HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: 5g\r\n\r\n")
       .expect("malformed ECT request should retain raw metadata");
-  assert!(malformed.ect().is_err());
+  let _: HttpEctParseError = malformed.ect().expect_err("malformed ECT should fail");
   assert_eq!(Some("5g"), malformed.header("ECT"));
 
   let duplicate =
-    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: 3g\r\nECT: 4g\r\n\r\n")
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: 3g\r\nect: 4g\r\n\r\n")
       .expect("duplicate ECT request should retain raw metadata");
   let _: HttpEctParseError = duplicate.ect().expect_err("duplicate ECT should fail");
-  assert_eq!(Some("3g"), duplicate.header("ECT"));
+}
 
-  let _: HttpEctParseError = HttpEct::parse("").expect_err("empty ECT should fail");
+#[test]
+fn request_facade_parses_downlink_metadata_without_negotiation() {
+  let request =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDownlink: \t1.5 \t\r\n\r\n")
+      .expect("Downlink request should parse");
+  let downlink: HttpDownlink = request
+    .downlink()
+    .expect("Downlink should parse")
+    .expect("Downlink should be present");
+  assert_eq!(1.5, downlink.mbps());
+  assert_eq!("1.5", downlink.header_value());
+  assert_eq!(Some("1.5"), request.header("Downlink"));
+
+  let zero =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDownlink: 0\r\n\r\n")
+      .expect("zero Downlink request should parse");
+  assert_eq!(
+    0.0,
+    zero
+      .downlink()
+      .expect("zero Downlink should parse")
+      .expect("zero Downlink should be present")
+      .mbps()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Downlink should parse");
+  assert_eq!(
+    None,
+    absent.downlink().expect("missing Downlink should be valid")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDownlink: 1e1\r\n\r\n")
+      .expect("malformed Downlink request should retain raw metadata");
+  assert!(malformed.downlink().is_err());
+  assert_eq!(Some("1e1"), malformed.header("Downlink"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDownlink: 1\r\nDownlink: 2\r\n\r\n",
+  )
+  .expect("duplicate Downlink request should retain raw metadata");
+  let _: HttpDownlinkParseError = duplicate
+    .downlink()
+    .expect_err("duplicate Downlink should fail");
+  assert_eq!(Some("1"), duplicate.header("Downlink"));
+
+  let _: HttpDownlinkParseError = HttpDownlink::parse("").expect_err("empty Downlink should fail");
+}
+
+#[test]
+fn request_facade_parses_width_metadata_without_negotiation() {
+  let request =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: \t1440 \t\r\n\r\n")
+      .expect("Width request should parse");
+  let width: HttpWidth = request
+    .width()
+    .expect("Width should parse")
+    .expect("Width should be present");
+  assert_eq!(1440, width.value());
+  assert_eq!("1440", width.header_value());
+  assert_eq!(Some("1440"), request.header("Width"));
+
+  let zero = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: 0\r\n\r\n")
+    .expect("zero Width request should parse");
+  assert_eq!(
+    0,
+    zero
+      .width()
+      .expect("zero Width should parse")
+      .expect("zero Width should be present")
+      .value()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Width should parse");
+  assert_eq!(None, absent.width().expect("missing Width should be valid"));
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: 1.0\r\n\r\n")
+      .expect("malformed Width request should retain raw metadata");
+  assert!(malformed.width().is_err());
+  assert_eq!(Some("1.0"), malformed.header("Width"));
+
+  let overflow = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: 18446744073709551616\r\n\r\n",
+  )
+  .expect("overflow Width request should retain raw metadata");
+  assert!(overflow.width().is_err());
+  assert_eq!(Some("18446744073709551616"), overflow.header("Width"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWidth: 1\r\nwidth: 2\r\n\r\n",
+  )
+  .expect("duplicate Width request should retain raw metadata");
+  let _: HttpWidthParseError = duplicate.width().expect_err("duplicate Width should fail");
+  assert_eq!(Some("1"), duplicate.header("Width"));
+
+  let _: HttpWidthParseError = HttpWidth::parse("").expect_err("empty Width should fail");
+}
+
+#[test]
+fn request_facade_parses_viewport_width_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: \t1440 \t\r\n\r\n",
+  )
+  .expect("Viewport-Width request should parse");
+  let viewport_width: HttpViewportWidth = request
+    .viewport_width()
+    .expect("Viewport-Width should parse")
+    .expect("Viewport-Width should be present");
+  assert_eq!(1440, viewport_width.value());
+  assert_eq!("1440", viewport_width.header_value());
+  assert_eq!(Some("1440"), request.header("Viewport-Width"));
+
+  let zero =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: 0\r\n\r\n")
+      .expect("zero Viewport-Width request should parse");
+  assert_eq!(
+    0,
+    zero
+      .viewport_width()
+      .expect("zero Viewport-Width should parse")
+      .expect("zero Viewport-Width should be present")
+      .value()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Viewport-Width should parse");
+  assert_eq!(
+    None,
+    absent
+      .viewport_width()
+      .expect("missing Viewport-Width should be valid")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: 1.0\r\n\r\n")
+      .expect("malformed Viewport-Width request should retain raw metadata");
+  assert!(malformed.viewport_width().is_err());
+  assert_eq!(Some("1.0"), malformed.header("Viewport-Width"));
+
+  let overflow = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: 18446744073709551616\r\n\r\n",
+  )
+  .expect("overflow Viewport-Width request should retain raw metadata");
+  assert!(overflow.viewport_width().is_err());
+  assert_eq!(
+    Some("18446744073709551616"),
+    overflow.header("Viewport-Width")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nViewport-Width: 1\r\nviewport-width: 2\r\n\r\n",
+  )
+  .expect("duplicate Viewport-Width request should retain raw metadata");
+  let _: HttpViewportWidthParseError = duplicate
+    .viewport_width()
+    .expect_err("duplicate Viewport-Width should fail");
+  assert_eq!(Some("1"), duplicate.header("Viewport-Width"));
+
+  let _: HttpViewportWidthParseError =
+    HttpViewportWidth::parse("").expect_err("empty Viewport-Width should fail");
 }
 
 #[test]
