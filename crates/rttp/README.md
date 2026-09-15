@@ -640,6 +640,17 @@ raw header available. These helpers only expose metadata: RTTP does not
 negotiate content, emit `Accept-CH`, retry, track viewport size, or adapt
 representations.
 
+## Bounded RTT request Client Hint metadata
+
+With the client feature, `HttpClient::rtt(value)` validates and emits one
+singleton `RTT` request field through `rttp::Rtt`, replacing any existing
+case-insensitive field. On the server facade, `Request::rtt()` and
+`HttpRequest::rtt()` parse received fields into `HttpRtt`; `value()` and
+`header_value()` expose the typed and canonical values. Parse errors leave the
+raw header available. These helpers only expose metadata: RTTP does not
+negotiate content, emit `Accept-CH`, retry, measure network delay, or adapt
+representations.
+
 ## Bounded Idempotency-Key request metadata
 
 `HttpClient::idempotency_key(value)` validates and emits one opaque

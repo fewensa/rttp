@@ -480,6 +480,53 @@ fn h2c_dnt_helper_reaches_server_accessor() {
 }
 
 #[test]
+fn h2c_rtt_helper_reaches_server_accessor() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c RTT server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.target().to_string(),
+          request.header("RTT").map(str::to_string),
+          request
+            .rtt()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value()))
+            .map_err(|error| error.to_string()),
+        ))
+        .expect("record RTT");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve h2c RTT request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .rtt("\t150\t")
+    .expect("RTT should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (
+      "/asset".to_string(),
+      Some("150".to_string()),
+      Ok(Some("150".to_string()))
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded RTT")
+  );
+  handle.join().expect("h2c server thread");
+}
+
+#[test]
 fn h2c_malformed_dnt_reaches_server_accessor() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c malformed DNT server")

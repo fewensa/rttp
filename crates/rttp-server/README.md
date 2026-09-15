@@ -514,6 +514,14 @@ fields return `HttpViewportWidthParseError` while the raw `Viewport-Width`
 field remains available. These helpers do not negotiate content, emit Client
 Hints, retry, track viewport size, or adapt representations.
 
+`Request::rtt()` and `HttpRequest::rtt()` parse a singleton `RTT` request Client
+Hint into `HttpRtt`, exposing its non-negative millisecond integer through
+`value()` and canonical text through `header_value()`. Malformed, duplicate,
+signed, fractional, overflowing, control-byte, or oversized fields return
+`HttpRttParseError` while the raw `RTT` field remains available. These helpers
+do not negotiate content, emit Client Hints, retry, measure network delay, or
+adapt representations.
+
 ## Digest response metadata
 
 `HttpResponse::with_digest(value)` and `HttpResponse::with_repr_digest(value)`

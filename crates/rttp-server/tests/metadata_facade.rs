@@ -46,22 +46,23 @@ use rttp_server::server::{
   HttpRateLimitResetParseError, HttpReferer, HttpRefererParseError, HttpRequest,
   HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpResponseDate,
   HttpResponseDateParseError, HttpResponseExpires, HttpResponseLastModified,
-  HttpResponseLastModifiedParseError, HttpRetryAfter, HttpRetryAfterParseError, HttpSameSite,
-  HttpSaveData, HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
-  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
-  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
-  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
-  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
-  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
-  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpResponseLastModifiedParseError, HttpRetryAfter, HttpRetryAfterParseError, HttpRtt,
+  HttpRttParseError, HttpSameSite, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag,
+  HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
+  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
+  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
+  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
+  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
+  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
   HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
   HttpViaParseError, HttpViewportWidth, HttpViewportWidthParseError, HttpWantContentDigest,
@@ -2026,6 +2027,56 @@ fn request_facade_parses_viewport_width_metadata_without_negotiation() {
 
   let _: HttpViewportWidthParseError =
     HttpViewportWidth::parse("").expect_err("empty Viewport-Width should fail");
+}
+
+#[test]
+fn request_facade_parses_rtt_metadata_without_negotiation() {
+  let request =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nRTT: \t150 \t\r\n\r\n")
+      .expect("RTT request should parse");
+  let rtt: HttpRtt = request
+    .rtt()
+    .expect("RTT should parse")
+    .expect("RTT should be present");
+  assert_eq!(150, rtt.value());
+  assert_eq!("150", rtt.header_value());
+  assert_eq!(Some("150"), request.header("RTT"));
+
+  let zero = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nRTT: 0\r\n\r\n")
+    .expect("zero RTT request should parse");
+  assert_eq!(
+    0,
+    zero
+      .rtt()
+      .expect("zero RTT should parse")
+      .expect("zero RTT should be present")
+      .value()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without RTT should parse");
+  assert_eq!(None, absent.rtt().expect("missing RTT should be valid"));
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nRTT: 1.0\r\n\r\n")
+      .expect("malformed RTT request should retain raw metadata");
+  assert!(malformed.rtt().is_err());
+  assert_eq!(Some("1.0"), malformed.header("RTT"));
+
+  let overflow = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nRTT: 18446744073709551616\r\n\r\n",
+  )
+  .expect("overflow RTT request should retain raw metadata");
+  assert!(overflow.rtt().is_err());
+  assert_eq!(Some("18446744073709551616"), overflow.header("RTT"));
+
+  let duplicate =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nRTT: 1\r\nrtt: 2\r\n\r\n")
+      .expect("duplicate RTT request should retain raw metadata");
+  let _: HttpRttParseError = duplicate.rtt().expect_err("duplicate RTT should fail");
+  assert_eq!(Some("1"), duplicate.header("RTT"));
+
+  let _: HttpRttParseError = HttpRtt::parse("").expect_err("empty RTT should fail");
 }
 
 #[test]

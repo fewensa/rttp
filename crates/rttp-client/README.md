@@ -1401,6 +1401,17 @@ declares metadata only; it does not negotiate content, emit `Accept-CH`, track
 viewport size, or adapt representations. Raw values remain available through
 `header(("Viewport-Width", "..."))`.
 
+## Bounded RTT request Client Hint metadata
+
+`HttpClient::rtt(value)` validates and emits one bounded `RTT` request field
+through the shared `Rtt` type, replacing any existing same-name field.
+`Rtt::value()` exposes the non-negative unsigned millisecond integer and
+`Rtt::header_value()` returns canonical decimal text. Invalid, signed,
+fractional, overflowing, control-byte, duplicate, and oversized values are
+rejected before connecting. This helper declares metadata only; it does not
+negotiate content, emit `Accept-CH`, measure network delay, or adapt
+representations. Raw values remain available through `header(("RTT", "..."))`.
+
 ## Bounded DNT request metadata
 
 `HttpClient::dnt(value)` emits one `DNT` field from the user's declared

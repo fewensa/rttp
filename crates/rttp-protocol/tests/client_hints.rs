@@ -1,7 +1,7 @@
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, Downlink, Dpr, Ect, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
+  AcceptCh, CriticalCh, Downlink, Dpr, Ect, Rtt, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
   MAX_CLIENT_HINT_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
-  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  MAX_RTT_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -313,4 +313,54 @@ fn viewport_width_rejects_oversized_and_control_byte_values() {
 fn viewport_width_checks_duplicate_values_against_the_bound() {
   let oversized = "1".repeat(MAX_VIEWPORT_WIDTH_VALUE_BYTES + 1);
   assert!(ViewportWidth::parse_values(["1440", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn rtt_parses_non_negative_millisecond_integer_and_round_trips() {
+  for (value, expected) in [
+    ("0", 0),
+    ("1", 1),
+    ("150", 150),
+    ("4294967296", 4294967296),
+    ("18446744073709551615", u64::MAX),
+  ] {
+    let rtt = Rtt::parse(value).expect("valid RTT");
+    assert_eq!(expected, rtt.value());
+    assert_eq!(value, rtt.header_value());
+    assert_eq!(rtt, Rtt::parse(rtt.header_value()).expect("RTT roundtrip"));
+    assert_eq!(rtt, Rtt::new(expected));
+  }
+}
+
+#[test]
+fn rtt_trims_outer_optional_whitespace() {
+  let rtt = Rtt::parse("\t 150 \t").expect("OWS-padded RTT");
+  assert_eq!(150, rtt.value());
+  assert_eq!("150", rtt.header_value());
+}
+
+#[test]
+fn rtt_rejects_malformed_duplicate_empty_and_overflow_values() {
+  assert!(Rtt::parse_values(["1", "2"]).is_err());
+  assert!(Rtt::parse_values([]).is_err());
+
+  for value in [
+    "", " ", "-0", "-1", "+1", "1.0", "1e1", "1E1", "1, 2", "1 5", "1\0",
+  ] {
+    assert!(Rtt::parse(value).is_err(), "{value:?} must be rejected");
+  }
+  assert!(Rtt::parse("18446744073709551616").is_err());
+}
+
+#[test]
+fn rtt_rejects_oversized_and_control_byte_values() {
+  assert!(Rtt::parse("1".repeat(MAX_RTT_VALUE_BYTES + 1)).is_err());
+  assert!(Rtt::parse("1\r\nInjected: yes").is_err());
+  assert!(Rtt::parse("1\u{7f}").is_err());
+}
+
+#[test]
+fn rtt_checks_duplicate_values_against_the_bound() {
+  let oversized = "1".repeat(MAX_RTT_VALUE_BYTES + 1);
+  assert!(Rtt::parse_values(["150", oversized.as_str()]).is_err());
 }

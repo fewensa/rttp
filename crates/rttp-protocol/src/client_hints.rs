@@ -8,6 +8,7 @@ pub const MAX_DOWNLINK_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_WIDTH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_VIEWPORT_WIDTH_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_RTT_VALUE_BYTES: usize = 64 * 1024;
 
 /// Parsed, bounded `DPR` request Client Hint metadata.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -38,6 +39,10 @@ pub struct Width(u64);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ViewportWidth(u64);
 
+/// Parsed, bounded `RTT` request Client Hint metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Rtt(u64);
+
 /// Parsed, bounded `Accept-CH` response metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceptCh {
@@ -62,6 +67,7 @@ pub type DownlinkParseError = ClientHintsParseError;
 pub type EctParseError = ClientHintsParseError;
 pub type WidthParseError = ClientHintsParseError;
 pub type ViewportWidthParseError = ClientHintsParseError;
+pub type RttParseError = ClientHintsParseError;
 
 impl ClientHintsParseError {
   fn new(message: impl Into<String>) -> Self {
@@ -204,6 +210,31 @@ impl ViewportWidth {
     I: IntoIterator<Item = &'a str>,
   {
     parse_viewport_width_singleton(values).map(Self)
+  }
+
+  pub const fn value(self) -> u64 {
+    self.0
+  }
+
+  pub fn header_value(self) -> String {
+    self.0.to_string()
+  }
+}
+
+impl Rtt {
+  pub const fn new(value: u64) -> Self {
+    Self(value)
+  }
+
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, RttParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, RttParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    parse_rtt_singleton(values).map(Self)
   }
 
   pub const fn value(self) -> u64 {
@@ -513,6 +544,42 @@ fn validate_bounded_viewport_width_value(value: &str) -> Result<(), ViewportWidt
   Ok(())
 }
 
+fn parse_rtt_singleton<'a, I>(values: I) -> Result<u64, RttParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values.next().ok_or_else(invalid_rtt_value)?;
+  validate_bounded_rtt_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_rtt_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new("duplicate RTT header fields"));
+  }
+
+  let value = value.trim_matches([' ', '\t']);
+  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(invalid_rtt_value());
+  }
+  value.parse().map_err(|_| invalid_rtt_value())
+}
+
+fn validate_bounded_rtt_value(value: &str) -> Result<(), RttParseError> {
+  if value.len() > MAX_RTT_VALUE_BYTES {
+    return Err(ClientHintsParseError::new("RTT header value is too large"));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new("invalid RTT control byte"));
+  }
+  Ok(())
+}
+
 fn matches_decimal_grammar(value: &str) -> bool {
   let bytes = value.as_bytes();
   if bytes.is_empty() || !bytes[0].is_ascii_digit() {
@@ -555,6 +622,10 @@ fn invalid_width_value() -> WidthParseError {
 
 fn invalid_viewport_width_value() -> ViewportWidthParseError {
   ClientHintsParseError::new("invalid Viewport-Width header value")
+}
+
+fn invalid_rtt_value() -> RttParseError {
+  ClientHintsParseError::new("invalid RTT header value")
 }
 
 fn is_structured_token(value: &str) -> bool {
