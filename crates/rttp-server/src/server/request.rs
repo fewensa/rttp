@@ -550,9 +550,7 @@ impl Request {
   /// Parses received bounded `Sec-CH-UA-Mobile` request Client Hint metadata
   /// without inferring a mobile preference, negotiating the UA brands family,
   /// or emitting Client Hints.
-  pub fn sec_ch_ua_mobile(
-    &self,
-  ) -> Result<Option<HttpSecChUaMobile>, HttpSecChUaMobileParseError> {
+  pub fn sec_ch_ua_mobile(&self) -> Result<Option<HttpSecChUaMobile>, HttpSecChUaMobileParseError> {
     let values: Vec<&str> = self.headers_named("Sec-CH-UA-Mobile").collect();
     if values.is_empty() {
       return Ok(None);
@@ -3006,9 +3004,7 @@ impl HttpRequest {
   /// Parses received bounded `Sec-CH-UA-Mobile` request Client Hint metadata
   /// without inferring a mobile preference, negotiating the UA brands family,
   /// or emitting Client Hints.
-  pub fn sec_ch_ua_mobile(
-    &self,
-  ) -> Result<Option<HttpSecChUaMobile>, HttpSecChUaMobileParseError> {
+  pub fn sec_ch_ua_mobile(&self) -> Result<Option<HttpSecChUaMobile>, HttpSecChUaMobileParseError> {
     let values: Vec<&str> = self
       .headers
       .iter()

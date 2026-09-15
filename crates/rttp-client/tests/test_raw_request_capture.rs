@@ -6183,11 +6183,7 @@ fn sec_ch_ua_mobile_helper_emits_one_canonical_request_client_hint() {
     1,
     request
       .lines()
-      .filter(|line| {
-        line
-          .to_ascii_lowercase()
-          .starts_with("sec-ch-ua-mobile:")
-      })
+      .filter(|line| { line.to_ascii_lowercase().starts_with("sec-ch-ua-mobile:") })
       .count(),
     "typed Sec-CH-UA-Mobile should replace an existing same-name field"
   );
