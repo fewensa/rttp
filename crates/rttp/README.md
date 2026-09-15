@@ -646,6 +646,21 @@ rejected. These helpers only expose metadata: RTTP does not infer a
 preference, adapt content, negotiate `Accept-CH`, retry, or apply browser
 policy.
 
+## Bounded Sec-CH-UA-Mobile request Client Hint metadata
+
+With the client feature, `HttpClient::sec_ch_ua_mobile(value)` validates and
+emits one singleton `Sec-CH-UA-Mobile` request field through
+`rttp::SecChUaMobile`, replacing any existing case-insensitive field. The
+Structured Fields boolean tokens `?0` and `?1` are accepted after surrounding
+SP or HTAB trimming and `header_value()` emits the canonical tokens. On the
+server facade, `Request::sec_ch_ua_mobile()` and
+`HttpRequest::sec_ch_ua_mobile()` parse received fields into
+`HttpSecChUaMobile`; parse errors leave the raw header available. Empty,
+unknown, comma-list, parameterized, duplicate, control-byte, and oversized
+values are rejected. These helpers only expose metadata: RTTP does not infer a
+mobile preference, negotiate the UA brands family, emit `Accept-CH`, retry, or
+apply browser policy.
+
 ## Bounded Sec-CH-Prefers-Reduced-Motion request Client Hint metadata
 
 With the client feature, `HttpClient::prefers_reduced_motion(value)` validates

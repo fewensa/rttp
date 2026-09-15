@@ -658,6 +658,17 @@ control-byte, and oversized values are errors. This parser reports request
 metadata only; it does not infer a preference, adapt content, negotiate
 `Accept-CH`, retry, or apply browser policy.
 
+## Sec-CH-UA-Mobile
+
+`client_hints::SecChUaMobile` parses a singleton HTTP `Sec-CH-UA-Mobile`
+request Client Hint as the Structured Fields boolean tokens `?0` or `?1`. The
+field value is bounded to 64 KiB, optional outer SP and HTAB are trimmed, and
+`header_value()` emits the canonical `?0` / `?1` tokens. Empty, unknown,
+comma-list, parameterized, duplicate, forbidden control-byte, and oversized
+values are errors. This parser reports request metadata only; it does not
+infer a mobile preference, negotiate the UA brands family, emit `Accept-CH`,
+retry, or apply browser policy.
+
 ## Sec-CH-Prefers-Reduced-Motion
 
 `client_hints::PrefersReducedMotion` parses a singleton HTTP

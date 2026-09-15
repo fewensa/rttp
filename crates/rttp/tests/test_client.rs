@@ -145,6 +145,13 @@ fn compatibility_facade_reexports_client_hints_response_metadata() {
   let _: rttp::PrefersColorSchemeParseError = rttp::PrefersColorScheme::parse("system")
     .expect_err("unknown Prefers-Color-Scheme should fail");
 
+  let sec_ch_ua_mobile: rttp::SecChUaMobile =
+    rttp::SecChUaMobile::parse("\t?1\t").expect("Sec-CH-UA-Mobile should parse");
+  assert_eq!("?1", sec_ch_ua_mobile.header_value());
+  assert!(sec_ch_ua_mobile.is_mobile());
+  let _: rttp::SecChUaMobileParseError =
+    rttp::SecChUaMobile::parse("true").expect_err("unknown Sec-CH-UA-Mobile should fail");
+
   let prefers_contrast: rttp::PrefersContrast =
     rttp::PrefersContrast::parse("CuStOm").expect("Prefers-Contrast should parse");
   assert_eq!("custom", prefers_contrast.header_value());

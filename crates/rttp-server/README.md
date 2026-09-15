@@ -518,6 +518,16 @@ field remains available. This is metadata-only: the server does not infer a
 preference, adapt content, negotiate `Accept-CH`, retry, or apply browser
 policy.
 
+`Request::sec_ch_ua_mobile()` and `HttpRequest::sec_ch_ua_mobile()` parse a
+singleton `Sec-CH-UA-Mobile` request Client Hint into `HttpSecChUaMobile`,
+accepting the Structured Fields boolean tokens `?0` and `?1` after optional SP
+or HTAB trimming and exposing the canonical tokens through `header_value()`.
+Empty, unknown, comma-list, parameterized, duplicate, control-byte, or
+oversized fields return `HttpSecChUaMobileParseError` while the raw field
+remains available. This is metadata-only: the server does not infer a mobile
+preference, negotiate the UA brands family, emit `Accept-CH`, retry, or apply
+browser policy.
+
 `Request::prefers_reduced_motion()` and `HttpRequest::prefers_reduced_motion()`
 parse a singleton `Sec-CH-Prefers-Reduced-Motion` request Client Hint into
 `HttpPrefersReducedMotion`, accepting `no-preference` and `reduce`

@@ -56,7 +56,8 @@ pub use rttp_protocol::client_hints::{
   PrefersContrastParseError as HttpPrefersContrastParseError,
   PrefersReducedMotion as HttpPrefersReducedMotion,
   PrefersReducedMotionParseError as HttpPrefersReducedMotionParseError, Rtt as HttpRtt,
-  RttParseError as HttpRttParseError, ViewportWidth as HttpViewportWidth,
+  RttParseError as HttpRttParseError, SecChUaMobile as HttpSecChUaMobile,
+  SecChUaMobileParseError as HttpSecChUaMobileParseError, ViewportWidth as HttpViewportWidth,
   ViewportWidthParseError as HttpViewportWidthParseError, Width as HttpWidth,
   WidthParseError as HttpWidthParseError,
 };
@@ -544,6 +545,19 @@ impl Request {
       return Ok(None);
     }
     HttpPrefersColorScheme::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Mobile` request Client Hint metadata
+  /// without inferring a mobile preference, negotiating the UA brands family,
+  /// or emitting Client Hints.
+  pub fn sec_ch_ua_mobile(
+    &self,
+  ) -> Result<Option<HttpSecChUaMobile>, HttpSecChUaMobileParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-UA-Mobile").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaMobile::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client
@@ -2987,6 +3001,24 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpPrefersColorScheme::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Mobile` request Client Hint metadata
+  /// without inferring a mobile preference, negotiating the UA brands family,
+  /// or emitting Client Hints.
+  pub fn sec_ch_ua_mobile(
+    &self,
+  ) -> Result<Option<HttpSecChUaMobile>, HttpSecChUaMobileParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-CH-UA-Mobile"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaMobile::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client

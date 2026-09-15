@@ -1404,6 +1404,20 @@ only; it does not infer a preference, adapt content, negotiate `Accept-CH`,
 generate Client Hints automatically, retry, or apply browser policy. Raw values
 remain available through `header(("Sec-CH-Prefers-Color-Scheme", "..."))`.
 
+## Bounded Sec-CH-UA-Mobile request Client Hint metadata
+
+`HttpClient::sec_ch_ua_mobile(value)` validates and emits one bounded
+`Sec-CH-UA-Mobile` request field through the shared `SecChUaMobile` type,
+replacing any existing case-insensitive field. `SecChUaMobile::parse()`
+accepts the Structured Fields boolean tokens `?0` and `?1` with optional
+surrounding SP or HTAB, while `header_value()` emits the canonical tokens.
+Empty, unknown, comma-list, parameterized, duplicate, control-byte, and
+oversized values are rejected before connecting. This helper declares metadata
+only; it does not infer a mobile preference, negotiate the UA brands family,
+emit `Accept-CH`, generate Client Hints automatically, retry, or apply browser
+policy. Raw values remain available through
+`header(("Sec-CH-UA-Mobile", "..."))`.
+
 ## Bounded Sec-CH-Prefers-Reduced-Motion request Client Hint metadata
 
 `HttpClient::prefers_reduced_motion(value)` validates and emits one bounded
