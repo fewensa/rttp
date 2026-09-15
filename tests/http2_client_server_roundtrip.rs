@@ -703,6 +703,188 @@ fn h2c_oversized_downlink_reaches_server_accessor_with_raw_header() {
 }
 
 #[test]
+fn h2c_device_memory_helper_reaches_server_accessor() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c Device-Memory server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.target().to_string(),
+          request.header("Device-Memory").map(str::to_string),
+          request
+            .device_memory()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value()))
+            .map_err(|error| error.to_string()),
+          request
+            .device_memory()
+            .ok()
+            .flatten()
+            .map(|metadata| metadata.gib()),
+        ))
+        .expect("record Device-Memory");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve h2c Device-Memory request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .device_memory("\t8\t")
+    .expect("Device-Memory should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (
+      "/asset".to_string(),
+      Some("8".to_string()),
+      Ok(Some("8".to_string())),
+      Some(8.0)
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded Device-Memory")
+  );
+  handle.join().expect("h2c Device-Memory server thread");
+}
+
+#[test]
+fn h2c_malformed_device_memory_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c malformed Device-Memory server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("Device-Memory").map(str::to_string),
+          request.device_memory().is_err(),
+        ))
+        .expect("record malformed Device-Memory");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve malformed h2c Device-Memory request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Device-Memory", "1e1"))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some("1e1".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded malformed Device-Memory")
+  );
+  handle
+    .join()
+    .expect("malformed h2c Device-Memory server thread");
+}
+
+#[test]
+fn h2c_duplicate_device_memory_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c duplicate Device-Memory server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("Device-Memory").map(str::to_string),
+          request.device_memory().is_err(),
+        ))
+        .expect("record duplicate Device-Memory");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve duplicate h2c Device-Memory request");
+  });
+
+  let authority = addr.to_string();
+  let _stream = send_h2c_prior_knowledge_headers(
+    addr,
+    &[
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", "/asset"),
+      (":authority", authority.as_str()),
+      ("Device-Memory", "1"),
+      ("device-memory", "2"),
+    ],
+  );
+
+  assert_eq!(
+    (Some("1".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded duplicate Device-Memory")
+  );
+  handle
+    .join()
+    .expect("duplicate h2c Device-Memory server thread");
+}
+
+#[test]
+fn h2c_oversized_device_memory_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c oversized Device-Memory server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)))
+    .with_http2_policy(Http2ServerPolicy::new().with_max_header_list_size(256 * 1024));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let raw = request.header("Device-Memory").map(str::to_string);
+        tx.send((
+          raw.as_ref().map(String::len),
+          request.device_memory().is_err(),
+          raw.is_some(),
+        ))
+        .expect("record oversized Device-Memory");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve oversized h2c Device-Memory request");
+  });
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Device-Memory", oversized.as_str()))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some(64 * 1024 + 1), true, true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded oversized Device-Memory")
+  );
+  handle
+    .join()
+    .expect("oversized h2c Device-Memory server thread");
+}
+
+#[test]
 fn h2c_malformed_dnt_reaches_server_accessor() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c malformed DNT server")

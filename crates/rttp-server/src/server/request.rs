@@ -47,6 +47,7 @@ pub use rttp_protocol::cdn_loop::{
   CdnLoopParameter as HttpCdnLoopParameter, CdnLoopParseError as HttpCdnLoopParseError,
 };
 pub use rttp_protocol::client_hints::{
+  DeviceMemory as HttpDeviceMemory, DeviceMemoryParseError as HttpDeviceMemoryParseError,
   Downlink as HttpDownlink, DownlinkParseError as HttpDownlinkParseError, Dpr as HttpDpr,
   DprParseError as HttpDprParseError, Ect as HttpEct, EctParseError as HttpEctParseError,
   Rtt as HttpRtt, RttParseError as HttpRttParseError, ViewportWidth as HttpViewportWidth,
@@ -514,6 +515,16 @@ impl Request {
       return Ok(None);
     }
     HttpDownlink::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Device-Memory` request Client Hint metadata
+  /// without negotiating content or emitting Client Hints.
+  pub fn device_memory(&self) -> Result<Option<HttpDeviceMemory>, HttpDeviceMemoryParseError> {
+    let values: Vec<&str> = self.headers_named("Device-Memory").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDeviceMemory::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `ECT` request Client Hint metadata without
@@ -2892,6 +2903,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpDownlink::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Device-Memory` request Client Hint metadata
+  /// without negotiating content or emitting Client Hints.
+  pub fn device_memory(&self) -> Result<Option<HttpDeviceMemory>, HttpDeviceMemoryParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Device-Memory"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDeviceMemory::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `ECT` request Client Hint metadata without

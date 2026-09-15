@@ -1378,6 +1378,19 @@ only; it does not negotiate content, emit `Accept-CH`, or generate Client Hints
 automatically. Raw values remain available through
 `header(("Downlink", "..."))`.
 
+## Bounded Device-Memory request Client Hint metadata
+
+`HttpClient::device_memory(value)` validates and emits one bounded
+`Device-Memory` request field through the shared `DeviceMemory` type,
+replacing any existing case-insensitive field. `DeviceMemory::gib()` exposes
+the non-negative finite decimal GiB value and `DeviceMemory::header_value()`
+returns the trimmed decimal text. Invalid, negative, non-finite, malformed,
+control-byte, duplicate, and oversized values are rejected before connecting.
+This helper declares metadata only; it does not negotiate content, emit
+`Accept-CH`, generate Client Hints automatically, adapt representations, or
+change transport. Raw values remain available through
+`header(("Device-Memory", "..."))`.
+
 ## Bounded ECT request Client Hint metadata
 
 `HttpClient::ect(value)` validates and emits one bounded `ECT` request field

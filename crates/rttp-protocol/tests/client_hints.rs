@@ -1,7 +1,8 @@
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, Downlink, Dpr, Ect, Rtt, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
-  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
-  MAX_RTT_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, Rtt, ViewportWidth, Width,
+  MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
+  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES, MAX_RTT_VALUE_BYTES,
+  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -177,6 +178,65 @@ fn downlink_checks_duplicate_values_against_the_bound() {
 #[test]
 fn downlink_rejects_non_finite_oversized_digits() {
   assert!(Downlink::parse("9".repeat(400)).is_err());
+}
+
+#[test]
+fn device_memory_parses_non_negative_finite_decimal_and_round_trips() {
+  for (value, gib) in [
+    ("0", 0.0),
+    ("0.0", 0.0),
+    ("1", 1.0),
+    ("2.5", 2.5),
+    ("8", 8.0),
+  ] {
+    let device_memory = DeviceMemory::parse(value).expect("valid Device-Memory");
+    assert_eq!(gib, device_memory.gib());
+    assert_eq!(value, device_memory.header_value());
+    assert_eq!(
+      device_memory,
+      DeviceMemory::parse(device_memory.header_value()).expect("Device-Memory roundtrip")
+    );
+  }
+}
+
+#[test]
+fn device_memory_trims_outer_optional_whitespace() {
+  let device_memory = DeviceMemory::parse("\t 8 \t").expect("OWS-padded Device-Memory");
+  assert_eq!(8.0, device_memory.gib());
+  assert_eq!("8", device_memory.header_value());
+}
+
+#[test]
+fn device_memory_rejects_malformed_duplicate_empty_non_finite_and_negative_values() {
+  assert!(DeviceMemory::parse_values(["1", "2"]).is_err());
+  assert!(DeviceMemory::parse_values([]).is_err());
+
+  for value in [
+    "", " ", "-0", "-1", "2.", ".5", "+1", "1e1", "1E1", "1.5.0", "1, 2", "1 5", "inf", "nan",
+  ] {
+    assert!(
+      DeviceMemory::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn device_memory_rejects_oversized_and_control_byte_values() {
+  assert!(DeviceMemory::parse("1".repeat(MAX_DEVICE_MEMORY_VALUE_BYTES + 1)).is_err());
+  assert!(DeviceMemory::parse("1\r\nInjected: yes").is_err());
+  assert!(DeviceMemory::parse("1\u{7f}").is_err());
+}
+
+#[test]
+fn device_memory_checks_duplicate_values_against_the_bound() {
+  let oversized = "1".repeat(MAX_DEVICE_MEMORY_VALUE_BYTES + 1);
+  assert!(DeviceMemory::parse_values(["8", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn device_memory_rejects_non_finite_oversized_digits() {
+  assert!(DeviceMemory::parse("9".repeat(400)).is_err());
 }
 
 #[test]

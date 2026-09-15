@@ -21,7 +21,7 @@ use rttp_protocol::access_control_request_private_network::AccessControlRequestP
 use rttp_protocol::authorization::Authorization;
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
-use rttp_protocol::client_hints::{Downlink, Dpr, Ect, Rtt, ViewportWidth, Width};
+use rttp_protocol::client_hints::{DeviceMemory, Downlink, Dpr, Ect, Rtt, ViewportWidth, Width};
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
 use rttp_protocol::dnt::Dnt;
@@ -534,6 +534,19 @@ impl HttpClient {
     let downlink = Downlink::parse(value.as_ref())
       .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
     Ok(self.header(Header::new("Downlink", downlink.header_value())))
+  }
+
+  /// Set bounded `Device-Memory` request Client Hint metadata.
+  ///
+  /// The value must be one non-negative finite decimal GiB value with
+  /// optional surrounding HTTP optional whitespace. This replaces any
+  /// existing case-insensitive `Device-Memory` field and only declares
+  /// request metadata; RTTP does not negotiate content, emit `Accept-CH`, or
+  /// generate this header automatically.
+  pub fn device_memory<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let device_memory = DeviceMemory::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Device-Memory", device_memory.header_value())))
   }
 
   /// Set bounded `ECT` request Client Hint metadata.

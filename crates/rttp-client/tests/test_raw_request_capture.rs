@@ -5966,6 +5966,78 @@ fn raw_downlink_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn device_memory_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("device-memory", "2"))
+      .device_memory("\t8\t")
+      .expect("Device-Memory should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("8"), header_value(&request, "Device-Memory"));
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line.to_ascii_lowercase().starts_with("device-memory:"))
+      .count(),
+    "typed Device-Memory should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn device_memory_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "1".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    "-0",
+    "-1",
+    "1e1",
+    "1, 2",
+    "inf",
+    "nan",
+    "1\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .device_memory(value)
+        .expect_err("invalid Device-Memory input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Device-Memory input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_device_memory_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Device-Memory", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request, "Device-Memory")
+  );
+}
+
+#[test]
 fn ect_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()

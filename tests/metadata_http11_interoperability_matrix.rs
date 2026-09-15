@@ -627,6 +627,18 @@ fn typed_request_helpers_reject_malformed_values_before_connect() {
   reject_before_connect("oversized Downlink", |client| {
     client.downlink("1".repeat(64 * 1024 + 1))
   });
+  reject_before_connect("malformed Device-Memory", |client| {
+    client.device_memory("1e1")
+  });
+  reject_before_connect("negative Device-Memory", |client| {
+    client.device_memory("-1")
+  });
+  reject_before_connect("Device-Memory with control byte", |client| {
+    client.device_memory("8\0")
+  });
+  reject_before_connect("oversized Device-Memory", |client| {
+    client.device_memory("1".repeat(64 * 1024 + 1))
+  });
   reject_before_connect("malformed ECT", |client| client.ect("5g"));
   reject_before_connect("ECT comma list", |client| client.ect("3g, 4g"));
   reject_before_connect("ECT with control byte", |client| client.ect("3g\0"));

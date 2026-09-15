@@ -12,37 +12,37 @@ use rttp::server::{
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeltaBase, HttpDeltaBaseParseError, HttpDeprecation,
   HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDestination,
-  HttpDestinationParseError, HttpDnt, HttpDntParseError, HttpDownlink, HttpDownlinkParseError,
-  HttpEarlyData, HttpEarlyDataParseError, HttpEct, HttpEctParseError, HttpEntityTag,
-  HttpExpectations, HttpFrom, HttpFromParseError, HttpIdempotencyKey, HttpIdempotencyKeyParseError,
-  HttpIf, HttpIfModifiedSince, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError,
-  HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards, HttpMediaType,
-  HttpMediaTypeParameter, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
-  HttpNegotiateDirective, HttpNegotiateParseError, HttpNel, HttpOriginAgentCluster,
-  HttpOriginAgentClusterParseError, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite,
-  HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError,
-  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit,
-  HttpRateLimitLimitItem, HttpRateLimitLimitParseError, HttpRateLimitParseError,
-  HttpRateLimitRemaining, HttpRateLimitRemainingParseError, HttpRateLimitReset,
-  HttpRateLimitResetParseError, HttpReferer, HttpRefererParseError, HttpRequest,
-  HttpRequestAcceptCharsets, HttpResponse, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
-  HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
-  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
-  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn,
-  HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
-  HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
-  HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember, HttpUserAgentParseError,
-  HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpViewportWidth,
-  HttpViewportWidthParseError, HttpWidth, HttpWidthParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpDestinationParseError, HttpDeviceMemory, HttpDeviceMemoryParseError, HttpDnt,
+  HttpDntParseError, HttpDownlink, HttpDownlinkParseError, HttpEarlyData, HttpEarlyDataParseError,
+  HttpEct, HttpEctParseError, HttpEntityTag, HttpExpectations, HttpFrom, HttpFromParseError,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfModifiedSince,
+  HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken,
+  HttpLockTokenParseError, HttpMaxForwards, HttpMediaType, HttpMediaTypeParameter,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective,
+  HttpNegotiateParseError, HttpNel, HttpOriginAgentCluster, HttpOriginAgentClusterParseError,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
+  HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
+  HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
+  HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
+  HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
+  HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError,
+  HttpViewportWidth, HttpViewportWidthParseError, HttpWidth, HttpWidthParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -140,6 +140,42 @@ fn compatibility_facade_exports_downlink_request_metadata() {
   .expect("duplicate Downlink fields should remain parseable");
   assert!(duplicate.downlink().is_err());
   assert_eq!(Some("1"), duplicate.header("Downlink"));
+}
+
+#[test]
+fn compatibility_facade_exports_device_memory_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDevice-Memory: \t8 \t\r\n\r\n",
+  )
+  .expect("Device-Memory request should parse");
+  let device_memory: HttpDeviceMemory = request
+    .device_memory()
+    .expect("Device-Memory should parse")
+    .expect("Device-Memory should be present");
+  assert_eq!(8.0, device_memory.gib());
+  assert_eq!("8", device_memory.header_value());
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Device-Memory should parse");
+  assert_eq!(
+    None,
+    absent.device_memory().expect("absence should be valid")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDevice-Memory: 1e1\r\n\r\n")
+      .expect("malformed Device-Memory should remain available");
+  let _: HttpDeviceMemoryParseError = malformed
+    .device_memory()
+    .expect_err("malformed Device-Memory should fail");
+  assert_eq!(Some("1e1"), malformed.header("Device-Memory"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nDevice-Memory: 1\r\ndevice-memory: 2\r\n\r\n",
+  )
+  .expect("duplicate Device-Memory fields should remain parseable");
+  assert!(duplicate.device_memory().is_err());
+  assert_eq!(Some("1"), duplicate.header("Device-Memory"));
 }
 
 #[test]
