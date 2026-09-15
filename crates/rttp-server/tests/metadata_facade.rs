@@ -38,7 +38,8 @@ use rttp_server::server::{
   HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError, HttpPermissionsPolicy,
   HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
-  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthenticate, HttpProxyAuthenticateChallenge,
+  HttpPragmaParseError, HttpPreferenceKind, HttpPrefersColorScheme,
+  HttpPrefersColorSchemeParseError, HttpProxyAuthenticate, HttpProxyAuthenticateChallenge,
   HttpProxyAuthenticateParameter, HttpProxyAuthenticateParseError, HttpProxyAuthenticationInfo,
   HttpProxyAuthenticationInfoParameter, HttpProxyAuthenticationInfoParseError,
   HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit,
@@ -1863,6 +1864,58 @@ fn request_facade_parses_case_insensitive_ect_metadata_without_negotiation() {
     HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: 3g\r\nect: 4g\r\n\r\n")
       .expect("duplicate ECT request should retain raw metadata");
   let _: HttpEctParseError = duplicate.ect().expect_err("duplicate ECT should fail");
+}
+
+#[test]
+fn request_facade_parses_prefers_color_scheme_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nsec-ch-prefers-color-scheme: \tDaRk \t\r\n\r\n",
+  )
+  .expect("Prefers-Color-Scheme request should parse");
+  let scheme: HttpPrefersColorScheme = request
+    .prefers_color_scheme()
+    .expect("Prefers-Color-Scheme should parse")
+    .expect("Prefers-Color-Scheme should be present");
+  assert_eq!("dark", scheme.header_value());
+  assert_eq!(Some("DaRk"), request.header("Sec-CH-Prefers-Color-Scheme"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Prefers-Color-Scheme should parse");
+  assert_eq!(
+    None,
+    absent
+      .prefers_color_scheme()
+      .expect("missing Prefers-Color-Scheme should be valid")
+  );
+
+  for value in ["", "system", "light, dark"] {
+    let raw = format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Color-Scheme: {value}\r\n\r\n"
+    );
+    let malformed = HttpRequest::parse(raw.as_bytes())
+      .expect("malformed Prefers-Color-Scheme should remain available");
+    let _: HttpPrefersColorSchemeParseError = malformed
+      .prefers_color_scheme()
+      .expect_err("malformed Prefers-Color-Scheme should fail");
+    assert_eq!(Some(value), malformed.header("Sec-CH-Prefers-Color-Scheme"));
+  }
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Color-Scheme: light\r\nsec-ch-prefers-color-scheme: dark\r\n\r\n",
+  )
+  .expect("duplicate Prefers-Color-Scheme request should retain raw metadata");
+  assert!(duplicate.prefers_color_scheme().is_err());
+  assert_eq!(
+    Some("light"),
+    duplicate.header("Sec-CH-Prefers-Color-Scheme")
+  );
+
+  let _: HttpPrefersColorSchemeParseError =
+    HttpPrefersColorScheme::parse("light\0").expect_err("control byte should fail");
+  assert!(
+    HttpPrefersColorScheme::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized value should fail"
+  );
 }
 
 #[test]

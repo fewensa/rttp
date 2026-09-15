@@ -6088,6 +6088,83 @@ fn ect_helper_rejects_malformed_values_before_connecting() {
 }
 
 #[test]
+fn prefers_color_scheme_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-prefers-color-scheme", "legacy"))
+      .prefers_color_scheme("\tDaRk \t")
+      .expect("Sec-CH-Prefers-Color-Scheme should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("dark"),
+    header_value(&request, "Sec-CH-Prefers-Color-Scheme")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| {
+        line
+          .to_ascii_lowercase()
+          .starts_with("sec-ch-prefers-color-scheme:")
+      })
+      .count(),
+    "typed Sec-CH-Prefers-Color-Scheme should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn prefers_color_scheme_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    " ",
+    "system",
+    "light, dark",
+    "light\0",
+    "light\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .prefers_color_scheme(value)
+        .expect_err("invalid Sec-CH-Prefers-Color-Scheme input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-Prefers-Color-Scheme input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_prefers_color_scheme_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-Prefers-Color-Scheme", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request, "Sec-CH-Prefers-Color-Scheme")
+  );
+}
+
+#[test]
 fn raw_dpr_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

@@ -508,6 +508,16 @@ the raw `Device-Memory` field remains available. This is metadata-only: the
 server does not negotiate content, emit Client Hints automatically, adapt
 representations, or change transport.
 
+`Request::prefers_color_scheme()` and `HttpRequest::prefers_color_scheme()`
+parse a singleton `Sec-CH-Prefers-Color-Scheme` request Client Hint into
+`HttpPrefersColorScheme`, accepting `light` and `dark` case-insensitively
+after optional SP or HTAB trimming and exposing lowercase canonical text
+through `header_value()`. Empty, unknown, comma-list, duplicate, control-byte,
+or oversized fields return `HttpPrefersColorSchemeParseError` while the raw
+field remains available. This is metadata-only: the server does not infer a
+preference, adapt content, negotiate `Accept-CH`, retry, or apply browser
+policy.
+
 `Request::ect()` parses a singleton `ECT` request Client Hint into
 `HttpEct`, accepting only `slow-2g`, `2g`, `3g`, and `4g` after trimming
 optional SP or HTAB and exposing the canonical token through

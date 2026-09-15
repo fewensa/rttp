@@ -6,6 +6,7 @@ pub const MAX_CLIENT_HINT_NAMES: usize = 256;
 pub const MAX_DPR_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DOWNLINK_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DEVICE_MEMORY_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_WIDTH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_VIEWPORT_WIDTH_VALUE_BYTES: usize = 64 * 1024;
@@ -27,6 +28,13 @@ pub struct Downlink {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct DeviceMemory {
   value: String,
+}
+
+/// Parsed, bounded `Sec-CH-Prefers-Color-Scheme` request Client Hint metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PrefersColorScheme {
+  Light,
+  Dark,
 }
 
 /// Parsed, bounded `ECT` request Client Hint metadata.
@@ -72,6 +80,7 @@ pub type CriticalChParseError = ClientHintsParseError;
 pub type DprParseError = ClientHintsParseError;
 pub type DownlinkParseError = ClientHintsParseError;
 pub type DeviceMemoryParseError = ClientHintsParseError;
+pub type PrefersColorSchemeParseError = ClientHintsParseError;
 pub type EctParseError = ClientHintsParseError;
 pub type WidthParseError = ClientHintsParseError;
 pub type ViewportWidthParseError = ClientHintsParseError;
@@ -169,6 +178,34 @@ impl DeviceMemory {
 
   pub fn header_value(&self) -> String {
     self.value.clone()
+  }
+}
+
+impl PrefersColorScheme {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, PrefersColorSchemeParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, PrefersColorSchemeParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let value = parse_prefers_color_scheme_singleton(values)?;
+    let value = value.trim_matches([' ', '\t']);
+    if value.eq_ignore_ascii_case("light") {
+      Ok(Self::Light)
+    } else if value.eq_ignore_ascii_case("dark") {
+      Ok(Self::Dark)
+    } else {
+      Err(invalid_prefers_color_scheme_value())
+    }
+  }
+
+  pub const fn header_value(self) -> &'static str {
+    match self {
+      Self::Light => "light",
+      Self::Dark => "dark",
+    }
   }
 }
 
@@ -516,6 +553,49 @@ fn parse_device_memory_gib(value: &str) -> Result<f64, DeviceMemoryParseError> {
   Ok(gib)
 }
 
+fn parse_prefers_color_scheme_singleton<'a, I>(
+  values: I,
+) -> Result<&'a str, PrefersColorSchemeParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values
+    .next()
+    .ok_or_else(invalid_prefers_color_scheme_value)?;
+  validate_bounded_prefers_color_scheme_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_prefers_color_scheme_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(
+      "duplicate Sec-CH-Prefers-Color-Scheme header fields",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_bounded_prefers_color_scheme_value(
+  value: &str,
+) -> Result<(), PrefersColorSchemeParseError> {
+  if value.len() > MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-Prefers-Color-Scheme header value is too large",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-Prefers-Color-Scheme control byte",
+    ));
+  }
+  Ok(())
+}
+
 fn parse_ect_singleton<'a, I>(values: I) -> Result<&'a str, EctParseError>
 where
   I: IntoIterator<Item = &'a str>,
@@ -697,6 +777,10 @@ fn invalid_downlink_value() -> DownlinkParseError {
 
 fn invalid_device_memory_value() -> DeviceMemoryParseError {
   ClientHintsParseError::new("invalid Device-Memory header value")
+}
+
+fn invalid_prefers_color_scheme_value() -> PrefersColorSchemeParseError {
+  ClientHintsParseError::new("invalid Sec-CH-Prefers-Color-Scheme header value")
 }
 
 fn invalid_ect_value() -> EctParseError {

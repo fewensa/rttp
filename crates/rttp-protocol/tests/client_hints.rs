@@ -1,8 +1,9 @@
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, Rtt, ViewportWidth, Width,
-  MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
-  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES, MAX_RTT_VALUE_BYTES,
-  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, Rtt, ViewportWidth,
+  Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
+  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
+  MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES,
+  MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -237,6 +238,51 @@ fn device_memory_checks_duplicate_values_against_the_bound() {
 #[test]
 fn device_memory_rejects_non_finite_oversized_digits() {
   assert!(DeviceMemory::parse("9".repeat(400)).is_err());
+}
+
+#[test]
+fn prefers_color_scheme_accepts_case_insensitive_tokens_and_canonicalizes_them() {
+  assert_eq!("light", PrefersColorScheme::Light.header_value());
+  assert_eq!("dark", PrefersColorScheme::Dark.header_value());
+
+  for (value, expected, canonical) in [
+    ("LiGhT", PrefersColorScheme::Light, "light"),
+    ("DARK", PrefersColorScheme::Dark, "dark"),
+  ] {
+    let scheme =
+      PrefersColorScheme::parse(format!("\t{value} \t")).expect("valid prefers-color-scheme value");
+    assert_eq!(expected, scheme);
+    assert_eq!(canonical, scheme.header_value());
+    assert_eq!(
+      scheme,
+      PrefersColorScheme::parse(scheme.header_value()).expect("roundtrip")
+    );
+  }
+}
+
+#[test]
+fn prefers_color_scheme_rejects_invalid_duplicate_oversized_and_control_values() {
+  assert!(PrefersColorScheme::parse_values(["light", "dark"]).is_err());
+  assert!(PrefersColorScheme::parse_values([]).is_err());
+
+  for value in [
+    "",
+    " ",
+    "system",
+    "light, dark",
+    "light\0",
+    "dark\r\nInjected: yes",
+    "dark\u{7f}",
+  ] {
+    assert!(
+      PrefersColorScheme::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let oversized = "a".repeat(MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES + 1);
+  assert!(PrefersColorScheme::parse(&oversized).is_err());
+  assert!(PrefersColorScheme::parse_values(["light", oversized.as_str()]).is_err());
 }
 
 #[test]

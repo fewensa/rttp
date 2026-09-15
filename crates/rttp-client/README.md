@@ -1391,6 +1391,19 @@ This helper declares metadata only; it does not negotiate content, emit
 change transport. Raw values remain available through
 `header(("Device-Memory", "..."))`.
 
+## Bounded Sec-CH-Prefers-Color-Scheme request Client Hint metadata
+
+`HttpClient::prefers_color_scheme(value)` validates and emits one bounded
+`Sec-CH-Prefers-Color-Scheme` request field through the shared
+`PrefersColorScheme` type, replacing any existing case-insensitive field.
+`PrefersColorScheme::parse()` accepts `light` and `dark` case-insensitively
+with optional surrounding SP or HTAB, while `header_value()` emits lowercase
+canonical text. Empty, unknown, comma-list, duplicate, control-byte, and
+oversized values are rejected before connecting. This helper declares metadata
+only; it does not infer a preference, adapt content, negotiate `Accept-CH`,
+generate Client Hints automatically, retry, or apply browser policy. Raw values
+remain available through `header(("Sec-CH-Prefers-Color-Scheme", "..."))`.
+
 ## Bounded ECT request Client Hint metadata
 
 `HttpClient::ect(value)` validates and emits one bounded `ECT` request field

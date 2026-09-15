@@ -631,6 +631,21 @@ an escape hatch. These helpers only expose metadata: RTTP does not negotiate
 content, emit `Accept-CH`, generate Client Hints automatically, adapt
 representations, retry, or change transport.
 
+## Bounded Sec-CH-Prefers-Color-Scheme request Client Hint metadata
+
+With the client feature, `HttpClient::prefers_color_scheme(value)` validates
+and emits one singleton `Sec-CH-Prefers-Color-Scheme` request field through
+`rttp::PrefersColorScheme`, replacing any existing case-insensitive field. The
+`light` and `dark` tokens are parsed case-insensitively after surrounding SP or
+HTAB trimming and `header_value()` emits lowercase canonical text. On the
+server facade, `Request::prefers_color_scheme()` and
+`HttpRequest::prefers_color_scheme()` parse received fields into
+`HttpPrefersColorScheme`; parse errors leave the raw header available. Empty,
+unknown, comma-list, duplicate, control-byte, and oversized values are
+rejected. These helpers only expose metadata: RTTP does not infer a
+preference, adapt content, negotiate `Accept-CH`, retry, or apply browser
+policy.
+
 ## Bounded ECT request Client Hint metadata
 
 With the client feature, `HttpClient::ect(value)` validates and emits one

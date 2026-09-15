@@ -50,7 +50,9 @@ pub use rttp_protocol::client_hints::{
   DeviceMemory as HttpDeviceMemory, DeviceMemoryParseError as HttpDeviceMemoryParseError,
   Downlink as HttpDownlink, DownlinkParseError as HttpDownlinkParseError, Dpr as HttpDpr,
   DprParseError as HttpDprParseError, Ect as HttpEct, EctParseError as HttpEctParseError,
-  Rtt as HttpRtt, RttParseError as HttpRttParseError, ViewportWidth as HttpViewportWidth,
+  PrefersColorScheme as HttpPrefersColorScheme,
+  PrefersColorSchemeParseError as HttpPrefersColorSchemeParseError, Rtt as HttpRtt,
+  RttParseError as HttpRttParseError, ViewportWidth as HttpViewportWidth,
   ViewportWidthParseError as HttpViewportWidthParseError, Width as HttpWidth,
   WidthParseError as HttpWidthParseError,
 };
@@ -525,6 +527,19 @@ impl Request {
       return Ok(None);
     }
     HttpDeviceMemory::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Prefers-Color-Scheme` request Client
+  /// Hint metadata without inferring preferences, negotiating content, or
+  /// emitting Client Hints.
+  pub fn prefers_color_scheme(
+    &self,
+  ) -> Result<Option<HttpPrefersColorScheme>, HttpPrefersColorSchemeParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-Prefers-Color-Scheme").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPrefersColorScheme::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `ECT` request Client Hint metadata without
@@ -2918,6 +2933,28 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpDeviceMemory::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Prefers-Color-Scheme` request Client
+  /// Hint metadata without inferring preferences, negotiating content, or
+  /// emitting Client Hints.
+  pub fn prefers_color_scheme(
+    &self,
+  ) -> Result<Option<HttpPrefersColorScheme>, HttpPrefersColorSchemeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Sec-CH-Prefers-Color-Scheme")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPrefersColorScheme::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `ECT` request Client Hint metadata without

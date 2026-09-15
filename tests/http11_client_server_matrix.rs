@@ -114,6 +114,52 @@ fn sync_client_and_server_exchange_case_insensitive_ect_metadata() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_canonical_prefers_color_scheme_metadata() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Prefers-Color-Scheme server");
+  let addr = server
+    .local_addr()
+    .expect("Prefers-Color-Scheme server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .header("Sec-CH-Prefers-Color-Scheme")
+            .map(str::to_string),
+          request
+            .prefers_color_scheme()
+            .map(|scheme| scheme.map(|scheme| scheme.header_value().to_string()))
+            .map_err(|error| error.to_string()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Prefers-Color-Scheme metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Prefers-Color-Scheme metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .prefers_color_scheme("\tLiGhT ")
+    .expect("Prefers-Color-Scheme should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (Some("light".to_string()), Ok(Some("light".to_string()))),
+    observed_rx
+      .recv()
+      .expect("server should observe Prefers-Color-Scheme metadata")
+  );
+  handle.join().expect("Prefers-Color-Scheme server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_canonical_downlink_metadata() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Downlink server");
   let addr = server.local_addr().expect("Downlink server addr");
