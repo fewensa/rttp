@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::{SocketAddr, TcpListener};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -14,46 +14,7 @@ pub fn bind_local_http_listener(name: &str) -> (TcpListener, SocketAddr) {
   (listener, addr)
 }
 
-pub fn read_http_request<R: Read>(stream: &mut R) -> Vec<u8> {
-  let mut request = Vec::new();
-  let mut buf = [0u8; 1024];
-  let mut content_length = None;
-
-  while let Ok(read) = stream.read(&mut buf) {
-    if read == 0 {
-      break;
-    }
-
-    request.extend_from_slice(&buf[..read]);
-
-    let header_end = request.windows(4).position(|window| window == b"\r\n\r\n");
-    if content_length.is_none() {
-      if let Some(header_end) = header_end {
-        let headers = String::from_utf8_lossy(&request[..header_end + 4]);
-        content_length = headers
-          .lines()
-          .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            if name.eq_ignore_ascii_case("content-length") {
-              value.trim().parse::<usize>().ok()
-            } else {
-              None
-            }
-          })
-          .or(Some(0));
-      }
-    }
-
-    if let (Some(header_end), Some(content_length)) = (header_end, content_length) {
-      let expected_len = header_end + 4 + content_length;
-      if request.len() >= expected_len {
-        break;
-      }
-    }
-  }
-
-  request
-}
+pub use crate::read_http_request;
 
 pub fn spawn_ok_http_server() -> (SocketAddr, JoinHandle<()>) {
   spawn_ok_http_server_count(1)
