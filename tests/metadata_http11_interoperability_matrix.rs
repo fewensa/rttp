@@ -19,6 +19,7 @@ const DPR_CANONICAL: &str = "1.5";
 const DOWNLINK_CANONICAL: &str = "10.25";
 const ECT_CANONICAL: &str = "4g";
 const PREFERS_COLOR_SCHEME_CANONICAL: &str = "dark";
+const PREFERS_REDUCED_MOTION_CANONICAL: &str = "reduce";
 const RTT_CANONICAL: &str = "150";
 const ORIGIN_AGENT_CLUSTER_CANONICAL: &str = "?1";
 const ACCEPT_PATCH_WIRE: &str = r#"Text/Plain; title="a,b\"c", application/json"#;
@@ -62,6 +63,8 @@ struct ObservedRequestMetadata {
   raw_ect: Option<String>,
   prefers_color_scheme: Result<Option<String>, String>,
   raw_prefers_color_scheme: Option<String>,
+  prefers_reduced_motion: Result<Option<String>, String>,
+  raw_prefers_reduced_motion: Option<String>,
   rtt: Result<Option<String>, String>,
   raw_rtt: Option<String>,
 }
@@ -123,6 +126,13 @@ fn observe_request(request: &Request) -> ObservedRequestMetadata {
       .map_err(|error| error.to_string()),
     raw_prefers_color_scheme: request
       .header("Sec-CH-Prefers-Color-Scheme")
+      .map(str::to_string),
+    prefers_reduced_motion: request
+      .prefers_reduced_motion()
+      .map(|motion| motion.map(|motion| motion.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_prefers_reduced_motion: request
+      .header("Sec-CH-Prefers-Reduced-Motion")
       .map(str::to_string),
     rtt: request
       .rtt()
@@ -196,6 +206,8 @@ fn attach_valid_client_metadata(client: &mut HttpClient) -> &mut HttpClient {
     .expect("mixed-case ECT should be accepted")
     .prefers_color_scheme("\tDARK\t")
     .expect("mixed-case Prefers-Color-Scheme should be accepted")
+    .prefers_reduced_motion("\tREDUCE\t")
+    .expect("mixed-case Prefers-Reduced-Motion should be accepted")
     .rtt("\t150\t")
     .expect("RTT should be accepted")
 }
@@ -223,6 +235,14 @@ fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
   assert_eq!(
     Some(PREFERS_COLOR_SCHEME_CANONICAL.to_string()),
     observed.raw_prefers_color_scheme
+  );
+  assert_eq!(
+    Ok(Some(PREFERS_REDUCED_MOTION_CANONICAL.to_string())),
+    observed.prefers_reduced_motion
+  );
+  assert_eq!(
+    Some(PREFERS_REDUCED_MOTION_CANONICAL.to_string()),
+    observed.raw_prefers_reduced_motion
   );
   assert_eq!(Ok(Some(RTT_CANONICAL.to_string())), observed.rtt);
   assert_eq!(Some(RTT_CANONICAL.to_string()), observed.raw_rtt);
@@ -562,6 +582,8 @@ fn http11_absent_metadata_returns_ok_none() {
   assert_eq!(None, observed.raw_ect);
   assert_eq!(Ok(None), observed.prefers_color_scheme);
   assert_eq!(None, observed.raw_prefers_color_scheme);
+  assert_eq!(Ok(None), observed.prefers_reduced_motion);
+  assert_eq!(None, observed.raw_prefers_reduced_motion);
   assert_eq!(Ok(None), observed.rtt);
   assert_eq!(None, observed.raw_rtt);
 
@@ -672,6 +694,18 @@ fn typed_request_helpers_reject_malformed_values_before_connect() {
   });
   reject_before_connect("oversized Prefers-Color-Scheme", |client| {
     client.prefers_color_scheme("a".repeat(64 * 1024 + 1))
+  });
+  reject_before_connect("unknown Prefers-Reduced-Motion", |client| {
+    client.prefers_reduced_motion("auto")
+  });
+  reject_before_connect("duplicate Prefers-Reduced-Motion", |client| {
+    client.prefers_reduced_motion("reduce, no-preference")
+  });
+  reject_before_connect("Prefers-Reduced-Motion with control byte", |client| {
+    client.prefers_reduced_motion("reduce\0")
+  });
+  reject_before_connect("oversized Prefers-Reduced-Motion", |client| {
+    client.prefers_reduced_motion("a".repeat(64 * 1024 + 1))
   });
   reject_before_connect("malformed ECT", |client| client.ect("5g"));
   reject_before_connect("ECT comma list", |client| client.ect("3g, 4g"));

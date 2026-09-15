@@ -1,8 +1,9 @@
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, Rtt, ViewportWidth,
-  Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
-  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
-  MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES,
+  AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersReducedMotion,
+  Rtt, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
+  MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
+  MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES,
+  MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES,
   MAX_WIDTH_VALUE_BYTES,
 };
 
@@ -283,6 +284,58 @@ fn prefers_color_scheme_rejects_invalid_duplicate_oversized_and_control_values()
   let oversized = "a".repeat(MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES + 1);
   assert!(PrefersColorScheme::parse(&oversized).is_err());
   assert!(PrefersColorScheme::parse_values(["light", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn prefers_reduced_motion_accepts_case_insensitive_tokens_and_canonicalizes_them() {
+  assert_eq!(
+    "no-preference",
+    PrefersReducedMotion::NoPreference.header_value()
+  );
+  assert_eq!("reduce", PrefersReducedMotion::Reduce.header_value());
+
+  for (value, expected, canonical) in [
+    (
+      "No-Preference",
+      PrefersReducedMotion::NoPreference,
+      "no-preference",
+    ),
+    ("REDUCE", PrefersReducedMotion::Reduce, "reduce"),
+  ] {
+    let motion = PrefersReducedMotion::parse(format!("\t{value} \t"))
+      .expect("valid prefers-reduced-motion value");
+    assert_eq!(expected, motion);
+    assert_eq!(canonical, motion.header_value());
+    assert_eq!(
+      motion,
+      PrefersReducedMotion::parse(motion.header_value()).expect("roundtrip")
+    );
+  }
+}
+
+#[test]
+fn prefers_reduced_motion_rejects_invalid_duplicate_oversized_and_control_values() {
+  assert!(PrefersReducedMotion::parse_values(["no-preference", "reduce"]).is_err());
+  assert!(PrefersReducedMotion::parse_values([]).is_err());
+
+  for value in [
+    "",
+    " ",
+    "auto",
+    "reduce, no-preference",
+    "reduce\0",
+    "reduce\r\nInjected: yes",
+    "reduce{7f}",
+  ] {
+    assert!(
+      PrefersReducedMotion::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let oversized = "a".repeat(MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES + 1);
+  assert!(PrefersReducedMotion::parse(&oversized).is_err());
+  assert!(PrefersReducedMotion::parse_values(["reduce", oversized.as_str()]).is_err());
 }
 
 #[test]

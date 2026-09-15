@@ -160,6 +160,52 @@ fn sync_client_and_server_exchange_canonical_prefers_color_scheme_metadata() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_canonical_prefers_reduced_motion_metadata() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Prefers-Reduced-Motion server");
+  let addr = server
+    .local_addr()
+    .expect("Prefers-Reduced-Motion server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .header("Sec-CH-Prefers-Reduced-Motion")
+            .map(str::to_string),
+          request
+            .prefers_reduced_motion()
+            .map(|motion| motion.map(|motion| motion.header_value().to_string()))
+            .map_err(|error| error.to_string()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Prefers-Reduced-Motion metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Prefers-Reduced-Motion metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .prefers_reduced_motion("\tReDuCe ")
+    .expect("Prefers-Reduced-Motion should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (Some("reduce".to_string()), Ok(Some("reduce".to_string()))),
+    observed_rx
+      .recv()
+      .expect("server should observe Prefers-Reduced-Motion metadata")
+  );
+  handle.join().expect("Prefers-Reduced-Motion server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_canonical_downlink_metadata() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Downlink server");
   let addr = server.local_addr().expect("Downlink server addr");

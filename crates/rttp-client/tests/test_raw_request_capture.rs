@@ -6165,6 +6165,83 @@ fn raw_prefers_color_scheme_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn prefers_reduced_motion_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-prefers-reduced-motion", "legacy"))
+      .prefers_reduced_motion("\tReDuCe \t")
+      .expect("Sec-CH-Prefers-Reduced-Motion should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("reduce"),
+    header_value(&request, "Sec-CH-Prefers-Reduced-Motion")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| {
+        line
+          .to_ascii_lowercase()
+          .starts_with("sec-ch-prefers-reduced-motion:")
+      })
+      .count(),
+    "typed Sec-CH-Prefers-Reduced-Motion should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn prefers_reduced_motion_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    " ",
+    "auto",
+    "reduce, no-preference",
+    "reduce\0",
+    "reduce\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .prefers_reduced_motion(value)
+        .expect_err("invalid Sec-CH-Prefers-Reduced-Motion input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-Prefers-Reduced-Motion input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_prefers_reduced_motion_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-Prefers-Reduced-Motion", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request, "Sec-CH-Prefers-Reduced-Motion")
+  );
+}
+
+#[test]
 fn raw_dpr_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()
