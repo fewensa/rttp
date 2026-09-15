@@ -21,7 +21,7 @@ use rttp_protocol::access_control_request_private_network::AccessControlRequestP
 use rttp_protocol::authorization::Authorization;
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
-use rttp_protocol::client_hints::{Dpr, Ect, ViewportWidth, Width};
+use rttp_protocol::client_hints::{Dpr, Ect, Rtt, ViewportWidth, Width};
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
 use rttp_protocol::dnt::Dnt;
@@ -560,6 +560,19 @@ impl HttpClient {
     let viewport_width = ViewportWidth::parse(value.as_ref())
       .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
     Ok(self.header(Header::new("Viewport-Width", viewport_width.header_value())))
+  }
+
+  /// Set bounded `RTT` request Client Hint metadata.
+  ///
+  /// The value must be one non-negative decimal millisecond integer with
+  /// optional surrounding HTTP optional whitespace. This replaces any existing
+  /// case-insensitive `RTT` field and only declares request metadata; RTTP
+  /// does not negotiate content, emit `Accept-CH`, or generate this header
+  /// automatically.
+  pub fn rtt<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let rtt = Rtt::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("RTT", rtt.header_value())))
   }
 
   /// Set `DNT` request metadata from the declared tracking preference.

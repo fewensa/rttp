@@ -646,6 +646,16 @@ overflowing, control-byte, and oversized values are errors. This parser reports
 request metadata only; it does not negotiate content, emit Client Hints, track
 viewport size, or adapt representations.
 
+## RTT
+
+`client_hints::Rtt` parses a singleton HTTP `RTT` request Client Hint as a
+non-negative unsigned millisecond integer. The field value is bounded to 64 KiB,
+optional outer SP and HTAB are trimmed, and `header_value()` emits canonical
+decimal text. Empty, malformed, duplicate, signed, fractional, overflowing,
+control-byte, and oversized values are errors. This parser reports request
+metadata only; it does not negotiate content, emit Client Hints, measure
+network delay, or adapt representations.
+
 ## Memento-Datetime
 
 `memento_datetime` parses a singleton `Memento-Datetime` field as one

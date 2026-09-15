@@ -17,6 +17,7 @@ const FROM_CANONICAL: &str = "Ops Team <ops@example.test>";
 const REFERER_CANONICAL: &str = "https://shop.example/checkout?step=pay";
 const DPR_CANONICAL: &str = "1.5";
 const ECT_CANONICAL: &str = "4g";
+const RTT_CANONICAL: &str = "150";
 const ORIGIN_AGENT_CLUSTER_CANONICAL: &str = "?1";
 const ACCEPT_PATCH_WIRE: &str = r#"Text/Plain; title="a,b\"c", application/json"#;
 const ACCEPT_POST_WIRE: &str = "application/json, text/plain; charset=utf-8";
@@ -54,6 +55,8 @@ struct ObservedRequestMetadata {
   raw_dpr: Option<String>,
   ect: Result<Option<String>, String>,
   raw_ect: Option<String>,
+  rtt: Result<Option<String>, String>,
+  raw_rtt: Option<String>,
 }
 
 fn client() -> HttpClient {
@@ -97,6 +100,11 @@ fn observe_request(request: &Request) -> ObservedRequestMetadata {
       .map(|ect| ect.map(|ect| ect.header_value().to_string()))
       .map_err(|error| error.to_string()),
     raw_ect: request.header("ECT").map(str::to_string),
+    rtt: request
+      .rtt()
+      .map(|rtt| rtt.map(|rtt| rtt.header_value()))
+      .map_err(|error| error.to_string()),
+    raw_rtt: request.header("RTT").map(str::to_string),
   }
 }
 
@@ -160,6 +168,8 @@ fn attach_valid_client_metadata(client: &mut HttpClient) -> &mut HttpClient {
     .expect("DPR should be accepted")
     .ect("\t4G\t")
     .expect("mixed-case ECT should be accepted")
+    .rtt("\t150\t")
+    .expect("RTT should be accepted")
 }
 
 fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
@@ -175,6 +185,8 @@ fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
   assert_eq!(Some(DPR_CANONICAL.to_string()), observed.raw_dpr);
   assert_eq!(Ok(Some(ECT_CANONICAL.to_string())), observed.ect);
   assert_eq!(Some(ECT_CANONICAL.to_string()), observed.raw_ect);
+  assert_eq!(Ok(Some(RTT_CANONICAL.to_string())), observed.rtt);
+  assert_eq!(Some(RTT_CANONICAL.to_string()), observed.raw_rtt);
 }
 
 fn assert_valid_response_metadata(response: &Response) {
@@ -506,6 +518,8 @@ fn http11_absent_metadata_returns_ok_none() {
   assert_eq!(None, observed.raw_dpr);
   assert_eq!(Ok(None), observed.ect);
   assert_eq!(None, observed.raw_ect);
+  assert_eq!(Ok(None), observed.rtt);
+  assert_eq!(None, observed.raw_rtt);
 
   assert!(response
     .accept_patch()
@@ -588,6 +602,12 @@ fn typed_request_helpers_reject_malformed_values_before_connect() {
   reject_before_connect("ECT with control byte", |client| client.ect("3g\0"));
   reject_before_connect("oversized ECT", |client| {
     client.ect("4".repeat(64 * 1024 + 1))
+  });
+  reject_before_connect("malformed RTT", |client| client.rtt("1.0"));
+  reject_before_connect("signed RTT", |client| client.rtt("-1"));
+  reject_before_connect("RTT with control byte", |client| client.rtt("150\0"));
+  reject_before_connect("oversized RTT", |client| {
+    client.rtt("1".repeat(64 * 1024 + 1))
   });
 }
 
