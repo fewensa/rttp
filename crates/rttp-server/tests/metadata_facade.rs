@@ -76,6 +76,11 @@ use rttp_server::server::{
   SecFetchUser, SecPurpose,
 };
 
+use rttp_server::server::{
+  HttpAccessControlExposeHeaders, HttpAccessControlExposeHeadersParseError,
+  HttpAccessControlMaxAge, HttpAccessControlMaxAgeParseError,
+};
+
 #[test]
 fn server_dav_response_metadata_uses_protocol_representation() {
   let response = HttpResponse::ok("")
@@ -146,6 +151,46 @@ fn server_access_control_allow_private_network_is_bounded_metadata_only() {
   assert!(unchanged.access_control_allow_private_network().is_err());
   let _: HttpAccessControlAllowPrivateNetwork =
     HttpAccessControlAllowPrivateNetwork::parse("true").expect("true should parse");
+}
+
+#[test]
+fn server_access_control_expose_headers_and_max_age_metadata_are_facade_types() {
+  let response = HttpResponse::ok("body")
+    .header("Access-Control-Expose-Headers", "X-Legacy")
+    .header("Access-Control-Max-Age", "60")
+    .with_access_control_expose_headers("X-Request-Id, ETag")
+    .expect("Access-Control-Expose-Headers should be accepted")
+    .with_access_control_max_age("600")
+    .expect("Access-Control-Max-Age should be accepted");
+
+  let expose_headers: HttpAccessControlExposeHeaders = response
+    .access_control_expose_headers()
+    .expect("Access-Control-Expose-Headers should parse")
+    .expect("Access-Control-Expose-Headers should be present");
+  assert_eq!(expose_headers.field_names(), ["x-request-id", "etag"]);
+  let max_age: HttpAccessControlMaxAge = response
+    .access_control_max_age()
+    .expect("Access-Control-Max-Age should parse")
+    .expect("Access-Control-Max-Age should be present");
+  assert_eq!(600, max_age.seconds());
+
+  let _: HttpAccessControlExposeHeadersParseError =
+    HttpAccessControlExposeHeaders::parse("X-Request Id")
+      .expect_err("malformed Access-Control-Expose-Headers should fail");
+  let _: HttpAccessControlMaxAgeParseError = HttpAccessControlMaxAge::parse("sixty")
+    .expect_err("malformed Access-Control-Max-Age should fail");
+  assert_eq!(
+    None,
+    HttpResponse::ok("")
+      .access_control_expose_headers()
+      .expect("absent Access-Control-Expose-Headers should parse")
+  );
+  assert_eq!(
+    None,
+    HttpResponse::ok("")
+      .access_control_max_age()
+      .expect("absent Access-Control-Max-Age should parse")
+  );
 }
 
 #[test]
