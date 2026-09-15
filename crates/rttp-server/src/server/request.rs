@@ -51,7 +51,9 @@ pub use rttp_protocol::client_hints::{
   Downlink as HttpDownlink, DownlinkParseError as HttpDownlinkParseError, Dpr as HttpDpr,
   DprParseError as HttpDprParseError, Ect as HttpEct, EctParseError as HttpEctParseError,
   PrefersColorScheme as HttpPrefersColorScheme,
-  PrefersColorSchemeParseError as HttpPrefersColorSchemeParseError, Rtt as HttpRtt,
+  PrefersColorSchemeParseError as HttpPrefersColorSchemeParseError,
+  PrefersReducedMotion as HttpPrefersReducedMotion,
+  PrefersReducedMotionParseError as HttpPrefersReducedMotionParseError, Rtt as HttpRtt,
   RttParseError as HttpRttParseError, ViewportWidth as HttpViewportWidth,
   ViewportWidthParseError as HttpViewportWidthParseError, Width as HttpWidth,
   WidthParseError as HttpWidthParseError,
@@ -540,6 +542,21 @@ impl Request {
       return Ok(None);
     }
     HttpPrefersColorScheme::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client
+  /// Hint metadata without inferring preferences, negotiating content, or
+  /// emitting Client Hints.
+  pub fn prefers_reduced_motion(
+    &self,
+  ) -> Result<Option<HttpPrefersReducedMotion>, HttpPrefersReducedMotionParseError> {
+    let values: Vec<&str> = self
+      .headers_named("Sec-CH-Prefers-Reduced-Motion")
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPrefersReducedMotion::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `ECT` request Client Hint metadata without
@@ -2955,6 +2972,28 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpPrefersColorScheme::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client
+  /// Hint metadata without inferring preferences, negotiating content, or
+  /// emitting Client Hints.
+  pub fn prefers_reduced_motion(
+    &self,
+  ) -> Result<Option<HttpPrefersReducedMotion>, HttpPrefersReducedMotionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Sec-CH-Prefers-Reduced-Motion")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPrefersReducedMotion::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `ECT` request Client Hint metadata without

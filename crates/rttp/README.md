@@ -646,6 +646,21 @@ rejected. These helpers only expose metadata: RTTP does not infer a
 preference, adapt content, negotiate `Accept-CH`, retry, or apply browser
 policy.
 
+## Bounded Sec-CH-Prefers-Reduced-Motion request Client Hint metadata
+
+With the client feature, `HttpClient::prefers_reduced_motion(value)` validates
+and emits one singleton `Sec-CH-Prefers-Reduced-Motion` request field through
+`rttp::PrefersReducedMotion`, replacing any existing case-insensitive field.
+The `no-preference` and `reduce` tokens are parsed case-insensitively after
+surrounding SP or HTAB trimming and `header_value()` emits lowercase canonical
+text. On the server facade, `Request::prefers_reduced_motion()` and
+`HttpRequest::prefers_reduced_motion()` parse received fields into
+`HttpPrefersReducedMotion`; parse errors leave the raw header available.
+Empty, unknown, comma-list, duplicate, control-byte, and oversized values are
+rejected. These helpers only expose metadata: RTTP does not infer a
+preference, adapt content, negotiate `Accept-CH`, retry, or apply browser
+policy.
+
 ## Bounded ECT request Client Hint metadata
 
 With the client feature, `HttpClient::ect(value)` validates and emits one

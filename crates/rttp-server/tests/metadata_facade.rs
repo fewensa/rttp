@@ -39,8 +39,9 @@ use rttp_server::server::{
   HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpPrefersColorScheme,
-  HttpPrefersColorSchemeParseError, HttpProxyAuthenticate, HttpProxyAuthenticateChallenge,
-  HttpProxyAuthenticateParameter, HttpProxyAuthenticateParseError, HttpProxyAuthenticationInfo,
+  HttpPrefersColorSchemeParseError, HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError,
+  HttpProxyAuthenticate, HttpProxyAuthenticateChallenge, HttpProxyAuthenticateParameter,
+  HttpProxyAuthenticateParseError, HttpProxyAuthenticationInfo,
   HttpProxyAuthenticationInfoParameter, HttpProxyAuthenticationInfoParseError,
   HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit,
   HttpRateLimitLimitItem, HttpRateLimitLimitParseError, HttpRateLimitParseError,
@@ -1914,6 +1915,64 @@ fn request_facade_parses_prefers_color_scheme_metadata_without_negotiation() {
     HttpPrefersColorScheme::parse("light\0").expect_err("control byte should fail");
   assert!(
     HttpPrefersColorScheme::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized value should fail"
+  );
+}
+
+#[test]
+fn request_facade_parses_prefers_reduced_motion_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nsec-ch-prefers-reduced-motion: \tReDuCe \t\r\n\r\n",
+  )
+  .expect("Prefers-Reduced-Motion request should parse");
+  let motion: HttpPrefersReducedMotion = request
+    .prefers_reduced_motion()
+    .expect("Prefers-Reduced-Motion should parse")
+    .expect("Prefers-Reduced-Motion should be present");
+  assert_eq!("reduce", motion.header_value());
+  assert_eq!(
+    Some("ReDuCe"),
+    request.header("Sec-CH-Prefers-Reduced-Motion")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Prefers-Reduced-Motion should parse");
+  assert_eq!(
+    None,
+    absent
+      .prefers_reduced_motion()
+      .expect("missing Prefers-Reduced-Motion should be valid")
+  );
+
+  for value in ["", "auto", "reduce, no-preference"] {
+    let raw = format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Motion: {value}\r\n\r\n"
+    );
+    let malformed = HttpRequest::parse(raw.as_bytes())
+      .expect("malformed Prefers-Reduced-Motion should remain available");
+    let _: HttpPrefersReducedMotionParseError = malformed
+      .prefers_reduced_motion()
+      .expect_err("malformed Prefers-Reduced-Motion should fail");
+    assert_eq!(
+      Some(value),
+      malformed.header("Sec-CH-Prefers-Reduced-Motion")
+    );
+  }
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Motion: no-preference\r\nsec-ch-prefers-reduced-motion: reduce\r\n\r\n",
+  )
+  .expect("duplicate Prefers-Reduced-Motion request should retain raw metadata");
+  assert!(duplicate.prefers_reduced_motion().is_err());
+  assert_eq!(
+    Some("no-preference"),
+    duplicate.header("Sec-CH-Prefers-Reduced-Motion")
+  );
+
+  let _: HttpPrefersReducedMotionParseError =
+    HttpPrefersReducedMotion::parse("reduce\0").expect_err("control byte should fail");
+  assert!(
+    HttpPrefersReducedMotion::parse("a".repeat(64 * 1024 + 1)).is_err(),
     "oversized value should fail"
   );
 }

@@ -7,6 +7,7 @@ pub const MAX_DPR_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DOWNLINK_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DEVICE_MEMORY_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_WIDTH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_VIEWPORT_WIDTH_VALUE_BYTES: usize = 64 * 1024;
@@ -35,6 +36,13 @@ pub struct DeviceMemory {
 pub enum PrefersColorScheme {
   Light,
   Dark,
+}
+
+/// Parsed, bounded `Sec-CH-Prefers-Reduced-Motion` request Client Hint metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PrefersReducedMotion {
+  NoPreference,
+  Reduce,
 }
 
 /// Parsed, bounded `ECT` request Client Hint metadata.
@@ -81,6 +89,7 @@ pub type DprParseError = ClientHintsParseError;
 pub type DownlinkParseError = ClientHintsParseError;
 pub type DeviceMemoryParseError = ClientHintsParseError;
 pub type PrefersColorSchemeParseError = ClientHintsParseError;
+pub type PrefersReducedMotionParseError = ClientHintsParseError;
 pub type EctParseError = ClientHintsParseError;
 pub type WidthParseError = ClientHintsParseError;
 pub type ViewportWidthParseError = ClientHintsParseError;
@@ -205,6 +214,34 @@ impl PrefersColorScheme {
     match self {
       Self::Light => "light",
       Self::Dark => "dark",
+    }
+  }
+}
+
+impl PrefersReducedMotion {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, PrefersReducedMotionParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, PrefersReducedMotionParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let value = parse_prefers_reduced_motion_singleton(values)?;
+    let value = value.trim_matches([' ', '\t']);
+    if value.eq_ignore_ascii_case("no-preference") {
+      Ok(Self::NoPreference)
+    } else if value.eq_ignore_ascii_case("reduce") {
+      Ok(Self::Reduce)
+    } else {
+      Err(invalid_prefers_reduced_motion_value())
+    }
+  }
+
+  pub const fn header_value(self) -> &'static str {
+    match self {
+      Self::NoPreference => "no-preference",
+      Self::Reduce => "reduce",
     }
   }
 }
@@ -596,6 +633,49 @@ fn validate_bounded_prefers_color_scheme_value(
   Ok(())
 }
 
+fn parse_prefers_reduced_motion_singleton<'a, I>(
+  values: I,
+) -> Result<&'a str, PrefersReducedMotionParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values
+    .next()
+    .ok_or_else(invalid_prefers_reduced_motion_value)?;
+  validate_bounded_prefers_reduced_motion_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_prefers_reduced_motion_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(
+      "duplicate Sec-CH-Prefers-Reduced-Motion header fields",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_bounded_prefers_reduced_motion_value(
+  value: &str,
+) -> Result<(), PrefersReducedMotionParseError> {
+  if value.len() > MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-Prefers-Reduced-Motion header value is too large",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-Prefers-Reduced-Motion control byte",
+    ));
+  }
+  Ok(())
+}
+
 fn parse_ect_singleton<'a, I>(values: I) -> Result<&'a str, EctParseError>
 where
   I: IntoIterator<Item = &'a str>,
@@ -781,6 +861,10 @@ fn invalid_device_memory_value() -> DeviceMemoryParseError {
 
 fn invalid_prefers_color_scheme_value() -> PrefersColorSchemeParseError {
   ClientHintsParseError::new("invalid Sec-CH-Prefers-Color-Scheme header value")
+}
+
+fn invalid_prefers_reduced_motion_value() -> PrefersReducedMotionParseError {
+  ClientHintsParseError::new("invalid Sec-CH-Prefers-Reduced-Motion header value")
 }
 
 fn invalid_ect_value() -> EctParseError {

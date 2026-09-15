@@ -22,28 +22,29 @@ use rttp::server::{
   HttpNegotiateParseError, HttpNel, HttpOriginAgentCluster, HttpOriginAgentClusterParseError,
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpPrefersColorScheme,
-  HttpPrefersColorSchemeParseError, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
-  HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
-  HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
-  HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
-  HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
-  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
-  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
-  HttpSpeculationRulesParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
-  HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError,
-  HttpViewportWidth, HttpViewportWidthParseError, HttpWidth, HttpWidthParseError,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpPrefersColorSchemeParseError, HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError,
+  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit,
+  HttpRateLimitLimitItem, HttpRateLimitLimitParseError, HttpRateLimitParseError,
+  HttpRateLimitRemaining, HttpRateLimitRemainingParseError, HttpRateLimitReset,
+  HttpRateLimitResetParseError, HttpReferer, HttpRefererParseError, HttpRequest,
+  HttpRequestAcceptCharsets, HttpResponse, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
+  HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
+  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
+  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
+  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn,
+  HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
+  HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
+  HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember, HttpUserAgentParseError,
+  HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpViewportWidth,
+  HttpViewportWidthParseError, HttpWidth, HttpWidthParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -153,6 +154,54 @@ fn compatibility_facade_exports_prefers_color_scheme_request_metadata() {
   assert_eq!(
     Some("light"),
     duplicate.header("Sec-CH-Prefers-Color-Scheme")
+  );
+}
+
+#[test]
+fn compatibility_facade_exports_prefers_reduced_motion_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Motion: \tReDuCe \t\r\n\r\n",
+  )
+  .expect("Prefers-Reduced-Motion request should parse");
+  let motion: HttpPrefersReducedMotion = request
+    .prefers_reduced_motion()
+    .expect("Prefers-Reduced-Motion should parse")
+    .expect("Prefers-Reduced-Motion should be present");
+  assert_eq!("reduce", motion.header_value());
+  assert_eq!(
+    Some("ReDuCe"),
+    request.header("Sec-CH-Prefers-Reduced-Motion")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Prefers-Reduced-Motion should parse");
+  assert_eq!(
+    None,
+    absent
+      .prefers_reduced_motion()
+      .expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Motion: auto\r\n\r\n",
+  )
+  .expect("malformed Prefers-Reduced-Motion should remain available");
+  let _: HttpPrefersReducedMotionParseError = malformed
+    .prefers_reduced_motion()
+    .expect_err("unknown Prefers-Reduced-Motion should fail");
+  assert_eq!(
+    Some("auto"),
+    malformed.header("Sec-CH-Prefers-Reduced-Motion")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Motion: no-preference\r\nsec-ch-prefers-reduced-motion: reduce\r\n\r\n",
+  )
+  .expect("duplicate Prefers-Reduced-Motion fields should remain parseable");
+  assert!(duplicate.prefers_reduced_motion().is_err());
+  assert_eq!(
+    Some("no-preference"),
+    duplicate.header("Sec-CH-Prefers-Reduced-Motion")
   );
 }
 

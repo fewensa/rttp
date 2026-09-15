@@ -1071,6 +1071,192 @@ fn h2c_oversized_prefers_color_scheme_reaches_server_accessor_with_raw_header() 
 }
 
 #[test]
+fn h2c_prefers_reduced_motion_helper_reaches_server_accessor() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c Prefers-Reduced-Motion server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.target().to_string(),
+          request
+            .header("Sec-CH-Prefers-Reduced-Motion")
+            .map(str::to_string),
+          request
+            .prefers_reduced_motion()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+            .map_err(|error| error.to_string()),
+        ))
+        .expect("record Prefers-Reduced-Motion");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve h2c Prefers-Reduced-Motion request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .prefers_reduced_motion("\tReDuCe\t")
+    .expect("Prefers-Reduced-Motion should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (
+      "/asset".to_string(),
+      Some("reduce".to_string()),
+      Ok(Some("reduce".to_string()))
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded Prefers-Reduced-Motion")
+  );
+  handle
+    .join()
+    .expect("h2c Prefers-Reduced-Motion server thread");
+}
+
+#[test]
+fn h2c_malformed_prefers_reduced_motion_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c malformed Prefers-Reduced-Motion server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request
+            .header("Sec-CH-Prefers-Reduced-Motion")
+            .map(str::to_string),
+          request.prefers_reduced_motion().is_err(),
+        ))
+        .expect("record malformed Prefers-Reduced-Motion");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve malformed h2c Prefers-Reduced-Motion request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Sec-CH-Prefers-Reduced-Motion", "auto"))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some("auto".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded malformed Prefers-Reduced-Motion")
+  );
+  handle
+    .join()
+    .expect("malformed h2c Prefers-Reduced-Motion server thread");
+}
+
+#[test]
+fn h2c_duplicate_prefers_reduced_motion_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c duplicate Prefers-Reduced-Motion server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request
+            .header("Sec-CH-Prefers-Reduced-Motion")
+            .map(str::to_string),
+          request.prefers_reduced_motion().is_err(),
+        ))
+        .expect("record duplicate Prefers-Reduced-Motion");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve duplicate h2c Prefers-Reduced-Motion request");
+  });
+
+  let authority = addr.to_string();
+  let _stream = send_h2c_prior_knowledge_headers(
+    addr,
+    &[
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", "/asset"),
+      (":authority", authority.as_str()),
+      ("Sec-CH-Prefers-Reduced-Motion", "no-preference"),
+      ("sec-ch-prefers-reduced-motion", "reduce"),
+    ],
+  );
+
+  assert_eq!(
+    (Some("no-preference".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded duplicate Prefers-Reduced-Motion")
+  );
+  handle
+    .join()
+    .expect("duplicate h2c Prefers-Reduced-Motion server thread");
+}
+
+#[test]
+fn h2c_oversized_prefers_reduced_motion_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c oversized Prefers-Reduced-Motion server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)))
+    .with_http2_policy(Http2ServerPolicy::new().with_max_header_list_size(256 * 1024));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let raw = request
+          .header("Sec-CH-Prefers-Reduced-Motion")
+          .map(str::to_string);
+        tx.send((
+          raw.as_ref().map(String::len),
+          request.prefers_reduced_motion().is_err(),
+          raw.is_some(),
+        ))
+        .expect("record oversized Prefers-Reduced-Motion");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve oversized h2c Prefers-Reduced-Motion request");
+  });
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Sec-CH-Prefers-Reduced-Motion", oversized.as_str()))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some(64 * 1024 + 1), true, true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded oversized Prefers-Reduced-Motion")
+  );
+  handle
+    .join()
+    .expect("oversized h2c Prefers-Reduced-Motion server thread");
+}
+
+#[test]
 fn h2c_malformed_dnt_reaches_server_accessor() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c malformed DNT server")

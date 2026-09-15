@@ -658,6 +658,17 @@ control-byte, and oversized values are errors. This parser reports request
 metadata only; it does not infer a preference, adapt content, negotiate
 `Accept-CH`, retry, or apply browser policy.
 
+## Sec-CH-Prefers-Reduced-Motion
+
+`client_hints::PrefersReducedMotion` parses a singleton HTTP
+`Sec-CH-Prefers-Reduced-Motion` request Client Hint as the `no-preference` or
+`reduce` token. The field value is bounded to 64 KiB, optional outer SP and
+HTAB are trimmed, tokens are matched case-insensitively, and `header_value()`
+emits lowercase canonical text. Empty, unknown, comma-list, duplicate,
+forbidden control-byte, and oversized values are errors. This parser reports
+request metadata only; it does not infer a preference, adapt content,
+negotiate `Accept-CH`, retry, or apply browser policy.
+
 ## Width
 
 `client_hints::Width` parses a singleton HTTP `Width` request Client Hint as a

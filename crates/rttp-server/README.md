@@ -518,6 +518,16 @@ field remains available. This is metadata-only: the server does not infer a
 preference, adapt content, negotiate `Accept-CH`, retry, or apply browser
 policy.
 
+`Request::prefers_reduced_motion()` and `HttpRequest::prefers_reduced_motion()`
+parse a singleton `Sec-CH-Prefers-Reduced-Motion` request Client Hint into
+`HttpPrefersReducedMotion`, accepting `no-preference` and `reduce`
+case-insensitively after optional SP or HTAB trimming and exposing lowercase
+canonical text through `header_value()`. Empty, unknown, comma-list, duplicate,
+control-byte, or oversized fields return `HttpPrefersReducedMotionParseError`
+while the raw field remains available. This is metadata-only: the server does
+not infer a preference, adapt content, negotiate `Accept-CH`, retry, or apply
+browser policy.
+
 `Request::ect()` parses a singleton `ECT` request Client Hint into
 `HttpEct`, accepting only `slow-2g`, `2g`, `3g`, and `4g` after trimming
 optional SP or HTAB and exposing the canonical token through
