@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # Exercise each mutually exclusive TLS backend independently.
         feature: [ tls-native, tls-rustls ]
     steps:
       - uses: actions/checkout@v6
