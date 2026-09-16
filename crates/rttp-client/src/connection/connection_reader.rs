@@ -39,6 +39,7 @@ pub struct StreamingResponse<'a, R: Read + ?Sized> {
   url: RoUrl,
   head: Vec<u8>,
   body: ResponseBodyReader<'a, R>,
+  max_buffered_response_body_bytes: usize,
 }
 
 impl<'a, R: Read + ?Sized> StreamingResponse<'a, R> {
@@ -79,7 +80,7 @@ impl<'a, R: Read + ?Sized> StreamingResponse<'a, R> {
     read_response_body_to_end(
       &mut self.body,
       &mut binary,
-      DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+      self.max_buffered_response_body_bytes,
     )?;
     Response::with_trailers_and_informational_and_limit(
       self.url,
@@ -87,7 +88,7 @@ impl<'a, R: Read + ?Sized> StreamingResponse<'a, R> {
       self.body.trailers().clone(),
       Vec::new(),
       content_length,
-      DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+      self.max_buffered_response_body_bytes,
     )
   }
 }
@@ -263,6 +264,7 @@ impl<'a> ConnectionReader<'a> {
       url: RoUrl::from(self.url.clone()),
       head,
       body: ResponseBodyReader::new(self.reader, kind),
+      max_buffered_response_body_bytes: self.max_buffered_response_body_bytes,
     })
   }
 
@@ -1402,7 +1404,7 @@ mod tests {
     let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
     let url = url::Url::parse("http://localhost").unwrap();
     let mut cursor = Cursor::new(raw.as_bytes());
-    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+    let mut reader = ConnectionReader::new_with_limit(&url, &mut cursor, false, 2);
 
     let response = reader
       .streaming_response()
@@ -1415,6 +1417,28 @@ mod tests {
       .content_length()
       .expect("streaming fixed length should be retained");
     assert_eq!(2, content_length.len());
+  }
+
+  #[test]
+  fn streaming_response_read_to_response_rejects_body_over_configured_limit() {
+    let raw = concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 3\r\n",
+      "\r\n",
+      "OK!"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new_with_limit(&url, &mut cursor, false, 2);
+
+    let error = reader
+      .streaming_response()
+      .unwrap()
+      .read_to_response()
+      .expect_err("streaming response should enforce the configured body limit");
+
+    assert!(error.is_body_too_large(), "unexpected error: {error}");
+    assert_eq!(Some(2), error.body_limit());
   }
 
   #[test]
