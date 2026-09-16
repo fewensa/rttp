@@ -1,5 +1,9 @@
 use rttp_test_support as support;
 
+#[cfg(feature = "async")]
+use futures::executor::block_on;
+#[cfg(feature = "async")]
+use futures::io::AllowStdIo;
 use std::collections::HashMap;
 use std::error::Error as _;
 use std::io::{self, Cursor, Read, Write};
@@ -9,6 +13,10 @@ use std::time::Duration;
 
 use flate2::write::{GzEncoder, ZlibEncoder};
 use flate2::Compression;
+#[cfg(feature = "async")]
+use rttp_client::async_streaming_response_after_header;
+#[cfg(feature = "async")]
+use rttp_client::response::Response;
 use rttp_client::types::{Auth, Para, Proxy, RoUrl, StatusCode};
 use rttp_client::ConnectionReader;
 use rttp_client::{Config, HttpClient, DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES};
@@ -26,6 +34,24 @@ fn buffered_response_config(limit: usize) -> Config {
 fn assert_body_too_large(error: rttp_client::error::Error, limit: usize) {
   assert!(error.is_body_too_large(), "unexpected error: {error}");
   assert_eq!(Some(limit), error.body_limit());
+}
+
+#[cfg(feature = "async")]
+fn async_buffered_response(raw: &[u8], limit: usize) -> rttp_client::error::Result<Response> {
+  let header_end = raw
+    .windows(4)
+    .position(|window| window == b"\r\n\r\n")
+    .expect("response header terminator")
+    + 4;
+  let (head, body) = raw.split_at(header_end);
+
+  block_on(async {
+    let mut stream = AllowStdIo::new(Cursor::new(body.to_vec()));
+    async_streaming_response_after_header(&mut stream, false, head.to_vec())
+      .await?
+      .read_to_response(limit)
+      .await
+  })
 }
 
 fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
@@ -286,6 +312,52 @@ fn test_buffered_content_length_response_enforces_exact_body_limit() {
       assert_body_too_large(result.unwrap_err(), 5);
     }
   }
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_streaming_response_materializes_at_exact_content_length_limit() {
+  let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n12345";
+  let response = async_buffered_response(raw, 5).expect("async response at body limit");
+
+  assert_eq!(b"12345", response.body().binary());
+  assert_eq!(
+    Some(5),
+    response.content_length().map(|length| length.len())
+  );
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_streaming_response_materialization_rejects_body_over_limit() {
+  let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\n123456";
+  let error =
+    async_buffered_response(raw, 5).expect_err("async response above body limit should fail");
+
+  assert_body_too_large(error, 5);
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_streaming_response_materializes_chunked_trailers_at_body_limit() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "\r\n",
+    "5\r\n12345\r\n",
+    "0\r\n",
+    "X-Trace: abc\r\n",
+    "\r\n"
+  );
+  let response =
+    async_buffered_response(raw.as_bytes(), 5).expect("async chunked response at body limit");
+
+  assert_eq!(b"12345", response.body().binary());
+  assert!(response.content_length().is_none());
+  assert_eq!(
+    Some("abc"),
+    response.trailer_value("x-trace").map(String::as_str)
+  );
 }
 
 #[test]

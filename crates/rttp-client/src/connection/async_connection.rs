@@ -31,7 +31,7 @@ use crate::connection::connection_reader::{
 use crate::error;
 use crate::request::RawRequest;
 use crate::response::Response;
-use crate::types::{Header, Proxy, ProxyType};
+use crate::types::{Header, Proxy, ProxyType, RoUrl};
 const CRLF: &[u8] = b"\r\n";
 
 struct AsyncTcpStream {
@@ -157,6 +157,18 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
 
   pub fn trailer_value<SName: AsRef<str>>(&self, name: SName) -> Option<&String> {
     self.trailer(name).map(|header| header.value())
+  }
+
+  pub async fn read_to_response(self, max_body_bytes: usize) -> error::Result<Response> {
+    let parts = self.read_to_parts(max_body_bytes).await?;
+    Response::with_trailers_and_informational_and_limit(
+      RoUrl::with("http://localhost"),
+      parts.binary,
+      parts.trailers,
+      parts.informational_responses,
+      parts.content_length,
+      max_body_bytes,
+    )
   }
 
   async fn read_to_parts(mut self, max_body_bytes: usize) -> error::Result<ResponseParts> {
