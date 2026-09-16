@@ -42,8 +42,32 @@ from `Response::content_encoding()` / `Response::content_length()`;
 unsupported, `identity`, or parse-invalid stacks leave the original headers
 and body unchanged. Decoding is atomic: a malformed layer fails the
 response without exposing partial plaintext. Empty bodies are not decoded.
-`max_buffered_response_body_bytes` bounds each decoded layer. Raw
-non-zlib `deflate` is not supported. Streaming bodies and async HTTP/2
+`max_buffered_response_body_bytes` applies independently to each body layer
+materialized by buffered response handling: the raw framed body and every
+decoded `gzip` or zlib-wrapped `deflate` layer. A layer whose materialized
+body is exactly the configured limit succeeds; if any layer exceeds it, the
+buffered read fails deterministically with a body-too-large error. For
+example:
+
+```rust,no_run
+use rttp_client::{Config, HttpClient};
+
+let response = HttpClient::new()
+  .get()
+  .url("http://example.test/large-response")
+  .config(
+    Config::builder()
+      .max_buffered_response_body_bytes(5 * 1024 * 1024)
+      .build(),
+  )
+  .emit()?;
+```
+
+Successful buffered reads preserve the response status, headers, cookies, and
+trailers for access through the normal `Response` APIs. Successful content
+decoding still removes stale `Content-Encoding` and `Content-Length` from the
+parsed header view, while `Response::binary()` retains the original capture.
+Raw non-zlib `deflate` is not supported. Streaming bodies and async HTTP/2
 stay out of this buffered path.
 
 ## Bounded Max-Forwards diagnostics
