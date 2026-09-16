@@ -27,3 +27,21 @@ jobs:
 
       - name: Run tests
         run: cargo test --all-features
+
+  rttp-client-tls:
+    name: RTTP client TLS (${{ matrix.feature }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        feature: [ tls-native, tls-rustls ]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run focused tests
+        run: cargo test -p rttp_client --no-default-features --features ${{ matrix.feature }}
