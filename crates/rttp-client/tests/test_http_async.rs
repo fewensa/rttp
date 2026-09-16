@@ -299,6 +299,63 @@ fn test_async_buffered_chunked_response_enforces_exact_body_limit() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_buffered_chunked_response_preserves_metadata_and_rejects_overflow() {
+  block_on(async {
+    let exact_response = concat!(
+      "HTTP/1.1 201 Created\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "Trailer: X-Trace\r\n",
+      "X-Response: preserved\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+      "5\r\n12345\r\n",
+      "0\r\n",
+      "X-Trace: abc\r\n",
+      "\r\n"
+    );
+    let (addr, _handle) = support::spawn_chunked_response_server(exact_response);
+    let response = client()
+      .url(format!("http://{addr}/chunked"))
+      .config(buffered_response_config(5))
+      .rasync()
+      .await
+      .expect("exact-limit buffered response");
+
+    assert_eq!(201, response.code());
+    assert_eq!("Created", response.reason());
+    assert_eq!(b"12345", response.body().binary());
+    assert_eq!(
+      Some("preserved"),
+      response.header_value("x-response").map(String::as_str)
+    );
+    assert_eq!(
+      Some("abc"),
+      response.trailer_value("x-trace").map(String::as_str)
+    );
+
+    let overflow_response = concat!(
+      "HTTP/1.1 201 Created\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+      "6\r\n123456\r\n",
+      "0\r\n",
+      "\r\n"
+    );
+    let (addr, _handle) = support::spawn_chunked_response_server(overflow_response);
+    let error = client()
+      .url(format!("http://{addr}/chunked"))
+      .config(buffered_response_config(5))
+      .rasync()
+      .await
+      .expect_err("one-byte-over-limit buffered response should fail");
+
+    assert_body_too_large(error, 5);
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_buffered_eof_delimited_response_enforces_exact_body_limit() {
   block_on(async {
     for (body, should_succeed) in [("12345", true), ("123456", false)] {
