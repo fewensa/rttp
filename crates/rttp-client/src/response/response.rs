@@ -134,6 +134,7 @@ impl Response {
     Self::with_trailers_and_informational(url, binary, trailers, Vec::new())
   }
 
+  #[cfg(feature = "http2")]
   pub(crate) fn with_trailers_and_limit(
     url: RoUrl,
     binary: Vec<u8>,
