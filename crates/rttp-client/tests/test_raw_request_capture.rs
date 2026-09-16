@@ -6189,6 +6189,36 @@ fn sec_ch_ua_mobile_helper_emits_one_canonical_request_client_hint() {
   );
 }
 
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_mobile_helper_matches_blocking_contract() {
+  for (value, expected) in [("\t?0 \t", "?0"), ("\t?1 \t", "?1")] {
+    let request = capture_request(|base_url| {
+      block_on(
+        client()
+          .get()
+          .url(format!("{}/asset", base_url))
+          .header(("sec-ch-ua-mobile", "legacy"))
+          .sec_ch_ua_mobile(value)
+          .expect("Sec-CH-UA-Mobile should be accepted")
+          .rasync(),
+      )
+      .expect("request should succeed");
+    });
+    let request = request_text(&request);
+
+    assert_eq!(Some(expected), header_value(&request, "Sec-CH-UA-Mobile"));
+    assert_eq!(
+      1,
+      request
+        .lines()
+        .filter(|line| { line.to_ascii_lowercase().starts_with("sec-ch-ua-mobile:") })
+        .count(),
+      "typed Sec-CH-UA-Mobile should replace an existing same-name field"
+    );
+  }
+}
+
 #[test]
 fn sec_ch_ua_mobile_helper_rejects_malformed_values_before_connecting() {
   let oversized = "a".repeat(64 * 1024 + 1);
@@ -6209,6 +6239,37 @@ fn sec_ch_ua_mobile_helper_rejects_malformed_values_before_connecting() {
         .url(format!("{}/asset", base_url))
         .sec_ch_ua_mobile(value)
         .expect_err("invalid Sec-CH-UA-Mobile input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA-Mobile input must not open a socket"
+    );
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_mobile_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    " ",
+    "true",
+    "false",
+    "?2",
+    "?1, ?1",
+    "?1\0",
+    "?1\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = block_on(async {
+        let mut http_client = client();
+        let request = http_client.get().url(format!("{}/asset", base_url));
+        request.sec_ch_ua_mobile(value)?.rasync().await
+      })
+      .expect_err("invalid Sec-CH-UA-Mobile input must be rejected");
       assert!(error.is_builder());
     });
     assert!(
