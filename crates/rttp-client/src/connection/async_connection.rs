@@ -933,9 +933,9 @@ impl<'a> AsyncConnection<'a> {
       let _ = url;
       let _ = stream;
       let _ = body;
-      return Err(error::no_request_features(
+      Err(error::no_request_features(
         "Async streaming HTTPS request bodies require the tls-rustls feature",
-      ));
+      ))
     }
 
     #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]

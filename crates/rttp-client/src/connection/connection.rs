@@ -994,7 +994,7 @@ impl<'a> Connection<'a> {
     }
     #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
     {
-      return self.block_send_https_native_parts(url, stream);
+      self.block_send_https_native_parts(url, stream)
     }
     #[cfg(all(feature = "tls-rustls", not(feature = "tls-native")))]
     {
@@ -1018,7 +1018,7 @@ impl<'a> Connection<'a> {
     }
     #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
     {
-      return self.block_send_https_native_streaming_parts(url, stream, body);
+      self.block_send_https_native_streaming_parts(url, stream, body)
     }
     #[cfg(all(feature = "tls-rustls", not(feature = "tls-native")))]
     {
