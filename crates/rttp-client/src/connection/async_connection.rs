@@ -123,6 +123,7 @@ impl AsyncWrite for AsyncTcpStream {
 }
 
 pub struct AsyncStreamingResponse<'a, S: AsyncRead + Unpin + ?Sized> {
+  url: RoUrl,
   head: Vec<u8>,
   body: AsyncResponseBodyReader<'a, S>,
 }
@@ -160,9 +161,10 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
   }
 
   pub async fn read_to_response(self, max_body_bytes: usize) -> error::Result<Response> {
+    let url = self.url.clone();
     let parts = self.read_to_parts(max_body_bytes).await?;
     Response::with_trailers_and_informational_and_limit(
-      RoUrl::with("http://localhost"),
+      url,
       parts.binary,
       parts.trailers,
       parts.informational_responses,
@@ -605,11 +607,15 @@ impl<'a> AsyncConnection<'a> {
   where
     S: AsyncRead + Unpin,
   {
-    let mut parts =
-      async_streaming_response_after_header(stream, self.conn.expect_no_response_body(), binary)
-        .await?
-        .read_to_parts(self.conn.config().max_buffered_response_body_bytes())
-        .await?;
+    let mut parts = async_streaming_response_after_header(
+      stream,
+      self.conn.expect_no_response_body(),
+      binary,
+      self.conn.rourl().clone(),
+    )
+    .await?
+    .read_to_parts(self.conn.config().max_buffered_response_body_bytes())
+    .await?;
     parts.informational_responses = informational_responses;
     Ok(parts)
   }
@@ -701,12 +707,14 @@ pub async fn async_streaming_response_after_header<S>(
   stream: &mut S,
   expect_no_body: bool,
   head: Vec<u8>,
+  url: RoUrl,
 ) -> error::Result<AsyncStreamingResponse<'_, S>>
 where
   S: AsyncRead + Unpin + ?Sized,
 {
   let kind = response_body_kind(&head, expect_no_body)?;
   Ok(AsyncStreamingResponse {
+    url,
     head,
     body: AsyncResponseBodyReader::new(stream, kind),
   })
@@ -1582,9 +1590,14 @@ mod tests {
       );
       let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
       let head = async_read_response_head(&mut cursor).await.unwrap();
-      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
-        .await
-        .unwrap();
+      let mut response = async_streaming_response_after_header(
+        &mut cursor,
+        false,
+        head,
+        RoUrl::with("http://localhost"),
+      )
+      .await
+      .unwrap();
       let mut buf = [0; 2];
 
       assert_eq!(200, response.code().unwrap());
@@ -1623,9 +1636,14 @@ mod tests {
       );
       let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
       let head = async_read_response_head(&mut cursor).await.unwrap();
-      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
-        .await
-        .unwrap();
+      let mut response = async_streaming_response_after_header(
+        &mut cursor,
+        false,
+        head,
+        RoUrl::with("http://localhost"),
+      )
+      .await
+      .unwrap();
       let mut body = Vec::new();
 
       response.body_mut().read_to_end(&mut body).await.unwrap();
@@ -1651,7 +1669,14 @@ mod tests {
       let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
       let head = async_read_response_head(&mut cursor).await.unwrap();
 
-      let error = match async_streaming_response_after_header(&mut cursor, false, head).await {
+      let error = match async_streaming_response_after_header(
+        &mut cursor,
+        false,
+        head,
+        RoUrl::with("http://localhost"),
+      )
+      .await
+      {
         Ok(_) => panic!("malformed response header should be rejected"),
         Err(error) => error,
       };

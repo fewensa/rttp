@@ -15,7 +15,7 @@ use futures::executor::block_on;
 #[cfg(feature = "async")]
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, Cursor as AsyncCursor};
 #[cfg(feature = "async")]
-use rttp_client::types::{Proxy, StatusCode};
+use rttp_client::types::{Proxy, RoUrl, StatusCode};
 #[cfg(feature = "async")]
 use rttp_client::{
   async_streaming_response_after_header, Config, HttpClient,
@@ -354,9 +354,14 @@ fn test_async_streaming_response_can_read_body_larger_than_buffered_limit() {
     let body_len = DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES + 1;
     let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {body_len}\r\n\r\n").into_bytes();
     let mut stream = AllowStdIo::new(Cursor::new(vec![b'x'; body_len]));
-    let mut response = async_streaming_response_after_header(&mut stream, false, head)
-      .await
-      .unwrap();
+    let mut response = async_streaming_response_after_header(
+      &mut stream,
+      false,
+      head,
+      RoUrl::with("http://localhost"),
+    )
+    .await
+    .unwrap();
     let mut body = Vec::new();
 
     response.body_mut().read_to_end(&mut body).await.unwrap();
@@ -631,9 +636,14 @@ fn test_async_streaming_response_constructor_is_exported() {
       .as_bytes()
       .to_vec();
     let mut stream = AllowStdIo::new(Cursor::new(b"hello"));
-    let mut response = async_streaming_response_after_header(&mut stream, false, head)
-      .await
-      .unwrap();
+    let mut response = async_streaming_response_after_header(
+      &mut stream,
+      false,
+      head,
+      RoUrl::with("http://localhost"),
+    )
+    .await
+    .unwrap();
     let mut body = Vec::new();
 
     response.body_mut().read_to_end(&mut body).await.unwrap();
@@ -660,9 +670,14 @@ fn test_async_204_with_misleading_content_length_keeps_next_response_readable() 
     let mut stream = AllowStdIo::new(Cursor::new(raw.as_bytes()));
     let head = async_read_test_response_head(&mut stream).await;
 
-    let mut first = async_streaming_response_after_header(&mut stream, false, head)
-      .await
-      .unwrap();
+    let mut first = async_streaming_response_after_header(
+      &mut stream,
+      false,
+      head,
+      RoUrl::with("http://localhost"),
+    )
+    .await
+    .unwrap();
     let mut body = Vec::new();
     first.body_mut().read_to_end(&mut body).await.unwrap();
 
@@ -688,9 +703,14 @@ fn test_async_204_with_misleading_content_length_keeps_next_response_readable() 
     );
 
     let head = async_read_test_response_head(&mut stream).await;
-    let mut second = async_streaming_response_after_header(&mut stream, false, head)
-      .await
-      .unwrap();
+    let mut second = async_streaming_response_after_header(
+      &mut stream,
+      false,
+      head,
+      RoUrl::with("http://localhost"),
+    )
+    .await
+    .unwrap();
     let mut body = Vec::new();
     second.body_mut().read_to_end(&mut body).await.unwrap();
 
@@ -717,9 +737,14 @@ fn test_async_304_with_misleading_chunked_framing_keeps_next_response_readable()
     let mut stream = AllowStdIo::new(Cursor::new(raw.as_bytes()));
     let head = async_read_test_response_head(&mut stream).await;
 
-    let mut first = async_streaming_response_after_header(&mut stream, false, head)
-      .await
-      .unwrap();
+    let mut first = async_streaming_response_after_header(
+      &mut stream,
+      false,
+      head,
+      RoUrl::with("http://localhost"),
+    )
+    .await
+    .unwrap();
     let mut body = Vec::new();
     first.body_mut().read_to_end(&mut body).await.unwrap();
 
@@ -745,9 +770,14 @@ fn test_async_304_with_misleading_chunked_framing_keeps_next_response_readable()
     );
 
     let head = async_read_test_response_head(&mut stream).await;
-    let mut second = async_streaming_response_after_header(&mut stream, false, head)
-      .await
-      .unwrap();
+    let mut second = async_streaming_response_after_header(
+      &mut stream,
+      false,
+      head,
+      RoUrl::with("http://localhost"),
+    )
+    .await
+    .unwrap();
     let mut body = Vec::new();
     second.body_mut().read_to_end(&mut body).await.unwrap();
 

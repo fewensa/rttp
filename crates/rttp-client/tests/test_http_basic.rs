@@ -47,10 +47,15 @@ fn async_buffered_response(raw: &[u8], limit: usize) -> rttp_client::error::Resu
 
   block_on(async {
     let mut stream = AllowStdIo::new(Cursor::new(body.to_vec()));
-    async_streaming_response_after_header(&mut stream, false, head.to_vec())
-      .await?
-      .read_to_response(limit)
-      .await
+    async_streaming_response_after_header(
+      &mut stream,
+      false,
+      head.to_vec(),
+      RoUrl::with("http://example.test/stream"),
+    )
+    .await?
+    .read_to_response(limit)
+    .await
   })
 }
 
@@ -321,6 +326,7 @@ fn test_async_streaming_response_materializes_at_exact_content_length_limit() {
   let response = async_buffered_response(raw, 5).expect("async response at body limit");
 
   assert_eq!(b"12345", response.body().binary());
+  assert_eq!("example.test", response.host());
   assert_eq!(
     Some(5),
     response.content_length().map(|length| length.len())
