@@ -8,6 +8,7 @@ pub const MAX_DOWNLINK_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DEVICE_MEMORY_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_MOBILE_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_CONTRAST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
@@ -45,6 +46,12 @@ pub enum PrefersColorScheme {
 pub enum SecChUaMobile {
   NotMobile,
   Mobile,
+}
+
+/// Parsed, bounded `Sec-CH-UA-Platform` request Client Hint metadata.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SecChUaPlatform {
+  value: String,
 }
 
 /// Parsed, bounded `Sec-CH-Prefers-Reduced-Motion` request Client Hint metadata.
@@ -108,6 +115,7 @@ pub type DownlinkParseError = ClientHintsParseError;
 pub type DeviceMemoryParseError = ClientHintsParseError;
 pub type PrefersColorSchemeParseError = ClientHintsParseError;
 pub type SecChUaMobileParseError = ClientHintsParseError;
+pub type SecChUaPlatformParseError = ClientHintsParseError;
 pub type PrefersReducedMotionParseError = ClientHintsParseError;
 pub type PrefersContrastParseError = ClientHintsParseError;
 pub type EctParseError = ClientHintsParseError;
@@ -267,6 +275,35 @@ impl SecChUaMobile {
       Self::NotMobile => "?0",
       Self::Mobile => "?1",
     }
+  }
+}
+
+impl SecChUaPlatform {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, SecChUaPlatformParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, SecChUaPlatformParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let value = parse_sec_ch_ua_platform_singleton(values)?;
+    let value = value.trim_matches([' ', '\t']);
+    let value = parse_sec_ch_ua_platform_string(value)?;
+    Ok(Self { value })
+  }
+
+  pub fn header_value(&self) -> String {
+    let mut header_value = String::with_capacity(self.value.len() + 2);
+    header_value.push('"');
+    for character in self.value.chars() {
+      if matches!(character, '"' | '\\') {
+        header_value.push('\\');
+      }
+      header_value.push(character);
+    }
+    header_value.push('"');
+    header_value
   }
 }
 
@@ -756,6 +793,73 @@ fn validate_bounded_sec_ch_ua_mobile_value(value: &str) -> Result<(), SecChUaMob
   Ok(())
 }
 
+fn parse_sec_ch_ua_platform_singleton<'a, I>(
+  values: I,
+) -> Result<&'a str, SecChUaPlatformParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values.next().ok_or_else(invalid_sec_ch_ua_platform_value)?;
+  validate_bounded_sec_ch_ua_platform_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_sec_ch_ua_platform_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(
+      "duplicate Sec-CH-UA-Platform header fields",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_bounded_sec_ch_ua_platform_value(value: &str) -> Result<(), SecChUaPlatformParseError> {
+  if value.len() > MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-UA-Platform header value is too large",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-UA-Platform control byte",
+    ));
+  }
+  Ok(())
+}
+
+fn parse_sec_ch_ua_platform_string(value: &str) -> Result<String, SecChUaPlatformParseError> {
+  let characters: Vec<char> = value.chars().collect();
+  if characters.len() < 2 || characters[0] != '"' || characters[characters.len() - 1] != '"' {
+    return Err(invalid_sec_ch_ua_platform_value());
+  }
+
+  let mut parsed = String::with_capacity(value.len() - 2);
+  let mut index = 1;
+  while index < characters.len() - 1 {
+    match characters[index] {
+      '\\' => {
+        index += 1;
+        if index >= characters.len() - 1 || !matches!(characters[index], '"' | '\\') {
+          return Err(invalid_sec_ch_ua_platform_value());
+        }
+        parsed.push(characters[index]);
+      }
+      '"' => return Err(invalid_sec_ch_ua_platform_value()),
+      character if character.is_ascii_control() => {
+        return Err(invalid_sec_ch_ua_platform_value());
+      }
+      character => parsed.push(character),
+    }
+    index += 1;
+  }
+  Ok(parsed)
+}
+
 fn parse_prefers_reduced_motion_singleton<'a, I>(
   values: I,
 ) -> Result<&'a str, PrefersReducedMotionParseError>
@@ -1025,6 +1129,10 @@ fn invalid_prefers_color_scheme_value() -> PrefersColorSchemeParseError {
 
 fn invalid_sec_ch_ua_mobile_value() -> SecChUaMobileParseError {
   ClientHintsParseError::new("invalid Sec-CH-UA-Mobile header value")
+}
+
+fn invalid_sec_ch_ua_platform_value() -> SecChUaPlatformParseError {
+  ClientHintsParseError::new("invalid Sec-CH-UA-Platform header value")
 }
 
 fn invalid_prefers_reduced_motion_value() -> PrefersReducedMotionParseError {
