@@ -57,7 +57,8 @@ pub use rttp_protocol::client_hints::{
   PrefersReducedMotion as HttpPrefersReducedMotion,
   PrefersReducedMotionParseError as HttpPrefersReducedMotionParseError, Rtt as HttpRtt,
   RttParseError as HttpRttParseError, SecChUaMobile as HttpSecChUaMobile,
-  SecChUaMobileParseError as HttpSecChUaMobileParseError, ViewportWidth as HttpViewportWidth,
+  SecChUaMobileParseError as HttpSecChUaMobileParseError, SecChUaPlatform as HttpSecChUaPlatform,
+  SecChUaPlatformParseError as HttpSecChUaPlatformParseError, ViewportWidth as HttpViewportWidth,
   ViewportWidthParseError as HttpViewportWidthParseError, Width as HttpWidth,
   WidthParseError as HttpWidthParseError,
 };
@@ -556,6 +557,19 @@ impl Request {
       return Ok(None);
     }
     HttpSecChUaMobile::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Platform` request Client Hint metadata
+  /// without inferring an operating system, negotiating the UA brands family,
+  /// or emitting Client Hints.
+  pub fn sec_ch_ua_platform(
+    &self,
+  ) -> Result<Option<HttpSecChUaPlatform>, HttpSecChUaPlatformParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-UA-Platform").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaPlatform::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client
@@ -3015,6 +3029,24 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecChUaMobile::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Platform` request Client Hint metadata
+  /// without inferring an operating system, negotiating the UA brands family,
+  /// or emitting Client Hints.
+  pub fn sec_ch_ua_platform(
+    &self,
+  ) -> Result<Option<HttpSecChUaPlatform>, HttpSecChUaPlatformParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-CH-UA-Platform"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaPlatform::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client

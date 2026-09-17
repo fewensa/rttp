@@ -240,6 +240,83 @@ fn public_facade_exports_content_negotiation_metadata_types() {
   let server_vary =
     rttp_server::server::HttpVary::parse("*").expect("Vary server type should parse");
   assert!(server_vary.is_wildcard());
+
+  let platform: rttp::SecChUaPlatform =
+    rttp::SecChUaPlatform::parse("\"Windows\"").expect("platform facade type should parse");
+  assert_eq!("\"Windows\"", platform.header_value());
+  let server_platform = rttp_server::server::HttpSecChUaPlatform::parse("\"Linux\"")
+    .expect("server platform facade type should parse");
+  assert_eq!("\"Linux\"", server_platform.header_value());
+}
+
+#[test]
+fn sec_ch_ua_platform_parses_valid_duplicate_and_malformed_http11_headers() {
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_platform()
+          .map(|platform| platform.map(|platform| platform.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Platform").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("platform"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /platform HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Platform: \"Windows\"\r\nConnection: close\r\n\r\n",
+  );
+  assert_eq!(
+    (
+      Ok(Some("\"Windows\"".to_owned())),
+      Some("\"Windows\"".to_owned())
+    ),
+    observed_rx
+      .recv_timeout(TIMEOUT)
+      .expect("observe valid Sec-CH-UA-Platform")
+  );
+  handle.join().expect("valid platform server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      request
+        .sec_ch_ua_platform()
+        .map(|platform| platform.map(|platform| platform.header_value()))
+    },
+    |_| HttpResponse::ok("duplicate"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /platform HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Platform: \"Windows\"\r\nsec-ch-ua-platform: \"Linux\"\r\nConnection: close\r\n\r\n",
+  );
+  assert!(observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe duplicate Sec-CH-UA-Platform")
+    .is_err());
+  handle.join().expect("duplicate platform server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      request
+        .sec_ch_ua_platform()
+        .map(|platform| platform.map(|platform| platform.header_value()))
+    },
+    |_| HttpResponse::ok("malformed"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /platform HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Platform: Windows\r\nConnection: close\r\n\r\n",
+  );
+  assert!(observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe malformed Sec-CH-UA-Platform")
+    .is_err());
+  handle.join().expect("malformed platform server thread");
+
+  assert!(rttp::SecChUaPlatform::parse("Windows").is_err());
+  assert!(rttp::SecChUaPlatform::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
+  assert!(rttp::SecChUaPlatform::parse("\"Windows\0\"").is_err());
 }
 
 #[test]
