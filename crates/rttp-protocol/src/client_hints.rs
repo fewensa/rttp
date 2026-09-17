@@ -850,7 +850,7 @@ fn parse_sec_ch_ua_platform_string(value: &str) -> Result<String, SecChUaPlatfor
         parsed.push(characters[index]);
       }
       '"' => return Err(invalid_sec_ch_ua_platform_value()),
-      character if character.is_ascii_control() => {
+      character if !character.is_ascii() || character.is_ascii_control() => {
         return Err(invalid_sec_ch_ua_platform_value());
       }
       character => parsed.push(character),

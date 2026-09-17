@@ -1,10 +1,11 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
-  PrefersReducedMotion, Rtt, SecChUaMobile, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
-  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES,
-  MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES,
-  MAX_PREFERS_CONTRAST_VALUE_BYTES, MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES,
-  MAX_SEC_CH_UA_MOBILE_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  PrefersReducedMotion, Rtt, SecChUaMobile, SecChUaPlatform, ViewportWidth, Width,
+  MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
+  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
+  MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
+  MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_SEC_CH_UA_MOBILE_VALUE_BYTES,
+  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -337,6 +338,23 @@ fn sec_ch_ua_mobile_rejects_invalid_duplicate_oversized_and_control_values() {
   let oversized = "a".repeat(MAX_SEC_CH_UA_MOBILE_VALUE_BYTES + 1);
   assert!(SecChUaMobile::parse(&oversized).is_err());
   assert!(SecChUaMobile::parse_values(["?1", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn sec_ch_ua_platform_rejects_non_ascii_structured_strings() {
+  for value in [
+    "\"\u{1f34e}\"",
+    "\"Windows\u{80}\"",
+    "\"\u{65e5}\u{672c}\u{8a9e}\"",
+  ] {
+    assert!(
+      SecChUaPlatform::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let platform = SecChUaPlatform::parse(r#""Windows\"""#).expect("valid ASCII string");
+  assert_eq!(r#""Windows\"""#, platform.header_value());
 }
 
 #[test]
