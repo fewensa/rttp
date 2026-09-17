@@ -293,6 +293,10 @@ impl SecChUaPlatform {
     Ok(Self { value })
   }
 
+  pub fn value(&self) -> &str {
+    &self.value
+  }
+
   pub fn header_value(&self) -> String {
     let mut header_value = String::with_capacity(self.value.len() + 2);
     header_value.push('"');

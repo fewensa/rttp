@@ -5,7 +5,7 @@ use rttp_protocol::client_hints::{
   MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
   MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
   MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_SEC_CH_UA_MOBILE_VALUE_BYTES,
-  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -341,11 +341,44 @@ fn sec_ch_ua_mobile_rejects_invalid_duplicate_oversized_and_control_values() {
 }
 
 #[test]
-fn sec_ch_ua_platform_rejects_non_ascii_structured_strings() {
+fn sec_ch_ua_platform_accepts_structured_strings_and_canonicalizes_them() {
+  for (value, expected_value, canonical) in [
+    (r#""Windows""#, "Windows", r#""Windows""#),
+    (r#""macOS""#, "macOS", r#""macOS""#),
+    (r#""Chrome OS""#, "Chrome OS", r#""Chrome OS""#),
+    (r#""Windows\\\"""#, "Windows\\\"", r#""Windows\\\"""#),
+  ] {
+    let platform =
+      SecChUaPlatform::parse(format!("\t{value} \t")).expect("valid Sec-CH-UA-Platform value");
+    assert_eq!(expected_value, platform.value());
+    assert_eq!(canonical, platform.header_value());
+    assert_eq!(
+      platform,
+      SecChUaPlatform::parse(platform.header_value()).expect("roundtrip")
+    );
+  }
+}
+
+#[test]
+fn sec_ch_ua_platform_rejects_invalid_duplicate_oversized_and_control_values() {
+  assert!(SecChUaPlatform::parse_values([r#""Windows""#, r#""Linux""#]).is_err());
+  assert!(SecChUaPlatform::parse_values([]).is_err());
+
   for value in [
+    "",
+    " ",
+    "Windows",
+    r#""Windows", "Linux""#,
+    r#""Windows";foo=bar"#,
+    r#""unterminated"#,
+    r#""bad"quote""#,
+    r#""bad\escape""#,
     "\"\u{1f34e}\"",
     "\"Windows\u{80}\"",
     "\"\u{65e5}\u{672c}\u{8a9e}\"",
+    "\"Windows\0\"",
+    "\"Windows\r\nInjected: yes\"",
+    "\"Windows\u{7f}\"",
   ] {
     assert!(
       SecChUaPlatform::parse(value).is_err(),
@@ -353,8 +386,9 @@ fn sec_ch_ua_platform_rejects_non_ascii_structured_strings() {
     );
   }
 
-  let platform = SecChUaPlatform::parse(r#""Windows\"""#).expect("valid ASCII string");
-  assert_eq!(r#""Windows\"""#, platform.header_value());
+  let oversized = format!("\"{}\"", "x".repeat(MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES));
+  assert!(SecChUaPlatform::parse(&oversized).is_err());
+  assert!(SecChUaPlatform::parse_values([r#""Windows""#, oversized.as_str()]).is_err());
 }
 
 #[test]
