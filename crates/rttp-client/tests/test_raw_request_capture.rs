@@ -6298,6 +6298,147 @@ fn raw_sec_ch_ua_mobile_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn sec_ch_ua_platform_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-ua-platform", "legacy"))
+      .sec_ch_ua_platform("\t\"Windows\\\\\\\"\" \t")
+      .expect("Sec-CH-UA-Platform should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#""Windows\\\"""#),
+    header_value(&request, "Sec-CH-UA-Platform")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| { line.to_ascii_lowercase().starts_with("sec-ch-ua-platform:") })
+      .count(),
+    "typed Sec-CH-UA-Platform should replace an existing same-name field"
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_platform_helper_matches_blocking_contract() {
+  for (value, expected) in [
+    ("\t\"Windows\" \t", r#""Windows""#),
+    ("\t\"Linux\" \t", r#""Linux""#),
+  ] {
+    let request = capture_request(|base_url| {
+      block_on(
+        client()
+          .get()
+          .url(format!("{}/asset", base_url))
+          .header(("sec-ch-ua-platform", "legacy"))
+          .sec_ch_ua_platform(value)
+          .expect("Sec-CH-UA-Platform should be accepted")
+          .rasync(),
+      )
+      .expect("request should succeed");
+    });
+    let request = request_text(&request);
+
+    assert_eq!(Some(expected), header_value(&request, "Sec-CH-UA-Platform"));
+    assert_eq!(
+      1,
+      request
+        .lines()
+        .filter(|line| { line.to_ascii_lowercase().starts_with("sec-ch-ua-platform:") })
+        .count(),
+      "typed Sec-CH-UA-Platform should replace an existing same-name field"
+    );
+  }
+}
+
+#[test]
+fn sec_ch_ua_platform_helper_rejects_malformed_values_before_connecting() {
+  let oversized = format!("\"{}\"", "x".repeat(64 * 1024));
+  for value in [
+    "",
+    " ",
+    "Windows",
+    r#""Windows", "Linux""#,
+    r#""Windows";foo=bar"#,
+    r#""unterminated"#,
+    r#""bad\escape""#,
+    "\"Windows\0\"",
+    "\"Windows\r\nInjected: yes\"",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_ch_ua_platform(value)
+        .expect_err("invalid Sec-CH-UA-Platform input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA-Platform input must not open a socket"
+    );
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_platform_helper_rejects_malformed_values_before_connecting() {
+  let oversized = format!("\"{}\"", "x".repeat(64 * 1024));
+  for value in [
+    "",
+    " ",
+    "Windows",
+    r#""Windows", "Linux""#,
+    r#""Windows";foo=bar"#,
+    r#""unterminated"#,
+    r#""bad\escape""#,
+    "\"Windows\0\"",
+    "\"Windows\r\nInjected: yes\"",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = block_on(async {
+        let mut http_client = client();
+        let request = http_client.get().url(format!("{}/asset", base_url));
+        request.sec_ch_ua_platform(value)?.rasync().await
+      })
+      .expect_err("invalid Sec-CH-UA-Platform input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA-Platform input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_sec_ch_ua_platform_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-UA-Platform", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request, "Sec-CH-UA-Platform")
+  );
+}
+
+#[test]
 fn prefers_reduced_motion_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()
