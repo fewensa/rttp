@@ -1456,6 +1456,19 @@ only; it does not infer a platform, negotiate the UA brands family, emit
 policy. Raw values remain available through
 `header(("Sec-CH-UA-Platform", "..."))`.
 
+## Bounded Sec-CH-UA-Arch request Client Hint metadata
+
+`HttpClient::sec_ch_ua_arch(value)` validates and emits one bounded
+`Sec-CH-UA-Arch` request field through the shared `SecChUaArch` type, replacing
+any existing case-insensitive field. The value must be one Structured Fields
+string; optional surrounding SP or HTAB is trimmed and canonical quoted-string
+escaping is emitted. Empty, non-string, comma-list, parameterized, duplicate,
+non-ASCII, forbidden-control, invalid escape, and oversized values are rejected
+before connecting. This helper declares metadata only; it does not infer an
+architecture, negotiate the UA brands family, emit `Accept-CH`, generate Client
+Hints automatically, retry, or apply browser policy. Raw values remain available
+through `header(("Sec-CH-UA-Arch", "..."))`.
+
 ## Bounded Sec-CH-Prefers-Reduced-Motion request Client Hint metadata
 
 `HttpClient::prefers_reduced_motion(value)` validates and emits one bounded

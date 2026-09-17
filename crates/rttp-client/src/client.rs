@@ -23,7 +23,7 @@ use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::client_hints::{
   DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast, PrefersReducedMotion, Rtt,
-  SecChUaMobile, SecChUaPlatform, ViewportWidth, Width,
+  SecChUaArch, SecChUaMobile, SecChUaPlatform, ViewportWidth, Width,
 };
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -598,6 +598,22 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-CH-UA-Platform",
       sec_ch_ua_platform.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-CH-UA-Arch` request Client Hint metadata.
+  ///
+  /// The value must be one Structured Fields string with optional surrounding
+  /// HTTP optional whitespace. This replaces any existing case-insensitive
+  /// `Sec-CH-UA-Arch` field and only declares request metadata; RTTP does not
+  /// infer an architecture, negotiate the UA brands family, emit `Accept-CH`,
+  /// or generate this header automatically.
+  pub fn sec_ch_ua_arch<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_ch_ua_arch = SecChUaArch::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-CH-UA-Arch",
+      sec_ch_ua_arch.header_value(),
     )))
   }
 
