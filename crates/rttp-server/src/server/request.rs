@@ -56,7 +56,8 @@ pub use rttp_protocol::client_hints::{
   PrefersContrastParseError as HttpPrefersContrastParseError,
   PrefersReducedMotion as HttpPrefersReducedMotion,
   PrefersReducedMotionParseError as HttpPrefersReducedMotionParseError, Rtt as HttpRtt,
-  RttParseError as HttpRttParseError, SecChUaMobile as HttpSecChUaMobile,
+  RttParseError as HttpRttParseError, SecChUaArch as HttpSecChUaArch,
+  SecChUaArchParseError as HttpSecChUaArchParseError, SecChUaMobile as HttpSecChUaMobile,
   SecChUaMobileParseError as HttpSecChUaMobileParseError, SecChUaPlatform as HttpSecChUaPlatform,
   SecChUaPlatformParseError as HttpSecChUaPlatformParseError, ViewportWidth as HttpViewportWidth,
   ViewportWidthParseError as HttpViewportWidthParseError, Width as HttpWidth,
@@ -557,6 +558,17 @@ impl Request {
       return Ok(None);
     }
     HttpSecChUaMobile::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Arch` request Client Hint metadata
+  /// without inferring an architecture, negotiating the UA brands family,
+  /// or emitting Client Hints.
+  pub fn sec_ch_ua_arch(&self) -> Result<Option<HttpSecChUaArch>, HttpSecChUaArchParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-UA-Arch").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaArch::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-UA-Platform` request Client Hint metadata
@@ -3029,6 +3041,22 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecChUaMobile::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Arch` request Client Hint metadata
+  /// without inferring an architecture, negotiating the UA brands family,
+  /// or emitting Client Hints.
+  pub fn sec_ch_ua_arch(&self) -> Result<Option<HttpSecChUaArch>, HttpSecChUaArchParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-CH-UA-Arch"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaArch::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-UA-Platform` request Client Hint metadata
