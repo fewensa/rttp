@@ -528,6 +528,16 @@ remains available. This is metadata-only: the server does not infer a mobile
 preference, negotiate the UA brands family, emit `Accept-CH`, retry, or apply
 browser policy.
 
+`Request::sec_ch_ua_platform()` and `HttpRequest::sec_ch_ua_platform()` parse a
+singleton `Sec-CH-UA-Platform` request Client Hint into `HttpSecChUaPlatform`,
+accepting one Structured Fields string after optional SP or HTAB trimming and
+exposing canonical quoted-string text through `header_value()`. Empty,
+non-string, comma-list, parameterized, duplicate, non-ASCII, forbidden-control,
+invalid-escape, or oversized fields return `HttpSecChUaPlatformParseError`
+while the raw field remains available. This is metadata-only: the server does
+not infer a platform, negotiate the UA brands family, emit `Accept-CH`, retry,
+or apply browser policy.
+
 `Request::prefers_reduced_motion()` and `HttpRequest::prefers_reduced_motion()`
 parse a singleton `Sec-CH-Prefers-Reduced-Motion` request Client Hint into
 `HttpPrefersReducedMotion`, accepting `no-preference` and `reduce`
