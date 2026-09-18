@@ -247,6 +247,13 @@ fn public_facade_exports_content_negotiation_metadata_types() {
   let server_platform = rttp_server::server::HttpSecChUaPlatform::parse("\"Linux\"")
     .expect("server platform facade type should parse");
   assert_eq!("\"Linux\"", server_platform.header_value());
+
+  let arch: rttp::SecChUaArch =
+    rttp::SecChUaArch::parse("\"x86\\\"_64\"").expect("arch facade type should parse");
+  assert_eq!(r#""x86\"_64""#, arch.header_value());
+  let server_arch = rttp_server::server::HttpSecChUaArch::parse("\"arm\"")
+    .expect("server arch facade type should parse");
+  assert_eq!("\"arm\"", server_arch.header_value());
 }
 
 #[test]
@@ -317,6 +324,45 @@ fn sec_ch_ua_platform_parses_valid_duplicate_and_malformed_http11_headers() {
   assert!(rttp::SecChUaPlatform::parse("Windows").is_err());
   assert!(rttp::SecChUaPlatform::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
   assert!(rttp::SecChUaPlatform::parse("\"Windows\0\"").is_err());
+}
+
+#[test]
+fn sec_ch_ua_arch_parses_valid_and_malformed_http11_headers() {
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_arch()
+          .map(|arch| arch.map(|arch| arch.header_value())),
+        request.header("Sec-CH-UA-Arch").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("arch"),
+  );
+  write_raw_request(addr, b"GET /arch HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Arch: \"x86\"\r\nConnection: close\r\n\r\n");
+  assert_eq!(
+    (Ok(Some("\"x86\"".to_owned())), Some("\"x86\"".to_owned())),
+    observed_rx.recv_timeout(TIMEOUT).expect("observe arch")
+  );
+  handle.join().expect("arch server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      request
+        .sec_ch_ua_arch()
+        .map(|arch| arch.map(|arch| arch.header_value()))
+    },
+    |_| HttpResponse::ok("arch malformed"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /arch HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Arch: x86\r\nConnection: close\r\n\r\n",
+  );
+  assert!(observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe malformed arch")
+    .is_err());
+  handle.join().expect("malformed arch server thread");
 }
 
 #[test]

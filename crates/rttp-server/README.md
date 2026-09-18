@@ -538,6 +538,12 @@ while the raw field remains available. This is metadata-only: the server does
 not infer a platform, negotiate the UA brands family, emit `Accept-CH`, retry,
 or apply browser policy.
 
+`Request::sec_ch_ua_arch()` and `HttpRequest::sec_ch_ua_arch()` parse a
+singleton `Sec-CH-UA-Arch` request Client Hint into `HttpSecChUaArch`, using
+the same bounded Structured Fields string rules and canonical `header_value()`
+format as Platform. Parse errors leave the raw field available through
+`header()`; this accessor does not infer architecture or negotiate Client Hints.
+
 `Request::prefers_reduced_motion()` and `HttpRequest::prefers_reduced_motion()`
 parse a singleton `Sec-CH-Prefers-Reduced-Motion` request Client Hint into
 `HttpPrefersReducedMotion`, accepting `no-preference` and `reduce`

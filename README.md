@@ -2828,6 +2828,10 @@ parameterized, duplicate, non-ASCII, forbidden-control, invalid-escape, and
 oversized values return parser errors while raw headers remain available;
 `header(("Sec-CH-UA-Platform", "..."))` remains an escape hatch.
 
+`HttpClient::sec_ch_ua_arch(value)` and the server facade accessors provide
+matching bounded Structured Fields string handling for `Sec-CH-UA-Arch`
+through `SecChUaArch` and `HttpSecChUaArch`; malformed values preserve raw
+headers, and `header(("Sec-CH-UA-Arch", "..."))` remains an escape hatch.
 These helpers are metadata-only. RTTP does not infer a platform, negotiate the
 UA brands family, emit `Accept-CH`, generate Client Hints automatically, retry,
 replay, redirect, or apply browser policy from `Sec-CH-UA-Platform`.

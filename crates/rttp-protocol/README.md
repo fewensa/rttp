@@ -681,6 +681,15 @@ escape, and oversized values are errors. This parser reports request metadata
 only; it does not infer a platform, negotiate the UA brands family, emit
 `Accept-CH`, retry, or apply browser policy.
 
+## Sec-CH-UA-Arch
+
+`client_hints::SecChUaArch` applies the same bounded singleton Structured
+Fields string parsing and canonical quoted-string escaping to
+`Sec-CH-UA-Arch`; `value()` exposes decoded ASCII and `header_value()` emits
+canonical text. Duplicate, malformed, non-ASCII, forbidden-control, and
+oversized values are rejected. This parser exposes metadata only and does not
+infer architecture or negotiate Client Hints.
+
 ## Sec-CH-Prefers-Reduced-Motion
 
 `client_hints::PrefersReducedMotion` parses a singleton HTTP

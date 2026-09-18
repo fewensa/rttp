@@ -676,6 +676,16 @@ invalid-escape, and oversized values are rejected. These helpers only expose
 metadata: RTTP does not infer a platform, negotiate the UA brands family, emit
 `Accept-CH`, retry, or apply browser policy.
 
+## Bounded Sec-CH-UA-Arch request Client Hint metadata
+
+With the client feature, `HttpClient::sec_ch_ua_arch(value)` validates and
+emits one singleton `Sec-CH-UA-Arch` field through `rttp::SecChUaArch`.
+`Request::sec_ch_ua_arch()` and `HttpRequest::sec_ch_ua_arch()` parse received
+fields into `HttpSecChUaArch`; parse errors leave raw headers available. The
+bounded Structured Fields string helper is metadata-only and does not infer
+architecture, negotiate the UA brands family, emit `Accept-CH`, retry, or
+apply browser policy.
+
 ## Bounded Sec-CH-Prefers-Reduced-Motion request Client Hint metadata
 
 With the client feature, `HttpClient::prefers_reduced_motion(value)` validates

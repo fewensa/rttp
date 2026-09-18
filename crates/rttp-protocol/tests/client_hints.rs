@@ -1,6 +1,6 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
-  PrefersReducedMotion, Rtt, SecChUaMobile, SecChUaPlatform, ViewportWidth, Width,
+  PrefersReducedMotion, Rtt, SecChUaArch, SecChUaMobile, SecChUaPlatform, ViewportWidth, Width,
   MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
   MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
   MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
@@ -357,6 +357,17 @@ fn sec_ch_ua_platform_accepts_structured_strings_and_canonicalizes_them() {
       SecChUaPlatform::parse(platform.header_value()).expect("roundtrip")
     );
   }
+}
+
+#[test]
+fn sec_ch_ua_arch_accepts_structured_strings_and_rejects_invalid_values() {
+  let arch = SecChUaArch::parse("\t\"x86\\\"_64\" \t").expect("valid Sec-CH-UA-Arch");
+  assert_eq!("x86\"_64", arch.value());
+  assert_eq!(r#""x86\"_64""#, arch.header_value());
+  assert!(SecChUaArch::parse_values([r#""x86""#, r#""arm""#]).is_err());
+  assert!(SecChUaArch::parse("x86").is_err());
+  assert!(SecChUaArch::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
+  assert!(SecChUaArch::parse("\"x86\0\"").is_err());
 }
 
 #[test]

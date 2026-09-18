@@ -1456,6 +1456,15 @@ only; it does not infer a platform, negotiate the UA brands family, emit
 policy. Raw values remain available through
 `header(("Sec-CH-UA-Platform", "..."))`.
 
+## Bounded Sec-CH-UA-Arch request Client Hint metadata
+
+`HttpClient::sec_ch_ua_arch(value)` validates and emits one bounded
+`Sec-CH-UA-Arch` field through `SecChUaArch`, canonicalizing one Structured
+Fields string and replacing same-name fields. Malformed, duplicate,
+non-ASCII, forbidden-control, and oversized values are rejected before
+connecting. The helper is metadata-only; raw values remain available through
+`header(("Sec-CH-UA-Arch", "..."))`.
+
 ## Bounded Sec-CH-Prefers-Reduced-Motion request Client Hint metadata
 
 `HttpClient::prefers_reduced_motion(value)` validates and emits one bounded

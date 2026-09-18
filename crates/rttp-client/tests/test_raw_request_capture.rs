@@ -6439,6 +6439,97 @@ fn raw_sec_ch_ua_platform_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn sec_ch_ua_arch_helper_emits_canonical_request_client_hint_and_allows_raw_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-ua-arch", "legacy"))
+      .sec_ch_ua_arch("\t\"x86\\\"_64\" \t")
+      .expect("Sec-CH-UA-Arch should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some(r#""x86\"_64""#),
+    header_value(&request, "Sec-CH-UA-Arch")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line.to_ascii_lowercase().starts_with("sec-ch-ua-arch:"))
+      .count()
+  );
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-UA-Arch", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request_text(&request), "Sec-CH-UA-Arch")
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_arch_helper_matches_blocking_contract() {
+  let request = capture_request(|base_url| {
+    block_on(
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_ch_ua_arch("\t\"arm\" \t")
+        .expect("valid arch")
+        .rasync(),
+    )
+    .expect("request should succeed");
+  });
+  assert_eq!(
+    Some(r#""arm""#),
+    header_value(&request_text(&request), "Sec-CH-UA-Arch")
+  );
+}
+
+#[test]
+fn sec_ch_ua_arch_helper_rejects_malformed_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .sec_ch_ua_arch("x86")
+      .expect_err("invalid arch must be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(request.is_empty());
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_arch_helper_rejects_malformed_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let error = block_on(async {
+      let mut http_client = client();
+      http_client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_ch_ua_arch("x86")?
+        .rasync()
+        .await
+    })
+    .expect_err("invalid arch must be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(request.is_empty());
+}
+
+#[test]
 fn prefers_reduced_motion_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()
