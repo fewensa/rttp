@@ -29,23 +29,23 @@ use rttp::server::{
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
   HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecChUaMobile,
-  HttpSecChUaMobileParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
-  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
-  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn,
-  HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
-  HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
-  HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember, HttpUserAgentParseError,
-  HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpViewportWidth,
-  HttpViewportWidthParseError, HttpWidth, HttpWidthParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpSecChUaMobileParseError, HttpSecChUaPlatform, HttpSecChUaPlatformParseError, HttpSecGpc,
+  HttpSecGpcParseError, HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
+  HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
+  HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError,
+  HttpViewportWidth, HttpViewportWidthParseError, HttpWidth, HttpWidthParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -194,6 +194,63 @@ fn compatibility_facade_exports_sec_ch_ua_mobile_request_metadata() {
   .expect("duplicate Sec-CH-UA-Mobile fields should remain parseable");
   assert!(duplicate.sec_ch_ua_mobile().is_err());
   assert_eq!(Some("?0"), duplicate.header("Sec-CH-UA-Mobile"));
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_ua_platform_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform: \t\"Windows\\\\\\\"\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Platform request should parse");
+  let platform: HttpSecChUaPlatform = request
+    .sec_ch_ua_platform()
+    .expect("Sec-CH-UA-Platform should parse")
+    .expect("Sec-CH-UA-Platform should be present");
+  assert_eq!(r#""Windows\\\"""#, platform.header_value());
+  assert_eq!("Windows\\\"", platform.value());
+  assert_eq!(
+    Some(r#""Windows\\\"""#),
+    request.header("Sec-CH-UA-Platform")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-Platform should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_ua_platform()
+      .expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform: Windows\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-Platform should remain available");
+  let _: HttpSecChUaPlatformParseError = malformed
+    .sec_ch_ua_platform()
+    .expect_err("unquoted Sec-CH-UA-Platform should fail");
+  assert_eq!(Some("Windows"), malformed.header("Sec-CH-UA-Platform"));
+
+  let non_ascii_raw = format!("\"{}\"", "\u{1f34e}");
+  let non_ascii = format!(
+    "GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform: {non_ascii_raw}\r\n\r\n"
+  );
+  let non_ascii = HttpRequest::parse(non_ascii.as_bytes())
+    .expect("non-ASCII Sec-CH-UA-Platform should remain available");
+  let _: HttpSecChUaPlatformParseError = non_ascii
+    .sec_ch_ua_platform()
+    .expect_err("non-ASCII Sec-CH-UA-Platform should fail");
+  assert_eq!(
+    Some(non_ascii_raw.as_str()),
+    non_ascii.header("Sec-CH-UA-Platform")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform: \"Windows\"\r\nsec-ch-ua-platform: \"Linux\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Platform fields should remain parseable");
+  assert!(duplicate.sec_ch_ua_platform().is_err());
+  assert_eq!(Some(r#""Windows""#), duplicate.header("Sec-CH-UA-Platform"));
 }
 
 #[test]

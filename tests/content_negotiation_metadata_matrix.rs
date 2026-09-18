@@ -280,9 +280,13 @@ fn sec_ch_ua_platform_parses_valid_duplicate_and_malformed_http11_headers() {
 
   let (addr, observed_rx, handle) = spawn_observed_facade_server(
     |request| {
-      request
-        .sec_ch_ua_platform()
-        .map(|platform| platform.map(|platform| platform.header_value()))
+      (
+        request
+          .sec_ch_ua_platform()
+          .map(|platform| platform.map(|platform| platform.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Platform").map(str::to_owned),
+      )
     },
     |_| HttpResponse::ok("duplicate"),
   );
@@ -290,17 +294,22 @@ fn sec_ch_ua_platform_parses_valid_duplicate_and_malformed_http11_headers() {
     addr,
     b"GET /platform HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Platform: \"Windows\"\r\nsec-ch-ua-platform: \"Linux\"\r\nConnection: close\r\n\r\n",
   );
-  assert!(observed_rx
+  let (typed, raw) = observed_rx
     .recv_timeout(TIMEOUT)
-    .expect("observe duplicate Sec-CH-UA-Platform")
-    .is_err());
+    .expect("observe duplicate Sec-CH-UA-Platform");
+  assert!(typed.is_err());
+  assert_eq!(Some("\"Windows\"".to_owned()), raw);
   handle.join().expect("duplicate platform server thread");
 
   let (addr, observed_rx, handle) = spawn_observed_facade_server(
     |request| {
-      request
-        .sec_ch_ua_platform()
-        .map(|platform| platform.map(|platform| platform.header_value()))
+      (
+        request
+          .sec_ch_ua_platform()
+          .map(|platform| platform.map(|platform| platform.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Platform").map(str::to_owned),
+      )
     },
     |_| HttpResponse::ok("malformed"),
   );
@@ -308,15 +317,87 @@ fn sec_ch_ua_platform_parses_valid_duplicate_and_malformed_http11_headers() {
     addr,
     b"GET /platform HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Platform: Windows\r\nConnection: close\r\n\r\n",
   );
-  assert!(observed_rx
+  let (typed, raw) = observed_rx
     .recv_timeout(TIMEOUT)
-    .expect("observe malformed Sec-CH-UA-Platform")
-    .is_err());
+    .expect("observe malformed Sec-CH-UA-Platform");
+  assert!(typed.is_err());
+  assert_eq!(Some("Windows".to_owned()), raw);
   handle.join().expect("malformed platform server thread");
+
+  let non_ascii_raw = format!("\"{}\"", "\u{65e5}\u{672c}\u{8a9e}");
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_platform()
+          .map(|platform| platform.map(|platform| platform.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Platform").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("non-ascii"),
+  );
+  write_raw_request(
+    addr,
+    format!(
+      "GET /platform HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Platform: {non_ascii_raw}\r\nConnection: close\r\n\r\n"
+    )
+    .as_bytes(),
+  );
+  let (typed, raw) = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe non-ASCII Sec-CH-UA-Platform");
+  assert!(typed.is_err());
+  assert_eq!(Some(non_ascii_raw), raw);
+  handle.join().expect("non-ASCII platform server thread");
 
   assert!(rttp::SecChUaPlatform::parse("Windows").is_err());
   assert!(rttp::SecChUaPlatform::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
   assert!(rttp::SecChUaPlatform::parse("\"Windows\0\"").is_err());
+  assert!(rttp::SecChUaPlatform::parse("\"\u{1f34e}\"").is_err());
+  assert!(rttp::SecChUaPlatform::parse("\"Windows\u{80}\"").is_err());
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_request_builders_exchange_sec_ch_ua_platform_metadata() {
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_platform()
+          .map(|platform| platform.map(|platform| platform.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Platform").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("platform"),
+  );
+
+  let response = block_on(async {
+    client()
+      .get()
+      .url(format!("http://{addr}/platform"))
+      .sec_ch_ua_platform("\t\"Windows\" \t")
+      .expect("Sec-CH-UA-Platform should be accepted")
+      .rasync()
+      .await
+      .expect("async Sec-CH-UA-Platform request should succeed")
+  });
+
+  assert_eq!("platform", response.body().string().expect("response body"));
+  assert_eq!(
+    (
+      Ok(Some("\"Windows\"".to_owned())),
+      Some("\"Windows\"".to_owned())
+    ),
+    observed_rx
+      .recv_timeout(TIMEOUT)
+      .expect("observe async Sec-CH-UA-Platform")
+  );
+  handle
+    .join()
+    .expect("async Sec-CH-UA-Platform server thread");
 }
 
 #[test]
