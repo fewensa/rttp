@@ -52,22 +52,22 @@ use rttp_server::server::{
   HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
   HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
   HttpSaveDataParseError, HttpScheduleTag, HttpSecChUaBitness, HttpSecChUaBitnessParseError,
-  HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError,
-  HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
-  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
-  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
-  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
-  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaPlatformVersion,
+  HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc,
+  HttpSecGpcParseError, HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
+  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
+  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
   HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
   HttpViaParseError, HttpViewportWidth, HttpViewportWidthParseError, HttpWantContentDigest,
@@ -2067,6 +2067,62 @@ fn request_facade_parses_sec_ch_ua_bitness_metadata_without_negotiation() {
     HttpSecChUaBitness::parse("64").expect_err("unquoted Sec-CH-UA-Bitness should fail");
   assert!(
     HttpSecChUaBitness::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err(),
+    "oversized value should fail"
+  );
+}
+
+#[test]
+fn request_facade_parses_sec_ch_ua_platform_version_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform-Version: \t\"14.0.0\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Platform-Version request should parse");
+  let platform_version: HttpSecChUaPlatformVersion = request
+    .sec_ch_ua_platform_version()
+    .expect("Sec-CH-UA-Platform-Version should parse")
+    .expect("Sec-CH-UA-Platform-Version should be present");
+  assert_eq!("14.0.0", platform_version.value());
+  assert_eq!(r#""14.0.0""#, platform_version.header_value());
+  assert_eq!(
+    Some(r#""14.0.0""#),
+    request.header("Sec-CH-UA-Platform-Version")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-Platform-Version should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_ua_platform_version()
+      .expect("missing Sec-CH-UA-Platform-Version should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform-Version: 14.0.0\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-Platform-Version should remain available");
+  let _: HttpSecChUaPlatformVersionParseError = malformed
+    .sec_ch_ua_platform_version()
+    .expect_err("unquoted Sec-CH-UA-Platform-Version should fail");
+  assert_eq!(
+    Some("14.0.0"),
+    malformed.header("Sec-CH-UA-Platform-Version")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform-Version: \"14.0.0\"\r\nsec-ch-ua-platform-version: \"15.0.0\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Platform-Version request should retain raw metadata");
+  assert!(duplicate.sec_ch_ua_platform_version().is_err());
+  assert_eq!(
+    Some(r#""14.0.0""#),
+    duplicate.header("Sec-CH-UA-Platform-Version")
+  );
+
+  let _: HttpSecChUaPlatformVersionParseError = HttpSecChUaPlatformVersion::parse("14.0.0")
+    .expect_err("unquoted Sec-CH-UA-Platform-Version should fail");
+  assert!(
+    HttpSecChUaPlatformVersion::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err(),
     "oversized value should fail"
   );
 }
