@@ -22,7 +22,9 @@ use rttp_client::{
   DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
 };
 #[cfg(feature = "async")]
-use std::io::{Cursor, Read, Write};
+use std::error::Error as _;
+#[cfg(feature = "async")]
+use std::io::{self, Cursor, Read, Write};
 #[cfg(feature = "async")]
 use std::net::TcpListener;
 #[cfg(feature = "async")]
@@ -189,6 +191,68 @@ fn spawn_delayed_socks5_http_server() -> (
     progressed_before_timeout
   });
   (addr, handle, handshake_receiver, release_sender)
+}
+
+#[cfg(feature = "async")]
+fn read_socks5_connect_request(stream: &mut std::net::TcpStream) {
+  let mut header = [0u8; 4];
+  stream
+    .read_exact(&mut header)
+    .expect("read SOCKS5 connect header");
+  assert_eq!([5, 1, 0], header[..3]);
+  let address_len = match header[3] {
+    1 => 4,
+    4 => 16,
+    3 => {
+      let mut len = [0u8; 1];
+      stream
+        .read_exact(&mut len)
+        .expect("read SOCKS5 connect domain length");
+      usize::from(len[0])
+    }
+    address_type => panic!("unexpected SOCKS5 address type {address_type}"),
+  };
+  let mut address_and_port = vec![0u8; address_len + 2];
+  stream
+    .read_exact(&mut address_and_port)
+    .expect("read SOCKS5 connect address");
+}
+
+#[cfg(feature = "async")]
+fn spawn_socks5_reply_http_server(
+  connect_reply: Vec<u8>,
+) -> (std::net::SocketAddr, thread::JoinHandle<bool>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind SOCKS5 reply server");
+  let addr = listener.local_addr().expect("SOCKS5 reply server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept SOCKS5 connection");
+    let mut greeting = [0u8; 3];
+    stream
+      .read_exact(&mut greeting)
+      .expect("read SOCKS5 greeting");
+    assert_eq!([5, 1, 0], greeting);
+    stream
+      .write_all(&[5, 0])
+      .expect("write SOCKS5 greeting response");
+
+    read_socks5_connect_request(&mut stream);
+    stream
+      .write_all(&connect_reply)
+      .expect("write SOCKS5 connect response");
+
+    stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set HTTP observation timeout");
+    let request = support::read_http_request(&mut stream);
+    if request.is_empty() {
+      return false;
+    }
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+      .expect("write SOCKS5 HTTP response");
+    true
+  });
+  (addr, handle)
 }
 
 #[cfg(feature = "async")]
@@ -2587,6 +2651,58 @@ fn test_async_proxy_socks5() {
     assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
   });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_proxy_socks5_rejects_zero_length_domain_reply() {
+  let (proxy_addr, proxy_handle) = spawn_socks5_reply_http_server(vec![5, 0, 0, 3, 0]);
+  block_on(async {
+    let error = client()
+      .get()
+      .url("http://127.0.0.1/socks5-empty-domain")
+      .proxy(Proxy::socks5("127.0.0.1", proxy_addr.port().into()))
+      .rasync()
+      .await
+      .expect_err("zero-length SOCKS5 domain reply should be rejected");
+
+    assert!(
+      error.to_string().contains("invalid domain address"),
+      "unexpected error: {error}"
+    );
+    assert!(!error.is_timeout());
+    assert_eq!(
+      Some(io::ErrorKind::InvalidData),
+      error
+        .source()
+        .and_then(|source| source.downcast_ref::<io::Error>())
+        .map(io::Error::kind)
+    );
+  });
+  assert!(
+    !proxy_handle.join().expect("SOCKS5 reply server thread"),
+    "malformed SOCKS5 reply should fail before the HTTP request"
+  );
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_proxy_socks5_accepts_non_empty_domain_reply() {
+  let (proxy_addr, proxy_handle) = spawn_socks5_reply_http_server(vec![5, 0, 0, 3, 1, b'a', 0, 80]);
+  block_on(async {
+    let response = client()
+      .get()
+      .url("http://127.0.0.1/socks5-domain")
+      .proxy(Proxy::socks5("127.0.0.1", proxy_addr.port().into()))
+      .rasync()
+      .await
+      .expect("non-empty SOCKS5 domain reply");
+    assert_eq!("OK", response.body().string().unwrap());
+  });
+  assert!(
+    proxy_handle.join().expect("SOCKS5 reply server thread"),
+    "non-empty domain reply should allow the HTTP request"
+  );
 }
 
 #[test]
