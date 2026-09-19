@@ -7254,6 +7254,104 @@ fn raw_sec_ch_ua_full_version_list_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn sec_ch_ua_form_factors_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-ua-form-factors", "legacy"))
+      .sec_ch_ua_form_factors("\t\"Desktop\", \"Watch\\\"Form\" \t")
+      .expect("Sec-CH-UA-Form-Factors should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#""Desktop", "Watch\"Form""#),
+    header_value(&request, "Sec-CH-UA-Form-Factors")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| {
+        line
+          .to_ascii_lowercase()
+          .starts_with("sec-ch-ua-form-factors:")
+      })
+      .count(),
+    "typed Sec-CH-UA-Form-Factors should replace an existing same-name field"
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_form_factors_helper_matches_blocking_contract() {
+  let request = capture_request(|base_url| {
+    block_on(
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .header(("SEC-CH-UA-FORM-FACTORS", "legacy"))
+        .sec_ch_ua_form_factors("\t\"Desktop\" \t")
+        .expect("Sec-CH-UA-Form-Factors should be accepted")
+        .rasync(),
+    )
+    .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#""Desktop""#),
+    header_value(&request, "Sec-CH-UA-Form-Factors")
+  );
+}
+
+#[test]
+fn sec_ch_ua_form_factors_helper_rejects_malformed_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "Desktop",
+    "\"Desktop\";foo=bar",
+    "\"Desktop\", ",
+    "\"Desktop\"\0",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_ch_ua_form_factors(value)
+        .expect_err("invalid Sec-CH-UA-Form-Factors input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA-Form-Factors input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_sec_ch_ua_form_factors_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-UA-Form-Factors", "legacy"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy"),
+    header_value(&request, "Sec-CH-UA-Form-Factors")
+  );
+}
+
+#[test]
 fn prefers_reduced_motion_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()

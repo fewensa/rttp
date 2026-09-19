@@ -286,6 +286,15 @@ fn public_facade_exports_content_negotiation_metadata_types() {
     .expect("server wow64 facade type should parse");
   assert_eq!("?0", server_wow64.header_value());
   assert!(!server_wow64.is_wow64());
+
+  let form_factors: rttp::SecChUaFormFactors =
+    rttp::SecChUaFormFactors::parse("\"Desktop\", \"Tablet\"")
+      .expect("form factors facade type should parse");
+  assert_eq!(r#""Desktop", "Tablet""#, form_factors.header_value());
+  let server_form_factors =
+    rttp_server::server::HttpSecChUaFormFactors::parse("\"Watch\", \"EInk\"")
+      .expect("server form factors facade type should parse");
+  assert_eq!(r#""Watch", "EInk""#, server_form_factors.header_value());
 }
 
 #[test]
@@ -647,6 +656,136 @@ fn sec_ch_ua_full_version_list_parses_valid_duplicate_and_malformed_http11_heade
   handle
     .join()
     .expect("malformed full-version-list server thread");
+}
+
+#[test]
+fn sec_ch_ua_form_factors_parses_valid_duplicate_and_malformed_http11_headers() {
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_form_factors()
+          .map(|form_factors| form_factors.map(|form_factors| form_factors.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Form-Factors").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("form-factors"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /form-factors HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Form-Factors: \"Desktop\", \"Tablet\"\r\nConnection: close\r\n\r\n",
+  );
+  assert_eq!(
+    (
+      Ok(Some("\"Desktop\", \"Tablet\"".to_owned())),
+      Some("\"Desktop\", \"Tablet\"".to_owned())
+    ),
+    observed_rx
+      .recv_timeout(TIMEOUT)
+      .expect("observe valid Sec-CH-UA-Form-Factors")
+  );
+  handle.join().expect("valid form-factors server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_form_factors()
+          .map(|form_factors| form_factors.map(|form_factors| form_factors.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Form-Factors").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("duplicate"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /form-factors HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Form-Factors: \"Desktop\"\r\nsec-ch-ua-form-factors: \"Tablet\"\r\nConnection: close\r\n\r\n",
+  );
+  assert_eq!(
+    (
+      Ok(Some("\"Desktop\", \"Tablet\"".to_owned())),
+      Some("\"Desktop\"".to_owned())
+    ),
+    observed_rx
+      .recv_timeout(TIMEOUT)
+      .expect("observe split Sec-CH-UA-Form-Factors")
+  );
+  handle.join().expect("duplicate form-factors server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_form_factors()
+          .map(|form_factors| form_factors.map(|form_factors| form_factors.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Form-Factors").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("malformed"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /form-factors HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Form-Factors: Desktop\r\nConnection: close\r\n\r\n",
+  );
+  let observed = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe malformed Sec-CH-UA-Form-Factors");
+  assert!(observed.0.is_err());
+  assert_eq!(Some("Desktop".to_owned()), observed.1);
+  handle.join().expect("malformed form-factors server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_form_factors()
+          .map(|form_factors| form_factors.map(|form_factors| form_factors.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Form-Factors").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("empty"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /form-factors HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Form-Factors: \r\nConnection: close\r\n\r\n",
+  );
+  let observed = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe empty Sec-CH-UA-Form-Factors");
+  assert!(observed.0.is_err());
+  assert_eq!(Some("".to_owned()), observed.1);
+  handle.join().expect("empty form-factors server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_form_factors()
+          .map(|form_factors| form_factors.map(|form_factors| form_factors.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Form-Factors").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("non-ascii"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /form-factors HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Form-Factors: \"\x80\"\r\nConnection: close\r\n\r\n",
+  );
+  let observed = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe non-ASCII Sec-CH-UA-Form-Factors");
+  assert!(observed.0.is_err());
+  assert_eq!(Some("\"\u{0080}\"".to_owned()), observed.1);
+  handle.join().expect("non-ASCII form-factors server thread");
+
+  assert!(rttp::SecChUaFormFactors::parse("Desktop").is_err());
+  assert!(rttp::SecChUaFormFactors::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
+  assert!(rttp::SecChUaFormFactors::parse("\"Desktop\0\"").is_err());
 }
 
 #[test]

@@ -59,6 +59,8 @@ pub use rttp_protocol::client_hints::{
   RttParseError as HttpRttParseError, SecChUaArch as HttpSecChUaArch,
   SecChUaArchParseError as HttpSecChUaArchParseError, SecChUaBitness as HttpSecChUaBitness,
   SecChUaBitnessParseError as HttpSecChUaBitnessParseError,
+  SecChUaFormFactors as HttpSecChUaFormFactors,
+  SecChUaFormFactorsParseError as HttpSecChUaFormFactorsParseError,
   SecChUaFullVersionList as HttpSecChUaFullVersionList,
   SecChUaFullVersionListEntry as HttpSecChUaFullVersionListEntry,
   SecChUaFullVersionListParseError as HttpSecChUaFullVersionListParseError,
@@ -652,6 +654,19 @@ impl Request {
       return Ok(None);
     }
     HttpSecChUaFullVersionList::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Form-Factors` request Client Hint
+  /// metadata without inferring a device class, negotiating Client Hints,
+  /// emitting `Accept-CH`, or applying browser policy.
+  pub fn sec_ch_ua_form_factors(
+    &self,
+  ) -> Result<Option<HttpSecChUaFormFactors>, HttpSecChUaFormFactorsParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-UA-Form-Factors").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaFormFactors::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client
@@ -3239,6 +3254,24 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecChUaFullVersionList::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Form-Factors` request Client Hint
+  /// metadata without inferring a device class, negotiating Client Hints,
+  /// emitting `Accept-CH`, or applying browser policy.
+  pub fn sec_ch_ua_form_factors(
+    &self,
+  ) -> Result<Option<HttpSecChUaFormFactors>, HttpSecChUaFormFactorsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-CH-UA-Form-Factors"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaFormFactors::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client

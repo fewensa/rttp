@@ -1519,6 +1519,24 @@ const SEC_CH_UA_FULL_VERSION_LIST: SecChUaFieldSpec = SecChUaFieldSpec {
   valid_version: Some("HTTP/2"),
 };
 
+const SEC_CH_UA_FORM_FACTORS: SecChUaFieldSpec = SecChUaFieldSpec {
+  name: "Sec-CH-UA-Form-Factors",
+  lowercase_name: "sec-ch-ua-form-factors",
+  valid_input: "\t\"Desktop\", \"Tablet\" \t",
+  valid_value: "\"Desktop\", \"Tablet\"",
+  malformed_value: "Desktop",
+  structured_malformed_values: &[
+    r#""Desktop";foo=bar"#,
+    r#""Desktop", ("Tablet")"#,
+    r#""Desktop", 123"#,
+  ],
+  duplicate_first: r#""Desktop""#,
+  duplicate_second: r#""Tablet""#,
+  client_helper: set_sec_ch_ua_form_factors,
+  accessor: observe_sec_ch_ua_form_factors,
+  valid_version: Some("HTTP/2"),
+};
+
 const SEC_CH_UA_PLATFORM: SecChUaFieldSpec = SecChUaFieldSpec {
   name: "Sec-CH-UA-Platform",
   lowercase_name: "sec-ch-ua-platform",
@@ -1618,6 +1636,13 @@ fn set_sec_ch_ua_full_version_list(client: &mut HttpClient, value: &str) -> Resu
     .map_err(|error| error.to_string())
 }
 
+fn set_sec_ch_ua_form_factors(client: &mut HttpClient, value: &str) -> Result<(), String> {
+  client
+    .sec_ch_ua_form_factors(value)
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 fn set_sec_ch_ua_platform(client: &mut HttpClient, value: &str) -> Result<(), String> {
   client
     .sec_ch_ua_platform(value)
@@ -1663,6 +1688,13 @@ fn observe_sec_ch_ua_platform_version(request: &Request) -> Result<Option<String
 fn observe_sec_ch_ua_full_version_list(request: &Request) -> Result<Option<String>, String> {
   request
     .sec_ch_ua_full_version_list()
+    .map(|metadata| metadata.map(|metadata| metadata.header_value()))
+    .map_err(|error| error.to_string())
+}
+
+fn observe_sec_ch_ua_form_factors(request: &Request) -> Result<Option<String>, String> {
+  request
+    .sec_ch_ua_form_factors()
     .map(|metadata| metadata.map(|metadata| metadata.header_value()))
     .map_err(|error| error.to_string())
 }
@@ -1848,6 +1880,10 @@ fn run_h2c_sec_ch_ua_structured_malformed(field: SecChUaFieldSpec) {
 }
 
 fn run_h2c_sec_ch_ua_duplicate(field: SecChUaFieldSpec) {
+  run_h2c_sec_ch_ua_repeated_fields(field, None);
+}
+
+fn run_h2c_sec_ch_ua_repeated_fields(field: SecChUaFieldSpec, combined: Option<&str>) {
   let (addr, rx, handle) = spawn_h2c_sec_ch_ua_observer(field, "duplicate", false);
   let authority = addr.to_string();
   let _stream = send_h2c_prior_knowledge_headers(
@@ -1864,7 +1900,10 @@ fn run_h2c_sec_ch_ua_duplicate(field: SecChUaFieldSpec) {
 
   let observed = receive_h2c_sec_ch_ua(&rx, field, "duplicate");
   assert_eq!(Some(field.duplicate_first.to_string()), observed.raw);
-  assert_h2c_sec_ch_ua_error(field, "duplicate", &observed.parsed);
+  match combined {
+    Some(combined) => assert_eq!(Ok(Some(combined.to_owned())), observed.parsed),
+    None => assert_h2c_sec_ch_ua_error(field, "duplicate", &observed.parsed),
+  }
   join_h2c_sec_ch_ua(handle, field, "duplicate");
 }
 
@@ -1980,6 +2019,36 @@ fn h2c_sec_ch_ua_full_version_list_duplicate_reaches_server_accessor_with_raw_he
 #[test]
 fn h2c_sec_ch_ua_full_version_list_oversized_reaches_server_accessor_with_raw_header() {
   run_h2c_sec_ch_ua_oversized(SEC_CH_UA_FULL_VERSION_LIST);
+}
+
+#[test]
+fn h2c_sec_ch_ua_form_factors_helper_reaches_server_accessor() {
+  run_h2c_sec_ch_ua_helper(SEC_CH_UA_FORM_FACTORS);
+}
+
+#[test]
+fn h2c_sec_ch_ua_form_factors_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_malformed(SEC_CH_UA_FORM_FACTORS);
+}
+
+#[test]
+fn h2c_sec_ch_ua_form_factors_non_ascii_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_non_ascii(SEC_CH_UA_FORM_FACTORS);
+}
+
+#[test]
+fn h2c_sec_ch_ua_form_factors_structured_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_structured_malformed(SEC_CH_UA_FORM_FACTORS);
+}
+
+#[test]
+fn h2c_sec_ch_ua_form_factors_duplicate_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_repeated_fields(SEC_CH_UA_FORM_FACTORS, Some(r#""Desktop", "Tablet""#));
+}
+
+#[test]
+fn h2c_sec_ch_ua_form_factors_oversized_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_oversized(SEC_CH_UA_FORM_FACTORS);
 }
 
 #[test]
