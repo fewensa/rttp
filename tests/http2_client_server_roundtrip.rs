@@ -1706,6 +1706,48 @@ fn h2c_sec_ch_ua_platform_malformed_reaches_server_accessor_with_raw_header() {
 }
 
 #[test]
+fn h2c_sec_ch_ua_platform_non_ascii_reaches_server_accessor_with_raw_header() {
+  for value in [r#""🍎""#, "\"\u{80}\""] {
+    let server = HttpServer::bind("127.0.0.1:0")
+      .expect("bind h2c non-ASCII Sec-CH-UA-Platform server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("h2c server address");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((
+            request.header("Sec-CH-UA-Platform").map(str::to_string),
+            request.sec_ch_ua_platform().is_err(),
+          ))
+          .expect("record non-ASCII Sec-CH-UA-Platform");
+          HttpResponse::ok("ok")
+        })
+        .expect("serve non-ASCII h2c Sec-CH-UA-Platform request");
+    });
+
+    let response = HttpClient::new()
+      .get()
+      .url(format!("http://{addr}/asset"))
+      .header(("Sec-CH-UA-Platform", value))
+      .emit_http2_prior_knowledge()
+      .expect("receive h2c response");
+
+    assert_eq!("ok", response.body().string().expect("h2c response body"));
+    assert_eq!(
+      (Some(value.to_string()), true),
+      rx.recv_timeout(Duration::from_secs(2))
+        .expect("recorded non-ASCII Sec-CH-UA-Platform")
+    );
+    handle
+      .join()
+      .expect("non-ASCII h2c Sec-CH-UA-Platform server thread");
+  }
+}
+
+#[test]
 fn h2c_sec_ch_ua_platform_duplicate_reaches_server_accessor_with_raw_header() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c duplicate Sec-CH-UA-Platform server")
