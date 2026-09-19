@@ -1440,442 +1440,297 @@ fn h2c_oversized_prefers_contrast_reaches_server_accessor_with_raw_header() {
     .expect("oversized h2c Prefers-Contrast server thread");
 }
 
-#[test]
-fn h2c_sec_ch_ua_arch_helper_reaches_server_accessor() {
+#[derive(Clone, Copy)]
+struct SecChUaFieldSpec {
+  name: &'static str,
+  lowercase_name: &'static str,
+  valid_input: &'static str,
+  valid_value: &'static str,
+  malformed_value: &'static str,
+  duplicate_first: &'static str,
+  duplicate_second: &'static str,
+  client_helper: fn(&mut HttpClient, &str) -> Result<(), String>,
+  accessor: fn(&Request) -> Result<Option<String>, String>,
+  valid_version: Option<&'static str>,
+}
+
+const SEC_CH_UA_ARCH: SecChUaFieldSpec = SecChUaFieldSpec {
+  name: "Sec-CH-UA-Arch",
+  lowercase_name: "sec-ch-ua-arch",
+  valid_input: "\t\"x86\" \t",
+  valid_value: "\"x86\"",
+  malformed_value: "x86",
+  duplicate_first: r#""x86""#,
+  duplicate_second: r#""arm64""#,
+  client_helper: set_sec_ch_ua_arch,
+  accessor: observe_sec_ch_ua_arch,
+  valid_version: None,
+};
+
+const SEC_CH_UA_PLATFORM: SecChUaFieldSpec = SecChUaFieldSpec {
+  name: "Sec-CH-UA-Platform",
+  lowercase_name: "sec-ch-ua-platform",
+  valid_input: "\t\"Windows\" \t",
+  valid_value: "\"Windows\"",
+  malformed_value: "Windows",
+  duplicate_first: r#""Windows""#,
+  duplicate_second: r#""Linux""#,
+  client_helper: set_sec_ch_ua_platform,
+  accessor: observe_sec_ch_ua_platform,
+  valid_version: Some("HTTP/2"),
+};
+
+struct ObservedH2cSecChUa {
+  version: String,
+  target: String,
+  raw: Option<String>,
+  parsed: Result<Option<String>, String>,
+}
+
+fn set_sec_ch_ua_arch(client: &mut HttpClient, value: &str) -> Result<(), String> {
+  client
+    .sec_ch_ua_arch(value)
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+fn set_sec_ch_ua_platform(client: &mut HttpClient, value: &str) -> Result<(), String> {
+  client
+    .sec_ch_ua_platform(value)
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+fn observe_sec_ch_ua_arch(request: &Request) -> Result<Option<String>, String> {
+  request
+    .sec_ch_ua_arch()
+    .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+    .map_err(|error| error.to_string())
+}
+
+fn observe_sec_ch_ua_platform(request: &Request) -> Result<Option<String>, String> {
+  request
+    .sec_ch_ua_platform()
+    .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+    .map_err(|error| error.to_string())
+}
+
+fn spawn_h2c_sec_ch_ua_observer(
+  field: SecChUaFieldSpec,
+  case: &'static str,
+  allow_oversized: bool,
+) -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedH2cSecChUa>,
+  thread::JoinHandle<()>,
+) {
   let server = HttpServer::bind("127.0.0.1:0")
-    .expect("bind h2c Sec-CH-UA-Arch server")
+    .unwrap_or_else(|error| panic!("bind h2c {case} {} server: {error:?}", field.name))
     .with_read_timeout(Some(Duration::from_secs(2)))
     .with_write_timeout(Some(Duration::from_secs(2)));
-  let addr = server.local_addr().expect("h2c server address");
+  let server = if allow_oversized {
+    server.with_http2_policy(Http2ServerPolicy::new().with_max_header_list_size(256 * 1024))
+  } else {
+    server
+  };
+  let addr = server
+    .local_addr()
+    .unwrap_or_else(|error| panic!("h2c {case} {} server address: {error:?}", field.name));
   let (tx, rx) = mpsc::channel();
 
   let handle = thread::spawn(move || {
     server
       .accept_one(|request| {
-        tx.send((
-          request.target().to_string(),
-          request.header("Sec-CH-UA-Arch").map(str::to_string),
-          request
-            .sec_ch_ua_arch()
-            .map(|metadata| metadata.map(|metadata| metadata.header_value()))
-            .map_err(|error| error.to_string()),
-        ))
-        .expect("record Sec-CH-UA-Arch");
+        let raw = request.header(field.name).map(str::to_string);
+        tx.send(ObservedH2cSecChUa {
+          version: request.version().to_string(),
+          target: request.target().to_string(),
+          parsed: (field.accessor)(&request),
+          raw,
+        })
+        .unwrap_or_else(|error| panic!("record {case} {}: {error:?}", field.name));
         HttpResponse::ok("ok")
       })
-      .expect("serve h2c Sec-CH-UA-Arch request");
+      .unwrap_or_else(|error| panic!("serve h2c {case} {} request: {error:?}", field.name));
   });
 
-  let response = HttpClient::new()
-    .get()
-    .url(format!("http://{addr}/asset"))
-    .sec_ch_ua_arch("\t\"x86\" \t")
-    .expect("Sec-CH-UA-Arch should be accepted")
+  (addr, rx, handle)
+}
+
+fn receive_h2c_sec_ch_ua(
+  rx: &mpsc::Receiver<ObservedH2cSecChUa>,
+  field: SecChUaFieldSpec,
+  case: &'static str,
+) -> ObservedH2cSecChUa {
+  rx.recv_timeout(Duration::from_secs(2))
+    .unwrap_or_else(|error| panic!("recorded {case} {}: {error:?}", field.name))
+}
+
+fn join_h2c_sec_ch_ua(handle: thread::JoinHandle<()>, field: SecChUaFieldSpec, case: &'static str) {
+  handle
+    .join()
+    .unwrap_or_else(|_| panic!("{case} h2c {} server thread", field.name));
+}
+
+fn run_h2c_sec_ch_ua_helper(field: SecChUaFieldSpec) {
+  let (addr, rx, handle) = spawn_h2c_sec_ch_ua_observer(field, "valid", false);
+  let mut client = HttpClient::new();
+  client.get().url(format!("http://{addr}/asset"));
+  (field.client_helper)(&mut client, field.valid_input)
+    .unwrap_or_else(|error| panic!("{} should be accepted: {error}", field.name));
+  let response = client
     .emit_http2_prior_knowledge()
     .expect("receive h2c response");
 
   assert_eq!("ok", response.body().string().expect("h2c response body"));
-  assert_eq!(
-    (
-      "/asset".to_string(),
-      Some("\"x86\"".to_string()),
-      Ok(Some("\"x86\"".to_string()))
-    ),
-    rx.recv_timeout(Duration::from_secs(2))
-      .expect("recorded Sec-CH-UA-Arch")
+  let observed = receive_h2c_sec_ch_ua(&rx, field, "valid");
+  if let Some(version) = field.valid_version {
+    assert_eq!(version, observed.version);
+  }
+  assert_eq!("/asset", observed.target);
+  assert_eq!(Some(field.valid_value.to_string()), observed.raw);
+  assert_eq!(Ok(Some(field.valid_value.to_string())), observed.parsed);
+  join_h2c_sec_ch_ua(handle, field, "valid");
+}
+
+fn run_h2c_sec_ch_ua_malformed(field: SecChUaFieldSpec) {
+  let (addr, rx, handle) = spawn_h2c_sec_ch_ua_observer(field, "malformed", false);
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header((field.name, field.malformed_value))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  let observed = receive_h2c_sec_ch_ua(&rx, field, "malformed");
+  assert_eq!(Some(field.malformed_value.to_string()), observed.raw);
+  assert!(
+    observed.parsed.is_err(),
+    "malformed {} must fail closed",
+    field.name
   );
-  handle.join().expect("h2c Sec-CH-UA-Arch server thread");
+  join_h2c_sec_ch_ua(handle, field, "malformed");
+}
+
+fn run_h2c_sec_ch_ua_non_ascii(field: SecChUaFieldSpec) {
+  for value in [r#""🍎""#, "\"\u{80}\""] {
+    let (addr, rx, handle) = spawn_h2c_sec_ch_ua_observer(field, "non-ASCII", false);
+    let response = HttpClient::new()
+      .get()
+      .url(format!("http://{addr}/asset"))
+      .header((field.name, value))
+      .emit_http2_prior_knowledge()
+      .expect("receive h2c response");
+
+    assert_eq!("ok", response.body().string().expect("h2c response body"));
+    let observed = receive_h2c_sec_ch_ua(&rx, field, "non-ASCII");
+    assert_eq!(Some(value.to_string()), observed.raw);
+    assert!(
+      observed.parsed.is_err(),
+      "non-ASCII {} must fail closed",
+      field.name
+    );
+    join_h2c_sec_ch_ua(handle, field, "non-ASCII");
+  }
+}
+
+fn run_h2c_sec_ch_ua_duplicate(field: SecChUaFieldSpec) {
+  let (addr, rx, handle) = spawn_h2c_sec_ch_ua_observer(field, "duplicate", false);
+  let authority = addr.to_string();
+  let _stream = send_h2c_prior_knowledge_headers(
+    addr,
+    &[
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", "/asset"),
+      (":authority", authority.as_str()),
+      (field.name, field.duplicate_first),
+      (field.lowercase_name, field.duplicate_second),
+    ],
+  );
+
+  let observed = receive_h2c_sec_ch_ua(&rx, field, "duplicate");
+  assert_eq!(Some(field.duplicate_first.to_string()), observed.raw);
+  assert!(
+    observed.parsed.is_err(),
+    "duplicate {} must fail closed",
+    field.name
+  );
+  join_h2c_sec_ch_ua(handle, field, "duplicate");
+}
+
+fn run_h2c_sec_ch_ua_oversized(field: SecChUaFieldSpec) {
+  let (addr, rx, handle) = spawn_h2c_sec_ch_ua_observer(field, "oversized", true);
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header((field.name, oversized.as_str()))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  let observed = receive_h2c_sec_ch_ua(&rx, field, "oversized");
+  assert_eq!(
+    (Some(64 * 1024 + 1), true, true),
+    (
+      observed.raw.as_ref().map(String::len),
+      observed.parsed.is_err(),
+      observed.raw.is_some(),
+    )
+  );
+  join_h2c_sec_ch_ua(handle, field, "oversized");
+}
+
+#[test]
+fn h2c_sec_ch_ua_arch_helper_reaches_server_accessor() {
+  run_h2c_sec_ch_ua_helper(SEC_CH_UA_ARCH);
 }
 
 #[test]
 fn h2c_sec_ch_ua_arch_malformed_reaches_server_accessor_with_raw_header() {
-  let server = HttpServer::bind("127.0.0.1:0")
-    .expect("bind h2c malformed Sec-CH-UA-Arch server")
-    .with_read_timeout(Some(Duration::from_secs(2)))
-    .with_write_timeout(Some(Duration::from_secs(2)));
-  let addr = server.local_addr().expect("h2c server address");
-  let (tx, rx) = mpsc::channel();
-
-  let handle = thread::spawn(move || {
-    server
-      .accept_one(|request| {
-        tx.send((
-          request.header("Sec-CH-UA-Arch").map(str::to_string),
-          request.sec_ch_ua_arch().is_err(),
-        ))
-        .expect("record malformed Sec-CH-UA-Arch");
-        HttpResponse::ok("ok")
-      })
-      .expect("serve malformed h2c Sec-CH-UA-Arch request");
-  });
-
-  let response = HttpClient::new()
-    .get()
-    .url(format!("http://{addr}/asset"))
-    .header(("Sec-CH-UA-Arch", "x86"))
-    .emit_http2_prior_knowledge()
-    .expect("receive h2c response");
-
-  assert_eq!("ok", response.body().string().expect("h2c response body"));
-  assert_eq!(
-    (Some("x86".to_string()), true),
-    rx.recv_timeout(Duration::from_secs(2))
-      .expect("recorded malformed Sec-CH-UA-Arch")
-  );
-  handle
-    .join()
-    .expect("malformed h2c Sec-CH-UA-Arch server thread");
+  run_h2c_sec_ch_ua_malformed(SEC_CH_UA_ARCH);
 }
 
 #[test]
 fn h2c_sec_ch_ua_arch_non_ascii_reaches_server_accessor_with_raw_header() {
-  for value in [r#""🍎""#, "\"\u{80}\""] {
-    let server = HttpServer::bind("127.0.0.1:0")
-      .expect("bind h2c non-ASCII Sec-CH-UA-Arch server")
-      .with_read_timeout(Some(Duration::from_secs(2)))
-      .with_write_timeout(Some(Duration::from_secs(2)));
-    let addr = server.local_addr().expect("h2c server address");
-    let (tx, rx) = mpsc::channel();
-
-    let handle = thread::spawn(move || {
-      server
-        .accept_one(|request| {
-          tx.send((
-            request.header("Sec-CH-UA-Arch").map(str::to_string),
-            request.sec_ch_ua_arch().is_err(),
-          ))
-          .expect("record non-ASCII Sec-CH-UA-Arch");
-          HttpResponse::ok("ok")
-        })
-        .expect("serve non-ASCII h2c Sec-CH-UA-Arch request");
-    });
-
-    let response = HttpClient::new()
-      .get()
-      .url(format!("http://{addr}/asset"))
-      .header(("Sec-CH-UA-Arch", value))
-      .emit_http2_prior_knowledge()
-      .expect("receive h2c response");
-
-    assert_eq!("ok", response.body().string().expect("h2c response body"));
-    assert_eq!(
-      (Some(value.to_string()), true),
-      rx.recv_timeout(Duration::from_secs(2))
-        .expect("recorded non-ASCII Sec-CH-UA-Arch")
-    );
-    handle
-      .join()
-      .expect("non-ASCII h2c Sec-CH-UA-Arch server thread");
-  }
+  run_h2c_sec_ch_ua_non_ascii(SEC_CH_UA_ARCH);
 }
 
 #[test]
 fn h2c_sec_ch_ua_arch_duplicate_reaches_server_accessor_with_raw_header() {
-  let server = HttpServer::bind("127.0.0.1:0")
-    .expect("bind h2c duplicate Sec-CH-UA-Arch server")
-    .with_read_timeout(Some(Duration::from_secs(2)))
-    .with_write_timeout(Some(Duration::from_secs(2)));
-  let addr = server.local_addr().expect("h2c server address");
-  let (tx, rx) = mpsc::channel();
-
-  let handle = thread::spawn(move || {
-    server
-      .accept_one(|request| {
-        tx.send((
-          request.header("Sec-CH-UA-Arch").map(str::to_string),
-          request.sec_ch_ua_arch().is_err(),
-        ))
-        .expect("record duplicate Sec-CH-UA-Arch");
-        HttpResponse::ok("ok")
-      })
-      .expect("serve duplicate h2c Sec-CH-UA-Arch request");
-  });
-
-  let authority = addr.to_string();
-  let _stream = send_h2c_prior_knowledge_headers(
-    addr,
-    &[
-      (":method", "GET"),
-      (":scheme", "http"),
-      (":path", "/asset"),
-      (":authority", authority.as_str()),
-      ("Sec-CH-UA-Arch", r#""x86""#),
-      ("sec-ch-ua-arch", r#""arm64""#),
-    ],
-  );
-
-  assert_eq!(
-    (Some("\"x86\"".to_string()), true),
-    rx.recv_timeout(Duration::from_secs(2))
-      .expect("recorded duplicate Sec-CH-UA-Arch")
-  );
-  handle
-    .join()
-    .expect("duplicate h2c Sec-CH-UA-Arch server thread");
+  run_h2c_sec_ch_ua_duplicate(SEC_CH_UA_ARCH);
 }
 
 #[test]
 fn h2c_sec_ch_ua_arch_oversized_reaches_server_accessor_with_raw_header() {
-  let server = HttpServer::bind("127.0.0.1:0")
-    .expect("bind h2c oversized Sec-CH-UA-Arch server")
-    .with_read_timeout(Some(Duration::from_secs(2)))
-    .with_write_timeout(Some(Duration::from_secs(2)))
-    .with_http2_policy(Http2ServerPolicy::new().with_max_header_list_size(256 * 1024));
-  let addr = server.local_addr().expect("h2c server address");
-  let (tx, rx) = mpsc::channel();
-
-  let handle = thread::spawn(move || {
-    server
-      .accept_one(|request| {
-        let raw = request.header("Sec-CH-UA-Arch").map(str::to_string);
-        tx.send((
-          raw.as_ref().map(String::len),
-          request.sec_ch_ua_arch().is_err(),
-          raw.is_some(),
-        ))
-        .expect("record oversized Sec-CH-UA-Arch");
-        HttpResponse::ok("ok")
-      })
-      .expect("serve oversized h2c Sec-CH-UA-Arch request");
-  });
-
-  let oversized = "a".repeat(64 * 1024 + 1);
-  let response = HttpClient::new()
-    .get()
-    .url(format!("http://{addr}/asset"))
-    .header(("Sec-CH-UA-Arch", oversized.as_str()))
-    .emit_http2_prior_knowledge()
-    .expect("receive h2c response");
-
-  assert_eq!("ok", response.body().string().expect("h2c response body"));
-  assert_eq!(
-    (Some(64 * 1024 + 1), true, true),
-    rx.recv_timeout(Duration::from_secs(2))
-      .expect("recorded oversized Sec-CH-UA-Arch")
-  );
-  handle
-    .join()
-    .expect("oversized h2c Sec-CH-UA-Arch server thread");
+  run_h2c_sec_ch_ua_oversized(SEC_CH_UA_ARCH);
 }
 
 #[test]
 fn h2c_sec_ch_ua_platform_helper_reaches_server_accessor() {
-  let server = HttpServer::bind("127.0.0.1:0")
-    .expect("bind h2c Sec-CH-UA-Platform server")
-    .with_read_timeout(Some(Duration::from_secs(2)))
-    .with_write_timeout(Some(Duration::from_secs(2)));
-  let addr = server.local_addr().expect("h2c server address");
-  let (tx, rx) = mpsc::channel();
-
-  let handle = thread::spawn(move || {
-    server
-      .accept_one(|request| {
-        tx.send((
-          request.version().to_string(),
-          request.target().to_string(),
-          request.header("Sec-CH-UA-Platform").map(str::to_string),
-          request
-            .sec_ch_ua_platform()
-            .map(|metadata| metadata.map(|metadata| metadata.header_value()))
-            .map_err(|error| error.to_string()),
-        ))
-        .expect("record Sec-CH-UA-Platform");
-        HttpResponse::ok("ok")
-      })
-      .expect("serve h2c Sec-CH-UA-Platform request");
-  });
-
-  let response = HttpClient::new()
-    .get()
-    .url(format!("http://{addr}/asset"))
-    .sec_ch_ua_platform("\t\"Windows\" \t")
-    .expect("Sec-CH-UA-Platform should be accepted")
-    .emit_http2_prior_knowledge()
-    .expect("receive h2c response");
-
-  assert_eq!("ok", response.body().string().expect("h2c response body"));
-  assert_eq!(
-    (
-      "HTTP/2".to_string(),
-      "/asset".to_string(),
-      Some("\"Windows\"".to_string()),
-      Ok(Some("\"Windows\"".to_string()))
-    ),
-    rx.recv_timeout(Duration::from_secs(2))
-      .expect("recorded Sec-CH-UA-Platform")
-  );
-  handle.join().expect("h2c Sec-CH-UA-Platform server thread");
+  run_h2c_sec_ch_ua_helper(SEC_CH_UA_PLATFORM);
 }
 
 #[test]
 fn h2c_sec_ch_ua_platform_malformed_reaches_server_accessor_with_raw_header() {
-  let server = HttpServer::bind("127.0.0.1:0")
-    .expect("bind h2c malformed Sec-CH-UA-Platform server")
-    .with_read_timeout(Some(Duration::from_secs(2)))
-    .with_write_timeout(Some(Duration::from_secs(2)));
-  let addr = server.local_addr().expect("h2c server address");
-  let (tx, rx) = mpsc::channel();
-
-  let handle = thread::spawn(move || {
-    server
-      .accept_one(|request| {
-        tx.send((
-          request.header("Sec-CH-UA-Platform").map(str::to_string),
-          request.sec_ch_ua_platform().is_err(),
-        ))
-        .expect("record malformed Sec-CH-UA-Platform");
-        HttpResponse::ok("ok")
-      })
-      .expect("serve malformed h2c Sec-CH-UA-Platform request");
-  });
-
-  let response = HttpClient::new()
-    .get()
-    .url(format!("http://{addr}/asset"))
-    .header(("Sec-CH-UA-Platform", "Windows"))
-    .emit_http2_prior_knowledge()
-    .expect("receive h2c response");
-
-  assert_eq!("ok", response.body().string().expect("h2c response body"));
-  assert_eq!(
-    (Some("Windows".to_string()), true),
-    rx.recv_timeout(Duration::from_secs(2))
-      .expect("recorded malformed Sec-CH-UA-Platform")
-  );
-  handle
-    .join()
-    .expect("malformed h2c Sec-CH-UA-Platform server thread");
+  run_h2c_sec_ch_ua_malformed(SEC_CH_UA_PLATFORM);
 }
 
 #[test]
 fn h2c_sec_ch_ua_platform_non_ascii_reaches_server_accessor_with_raw_header() {
-  for value in [r#""🍎""#, "\"\u{80}\""] {
-    let server = HttpServer::bind("127.0.0.1:0")
-      .expect("bind h2c non-ASCII Sec-CH-UA-Platform server")
-      .with_read_timeout(Some(Duration::from_secs(2)))
-      .with_write_timeout(Some(Duration::from_secs(2)));
-    let addr = server.local_addr().expect("h2c server address");
-    let (tx, rx) = mpsc::channel();
-
-    let handle = thread::spawn(move || {
-      server
-        .accept_one(|request| {
-          tx.send((
-            request.header("Sec-CH-UA-Platform").map(str::to_string),
-            request.sec_ch_ua_platform().is_err(),
-          ))
-          .expect("record non-ASCII Sec-CH-UA-Platform");
-          HttpResponse::ok("ok")
-        })
-        .expect("serve non-ASCII h2c Sec-CH-UA-Platform request");
-    });
-
-    let response = HttpClient::new()
-      .get()
-      .url(format!("http://{addr}/asset"))
-      .header(("Sec-CH-UA-Platform", value))
-      .emit_http2_prior_knowledge()
-      .expect("receive h2c response");
-
-    assert_eq!("ok", response.body().string().expect("h2c response body"));
-    assert_eq!(
-      (Some(value.to_string()), true),
-      rx.recv_timeout(Duration::from_secs(2))
-        .expect("recorded non-ASCII Sec-CH-UA-Platform")
-    );
-    handle
-      .join()
-      .expect("non-ASCII h2c Sec-CH-UA-Platform server thread");
-  }
+  run_h2c_sec_ch_ua_non_ascii(SEC_CH_UA_PLATFORM);
 }
 
 #[test]
 fn h2c_sec_ch_ua_platform_duplicate_reaches_server_accessor_with_raw_header() {
-  let server = HttpServer::bind("127.0.0.1:0")
-    .expect("bind h2c duplicate Sec-CH-UA-Platform server")
-    .with_read_timeout(Some(Duration::from_secs(2)))
-    .with_write_timeout(Some(Duration::from_secs(2)));
-  let addr = server.local_addr().expect("h2c server address");
-  let (tx, rx) = mpsc::channel();
-
-  let handle = thread::spawn(move || {
-    server
-      .accept_one(|request| {
-        tx.send((
-          request.header("Sec-CH-UA-Platform").map(str::to_string),
-          request.sec_ch_ua_platform().is_err(),
-        ))
-        .expect("record duplicate Sec-CH-UA-Platform");
-        HttpResponse::ok("ok")
-      })
-      .expect("serve duplicate h2c Sec-CH-UA-Platform request");
-  });
-
-  let authority = addr.to_string();
-  let _stream = send_h2c_prior_knowledge_headers(
-    addr,
-    &[
-      (":method", "GET"),
-      (":scheme", "http"),
-      (":path", "/asset"),
-      (":authority", authority.as_str()),
-      ("Sec-CH-UA-Platform", r#""Windows""#),
-      ("sec-ch-ua-platform", r#""Linux""#),
-    ],
-  );
-
-  assert_eq!(
-    (Some("\"Windows\"".to_string()), true),
-    rx.recv_timeout(Duration::from_secs(2))
-      .expect("recorded duplicate Sec-CH-UA-Platform")
-  );
-  handle
-    .join()
-    .expect("duplicate h2c Sec-CH-UA-Platform server thread");
+  run_h2c_sec_ch_ua_duplicate(SEC_CH_UA_PLATFORM);
 }
 
 #[test]
 fn h2c_sec_ch_ua_platform_oversized_reaches_server_accessor_with_raw_header() {
-  let server = HttpServer::bind("127.0.0.1:0")
-    .expect("bind h2c oversized Sec-CH-UA-Platform server")
-    .with_read_timeout(Some(Duration::from_secs(2)))
-    .with_write_timeout(Some(Duration::from_secs(2)))
-    .with_http2_policy(Http2ServerPolicy::new().with_max_header_list_size(256 * 1024));
-  let addr = server.local_addr().expect("h2c server address");
-  let (tx, rx) = mpsc::channel();
-
-  let handle = thread::spawn(move || {
-    server
-      .accept_one(|request| {
-        let raw = request.header("Sec-CH-UA-Platform").map(str::to_string);
-        tx.send((
-          raw.as_ref().map(String::len),
-          request.sec_ch_ua_platform().is_err(),
-          raw.is_some(),
-        ))
-        .expect("record oversized Sec-CH-UA-Platform");
-        HttpResponse::ok("ok")
-      })
-      .expect("serve oversized h2c Sec-CH-UA-Platform request");
-  });
-
-  let oversized = "a".repeat(64 * 1024 + 1);
-  let response = HttpClient::new()
-    .get()
-    .url(format!("http://{addr}/asset"))
-    .header(("Sec-CH-UA-Platform", oversized.as_str()))
-    .emit_http2_prior_knowledge()
-    .expect("receive h2c response");
-
-  assert_eq!("ok", response.body().string().expect("h2c response body"));
-  assert_eq!(
-    (Some(64 * 1024 + 1), true, true),
-    rx.recv_timeout(Duration::from_secs(2))
-      .expect("recorded oversized Sec-CH-UA-Platform")
-  );
-  handle
-    .join()
-    .expect("oversized h2c Sec-CH-UA-Platform server thread");
+  run_h2c_sec_ch_ua_oversized(SEC_CH_UA_PLATFORM);
 }
 
 #[test]
