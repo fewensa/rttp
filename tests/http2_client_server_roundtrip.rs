@@ -1525,7 +1525,7 @@ fn spawn_h2c_sec_ch_ua_observer(
   thread::JoinHandle<()>,
 ) {
   let server = HttpServer::bind("127.0.0.1:0")
-    .unwrap_or_else(|_| panic!("bind h2c {case} {} server", field.name))
+    .unwrap_or_else(|error| panic!("bind h2c {case} {} server: {error:?}", field.name))
     .with_read_timeout(Some(Duration::from_secs(2)))
     .with_write_timeout(Some(Duration::from_secs(2)));
   let server = if allow_oversized {
@@ -1535,7 +1535,7 @@ fn spawn_h2c_sec_ch_ua_observer(
   };
   let addr = server
     .local_addr()
-    .unwrap_or_else(|_| panic!("h2c {case} {} server address", field.name));
+    .unwrap_or_else(|error| panic!("h2c {case} {} server address: {error:?}", field.name));
   let (tx, rx) = mpsc::channel();
 
   let handle = thread::spawn(move || {
@@ -1548,10 +1548,10 @@ fn spawn_h2c_sec_ch_ua_observer(
           parsed: (field.accessor)(&request),
           raw,
         })
-        .unwrap_or_else(|_| panic!("record {case} {}", field.name));
+        .unwrap_or_else(|error| panic!("record {case} {}: {error:?}", field.name));
         HttpResponse::ok("ok")
       })
-      .unwrap_or_else(|_| panic!("serve h2c {case} {} request", field.name));
+      .unwrap_or_else(|error| panic!("serve h2c {case} {} request: {error:?}", field.name));
   });
 
   (addr, rx, handle)
@@ -1563,7 +1563,7 @@ fn receive_h2c_sec_ch_ua(
   case: &'static str,
 ) -> ObservedH2cSecChUa {
   rx.recv_timeout(Duration::from_secs(2))
-    .unwrap_or_else(|_| panic!("recorded {case} {}", field.name))
+    .unwrap_or_else(|error| panic!("recorded {case} {}: {error:?}", field.name))
 }
 
 fn join_h2c_sec_ch_ua(handle: thread::JoinHandle<()>, field: SecChUaFieldSpec, case: &'static str) {
