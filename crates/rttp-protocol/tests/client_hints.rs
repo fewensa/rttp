@@ -1,16 +1,18 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
-  PrefersReducedMotion, Rtt, SecChUaArch, SecChUaBitness, SecChUaFullVersionList, SecChUaMobile,
-  SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width,
-  MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
-  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
-  MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
+  PrefersReducedMotion, Rtt, SecChUaArch, SecChUaBitness, SecChUaFormFactors,
+  SecChUaFullVersionList, SecChUaMobile, SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion,
+  SecChUaWow64, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
+  MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
+  MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
   MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_SEC_CH_UA_ARCH_VALUE_BYTES,
-  MAX_SEC_CH_UA_BITNESS_VALUE_BYTES, MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES,
-  MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES, MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES,
-  MAX_SEC_CH_UA_MOBILE_VALUE_BYTES, MAX_SEC_CH_UA_MODEL_VALUE_BYTES,
-  MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES, MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES,
-  MAX_SEC_CH_UA_WOW64_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  MAX_SEC_CH_UA_BITNESS_VALUE_BYTES, MAX_SEC_CH_UA_FORM_FACTORS_ITEMS,
+  MAX_SEC_CH_UA_FORM_FACTORS_TOTAL_BYTES, MAX_SEC_CH_UA_FORM_FACTORS_VALUE_BYTES,
+  MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES, MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES,
+  MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES, MAX_SEC_CH_UA_MOBILE_VALUE_BYTES,
+  MAX_SEC_CH_UA_MODEL_VALUE_BYTES, MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES,
+  MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES, MAX_SEC_CH_UA_WOW64_VALUE_BYTES,
+  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -724,6 +726,66 @@ fn sec_ch_ua_full_version_list_rejects_malformed_duplicate_and_bounded_input() {
     aggregate_member.as_str(),
     aggregate_member.as_str(),
   ])
+  .is_err());
+}
+
+#[test]
+fn sec_ch_ua_form_factors_preserves_order_and_canonicalizes_strings() {
+  let form_factors = SecChUaFormFactors::parse(r#"  "Desktop", "Tablet", "Watch\"Form"  "#)
+    .expect("valid Sec-CH-UA-Form-Factors");
+
+  assert_eq!(3, form_factors.len());
+  assert_eq!(["Desktop", "Tablet", r#"Watch"Form"#], form_factors.items());
+  assert_eq!(
+    r#""Desktop", "Tablet", "Watch\"Form""#,
+    form_factors.header_value()
+  );
+  assert_eq!(
+    form_factors,
+    SecChUaFormFactors::parse(form_factors.header_value()).expect("canonical roundtrip")
+  );
+}
+
+#[test]
+fn sec_ch_ua_form_factors_rejects_malformed_duplicate_and_bounded_input() {
+  assert!(SecChUaFormFactors::parse_values([]).is_err());
+  for value in [
+    "",
+    " ",
+    "Desktop",
+    r#""Desktop";foo=bar"#,
+    r#""Desktop", ("Tablet")"#,
+    r#""Desktop", "#,
+    r#""Desktop", 123"#,
+    r#""unterminated"#,
+    r#""bad"quote""#,
+    r#""bad\escape""#,
+    "\"Desktop\0\"",
+    "\"Desktop\u{80}\"",
+  ] {
+    assert!(
+      SecChUaFormFactors::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  assert!(SecChUaFormFactors::parse_values([r#""Desktop""#, r#""Tablet""#]).is_err());
+  let too_many = std::iter::repeat_n(r#""Desktop""#, MAX_SEC_CH_UA_FORM_FACTORS_ITEMS + 1)
+    .collect::<Vec<_>>()
+    .join(",");
+  assert!(SecChUaFormFactors::parse(&too_many).is_err());
+  assert!(SecChUaFormFactors::parse(format!(
+    "\"{}\"",
+    "x".repeat(MAX_SEC_CH_UA_FORM_FACTORS_VALUE_BYTES)
+  ))
+  .is_err());
+  let aggregate_member = format!(
+    "\"{}\"",
+    "x".repeat(MAX_SEC_CH_UA_FORM_FACTORS_TOTAL_BYTES / 2)
+  );
+  assert!(SecChUaFormFactors::parse_values(
+    [aggregate_member.as_str(), aggregate_member.as_str(),]
+  )
   .is_err());
 }
 

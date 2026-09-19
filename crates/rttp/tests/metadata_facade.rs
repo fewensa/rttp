@@ -30,26 +30,27 @@ use rttp::server::{
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
   HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecChUaArch,
   HttpSecChUaArchParseError, HttpSecChUaBitness, HttpSecChUaBitnessParseError,
-  HttpSecChUaFullVersionList, HttpSecChUaFullVersionListParseError, HttpSecChUaMobile,
-  HttpSecChUaMobileParseError, HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaPlatform,
-  HttpSecChUaPlatformParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
-  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
-  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
-  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
-  HttpSpeculationRulesParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
-  HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError,
-  HttpViewportWidth, HttpViewportWidthParseError, HttpWidth, HttpWidthParseError,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpSecChUaFormFactors, HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersionList,
+  HttpSecChUaFullVersionListParseError, HttpSecChUaMobile, HttpSecChUaMobileParseError,
+  HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaPlatform, HttpSecChUaPlatformParseError,
+  HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64,
+  HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
+  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
+  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
+  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn,
+  HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
+  HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
+  HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember, HttpUserAgentParseError,
+  HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError, HttpViewportWidth,
+  HttpViewportWidthParseError, HttpWidth, HttpWidthParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -442,6 +443,52 @@ fn compatibility_facade_exports_sec_ch_ua_full_version_list_request_metadata() {
   assert_eq!(
     Some("\"Chromium\";v=\"120.0\""),
     duplicate.header("Sec-CH-UA-Full-Version-List")
+  );
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_ua_form_factors_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Form-Factors: \"Desktop\", \"Tablet\"\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Form-Factors request should parse");
+  let form_factors: HttpSecChUaFormFactors = request
+    .sec_ch_ua_form_factors()
+    .expect("Sec-CH-UA-Form-Factors should parse")
+    .expect("Sec-CH-UA-Form-Factors should be present");
+  assert_eq!(["Desktop", "Tablet"], form_factors.items());
+  assert_eq!(r#""Desktop", "Tablet""#, form_factors.header_value());
+  assert_eq!(
+    Some(r#""Desktop", "Tablet""#),
+    request.header("Sec-CH-UA-Form-Factors")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-Form-Factors should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_ua_form_factors()
+      .expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Form-Factors: Desktop\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-Form-Factors should remain available");
+  let _: HttpSecChUaFormFactorsParseError = malformed
+    .sec_ch_ua_form_factors()
+    .expect_err("unquoted Sec-CH-UA-Form-Factors item should fail");
+  assert_eq!(Some("Desktop"), malformed.header("Sec-CH-UA-Form-Factors"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Form-Factors: \"Desktop\"\r\nsec-ch-ua-form-factors: \"Tablet\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Form-Factors fields should remain parseable");
+  assert!(duplicate.sec_ch_ua_form_factors().is_err());
+  assert_eq!(
+    Some(r#""Desktop""#),
+    duplicate.header("Sec-CH-UA-Form-Factors")
   );
 }
 

@@ -767,6 +767,23 @@ On the server facade, `Request::sec_ch_ua_full_version_list()` and
 infer browser identity, select a brand, negotiate Client Hints, or apply
 browser policy.
 
+## Bounded Sec-CH-UA-Form-Factors request Client Hint metadata
+
+With the client feature, `HttpClient::sec_ch_ua_form_factors(value)` validates
+and emits one canonical `Sec-CH-UA-Form-Factors` field through
+`rttp::SecChUaFormFactors`, replacing existing same-name fields. The value is
+an RFC 8941 list of ordered structured strings. `items()` exposes each decoded
+string without reordering or interpreting the entries. The parser accepts at
+most 256 items and 64 KiB of combined field input, canonicalizes valid string
+quoting, and rejects empty lists, malformed members, parameterized members,
+duplicate fields, non-ASCII/control input, and oversized values.
+
+On the server facade, `Request::sec_ch_ua_form_factors()` and
+`HttpRequest::sec_ch_ua_form_factors()` parse the same metadata and return
+`Ok(None)` when absent. Parse errors leave the raw field available through
+`header()`. These helpers only expose caller-supplied metadata: RTTP does not
+infer a device class, negotiate Client Hints, or apply browser policy.
+
 ## Bounded Sec-CH-Prefers-Reduced-Motion request Client Hint metadata
 
 With the client feature, `HttpClient::prefers_reduced_motion(value)` validates

@@ -52,23 +52,24 @@ use rttp_server::server::{
   HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
   HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
   HttpSaveDataParseError, HttpScheduleTag, HttpSecChUaBitness, HttpSecChUaBitnessParseError,
-  HttpSecChUaFullVersionList, HttpSecChUaFullVersionListParseError, HttpSecChUaModel,
-  HttpSecChUaModelParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
-  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
-  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
-  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
-  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
-  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
-  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
-  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpSecChUaFormFactors, HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersionList,
+  HttpSecChUaFullVersionListParseError, HttpSecChUaModel, HttpSecChUaModelParseError,
+  HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64,
+  HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
+  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
+  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
+  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
+  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
+  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
   HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
   HttpViaParseError, HttpViewportWidth, HttpViewportWidthParseError, HttpWantContentDigest,
@@ -2100,6 +2101,29 @@ fn request_facade_parses_sec_ch_ua_full_version_list_metadata_without_negotiatio
     Some("Chromium;v=\"120.0\""),
     malformed.header("Sec-CH-UA-Full-Version-List")
   );
+}
+
+#[test]
+fn request_facade_parses_sec_ch_ua_form_factors_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Form-Factors: \t\"Desktop\", \"Tablet\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Form-Factors request should parse");
+  let form_factors: HttpSecChUaFormFactors = request
+    .sec_ch_ua_form_factors()
+    .expect("Sec-CH-UA-Form-Factors should parse")
+    .expect("Sec-CH-UA-Form-Factors should be present");
+  assert_eq!(["Desktop", "Tablet"], form_factors.items());
+  assert_eq!(r#""Desktop", "Tablet""#, form_factors.header_value());
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Form-Factors: Desktop\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-Form-Factors should remain available");
+  let _: HttpSecChUaFormFactorsParseError = malformed
+    .sec_ch_ua_form_factors()
+    .expect_err("malformed Sec-CH-UA-Form-Factors should fail");
+  assert_eq!(Some("Desktop"), malformed.header("Sec-CH-UA-Form-Factors"));
 }
 
 #[test]

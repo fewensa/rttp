@@ -23,8 +23,8 @@ use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::client_hints::{
   DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast, PrefersReducedMotion, Rtt,
-  SecChUaArch, SecChUaBitness, SecChUaFullVersionList, SecChUaMobile, SecChUaModel,
-  SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width,
+  SecChUaArch, SecChUaBitness, SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile,
+  SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width,
 };
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -698,6 +698,21 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-CH-UA-Full-Version-List",
       sec_ch_ua_full_version_list.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-CH-UA-Form-Factors` request Client Hint metadata.
+  ///
+  /// The value must be an RFC 8941 list of ordered structured strings. This
+  /// replaces any existing case-insensitive `Sec-CH-UA-Form-Factors` field and
+  /// only declares request metadata; RTTP does not infer a device class,
+  /// negotiate Client Hints, emit `Accept-CH`, or apply browser policy.
+  pub fn sec_ch_ua_form_factors<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_ch_ua_form_factors = SecChUaFormFactors::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-CH-UA-Form-Factors",
+      sec_ch_ua_form_factors.header_value(),
     )))
   }
 

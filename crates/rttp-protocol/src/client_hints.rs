@@ -19,6 +19,9 @@ pub const MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES: usize = 256;
+pub const MAX_SEC_CH_UA_FORM_FACTORS_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_FORM_FACTORS_TOTAL_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_FORM_FACTORS_ITEMS: usize = 256;
 pub const MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_CONTRAST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
@@ -112,6 +115,16 @@ pub struct SecChUaFullVersionListEntry {
   version: String,
 }
 
+/// Parsed, bounded `Sec-CH-UA-Form-Factors` request Client Hint metadata.
+///
+/// Items are retained in wire order. This type only represents the syntax of
+/// the declared RFC 8941 string list; it does not identify a device class or
+/// apply browser policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SecChUaFormFactors {
+  items: Vec<String>,
+}
+
 /// Parsed, bounded `Sec-CH-Prefers-Reduced-Motion` request Client Hint metadata.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PrefersReducedMotion {
@@ -180,6 +193,7 @@ pub type SecChUaArchParseError = ClientHintsParseError;
 pub type SecChUaBitnessParseError = ClientHintsParseError;
 pub type SecChUaPlatformVersionParseError = ClientHintsParseError;
 pub type SecChUaFullVersionListParseError = ClientHintsParseError;
+pub type SecChUaFormFactorsParseError = ClientHintsParseError;
 pub type PrefersReducedMotionParseError = ClientHintsParseError;
 pub type PrefersContrastParseError = ClientHintsParseError;
 pub type EctParseError = ClientHintsParseError;
@@ -610,9 +624,64 @@ impl SecChUaFullVersionListEntry {
   pub fn header_value(&self) -> String {
     format!(
       "{};v={}",
-      canonical_sec_ch_ua_full_version_list_string(&self.brand),
-      canonical_sec_ch_ua_full_version_list_string(&self.version),
+      canonical_sec_ch_ua_structured_string(&self.brand),
+      canonical_sec_ch_ua_structured_string(&self.version),
     )
+  }
+}
+
+impl SecChUaFormFactors {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, SecChUaFormFactorsParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, SecChUaFormFactorsParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut values = values.into_iter();
+    let value = values
+      .next()
+      .ok_or_else(invalid_sec_ch_ua_form_factors_value)?;
+    let mut total_bytes = 0;
+    validate_bounded_sec_ch_ua_form_factors_value(value, &mut total_bytes)?;
+
+    let mut items = Vec::new();
+    parse_sec_ch_ua_form_factors_field(value, &mut items)?;
+
+    let mut has_duplicate = false;
+    for value in values {
+      has_duplicate = true;
+      validate_bounded_sec_ch_ua_form_factors_value(value, &mut total_bytes)?;
+    }
+    if has_duplicate {
+      return Err(ClientHintsParseError::new(
+        "duplicate Sec-CH-UA-Form-Factors header fields",
+      ));
+    }
+
+    Ok(Self { items })
+  }
+
+  pub fn items(&self) -> &[String] {
+    &self.items
+  }
+
+  pub fn len(&self) -> usize {
+    self.items.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.items.is_empty()
+  }
+
+  pub fn header_value(&self) -> String {
+    self
+      .items
+      .iter()
+      .map(|item| canonical_sec_ch_ua_structured_string(item.as_str()))
+      .collect::<Vec<_>>()
+      .join(", ")
   }
 }
 
@@ -1601,7 +1670,7 @@ fn reject_duplicate_sec_ch_ua_full_version_list_parameters(
   Ok(())
 }
 
-fn canonical_sec_ch_ua_full_version_list_string(value: &str) -> String {
+fn canonical_sec_ch_ua_structured_string(value: &str) -> String {
   let mut result = String::with_capacity(value.len() + 2);
   result.push('"');
   for character in value.chars() {
@@ -1612,6 +1681,65 @@ fn canonical_sec_ch_ua_full_version_list_string(value: &str) -> String {
   }
   result.push('"');
   result
+}
+
+fn validate_bounded_sec_ch_ua_form_factors_value(
+  value: &str,
+  total_bytes: &mut usize,
+) -> Result<(), SecChUaFormFactorsParseError> {
+  if value.len() > MAX_SEC_CH_UA_FORM_FACTORS_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-UA-Form-Factors header value is too large",
+    ));
+  }
+  *total_bytes = total_bytes.saturating_add(value.len());
+  if *total_bytes > MAX_SEC_CH_UA_FORM_FACTORS_TOTAL_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-UA-Form-Factors header list is too large",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte > 0x7f || (byte.is_ascii_control() && !matches!(byte, b' ' | b'\t')))
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-UA-Form-Factors control or non-ASCII byte",
+    ));
+  }
+  Ok(())
+}
+
+fn parse_sec_ch_ua_form_factors_field(
+  value: &str,
+  items: &mut Vec<String>,
+) -> Result<(), SecChUaFormFactorsParseError> {
+  let value = value.trim_matches([' ', '\t']);
+  let list = Parser::new(value)
+    .with_version(Version::Rfc8941)
+    .parse::<List>()
+    .map_err(|_| invalid_sec_ch_ua_form_factors_value())?;
+  if list.is_empty() {
+    return Err(invalid_sec_ch_ua_form_factors_value());
+  }
+
+  for entry in list {
+    if items.len() >= MAX_SEC_CH_UA_FORM_FACTORS_ITEMS {
+      return Err(ClientHintsParseError::new(
+        "too many Sec-CH-UA-Form-Factors items",
+      ));
+    }
+    let ListEntry::Item(item) = entry else {
+      return Err(invalid_sec_ch_ua_form_factors_value());
+    };
+    let BareItem::String(form_factor) = item.bare_item else {
+      return Err(invalid_sec_ch_ua_form_factors_value());
+    };
+    if !item.params.is_empty() {
+      return Err(invalid_sec_ch_ua_form_factors_value());
+    }
+    items.push(form_factor.as_str().to_owned());
+  }
+  Ok(())
 }
 
 fn parse_prefers_reduced_motion_singleton<'a, I>(
@@ -1911,6 +2039,10 @@ fn invalid_sec_ch_ua_platform_version_value() -> SecChUaPlatformVersionParseErro
 
 fn invalid_sec_ch_ua_full_version_list_value() -> SecChUaFullVersionListParseError {
   ClientHintsParseError::new("invalid Sec-CH-UA-Full-Version-List header value")
+}
+
+fn invalid_sec_ch_ua_form_factors_value() -> SecChUaFormFactorsParseError {
+  ClientHintsParseError::new("invalid Sec-CH-UA-Form-Factors header value")
 }
 
 fn invalid_prefers_reduced_motion_value() -> PrefersReducedMotionParseError {

@@ -605,6 +605,18 @@ This is metadata-only: the server does not infer browser identity, select a
 brand or version, negotiate Client Hints, emit `Accept-CH`, retry, or apply
 browser policy.
 
+`Request::sec_ch_ua_form_factors()` and `HttpRequest::sec_ch_ua_form_factors()`
+parse a bounded `Sec-CH-UA-Form-Factors` request Client Hint into
+`HttpSecChUaFormFactors`. Each ordered member must be an RFC 8941 structured
+string; `items()` exposes the decoded values without reordering or interpreting
+them. The parser permits 256 items and 64 KiB of aggregate field input,
+canonicalizes valid quoting, and rejects empty lists, malformed members,
+parameterized members, duplicate fields, non-ASCII/control input, and oversized
+values. Parse errors leave the raw field available through `header()`.
+
+This is metadata-only: the server does not infer a device class, negotiate
+Client Hints, emit `Accept-CH`, retry, or apply browser policy.
+
 `Request::prefers_reduced_motion()` and `HttpRequest::prefers_reduced_motion()`
 parse a singleton `Sec-CH-Prefers-Reduced-Motion` request Client Hint into
 `HttpPrefersReducedMotion`, accepting `no-preference` and `reduce`

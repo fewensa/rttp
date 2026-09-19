@@ -740,6 +740,21 @@ invalid escape, and oversized values are errors. This parser reports request
 metadata only; it does not infer a platform version or capabilities, negotiate
 the UA brands family, emit `Accept-CH`, retry, or apply browser policy.
 
+## Sec-CH-UA-Form-Factors
+
+`client_hints::SecChUaFormFactors` parses a bounded HTTP
+`Sec-CH-UA-Form-Factors` request Client Hint as an RFC 8941 list of ordered
+structured strings. Each field value is bounded to 64 KiB, aggregate field
+input is bounded to 64 KiB, and the list accepts at most 256 items. Optional
+outer SP and HTAB are trimmed, item order is preserved, and `header_value()`
+emits canonical quoted-string syntax with quote and backslash escapes.
+`items()` exposes the decoded ASCII strings without reordering or interpreting
+them. Empty lists, non-string members, inner lists, parameterized members,
+duplicate fields, non-ASCII, forbidden-control, invalid-escape, and oversized
+values are errors. This parser reports request metadata only; it does not infer
+a device class, negotiate Client Hints, emit `Accept-CH`, retry, or apply
+browser policy.
+
 ## Sec-CH-Prefers-Reduced-Motion
 
 `client_hints::PrefersReducedMotion` parses a singleton HTTP
