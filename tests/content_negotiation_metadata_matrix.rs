@@ -574,6 +574,82 @@ fn sec_ch_ua_bitness_parses_valid_duplicate_and_malformed_http11_headers() {
 }
 
 #[test]
+fn sec_ch_ua_full_version_list_parses_valid_duplicate_and_malformed_http11_headers() {
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_full_version_list()
+          .map(|list| list.map(|list| list.header_value()))
+          .map_err(|error| error.to_string()),
+        request
+          .header("Sec-CH-UA-Full-Version-List")
+          .map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("full-version-list"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /full-version-list HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Full-Version-List: \"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99.0\"\r\nConnection: close\r\n\r\n",
+  );
+  assert_eq!(
+    (
+      Ok(Some(
+        "\"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99.0\"".to_owned()
+      )),
+      Some("\"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99.0\"".to_owned())
+    ),
+    observed_rx
+      .recv_timeout(TIMEOUT)
+      .expect("observe valid Sec-CH-UA-Full-Version-List")
+  );
+  handle
+    .join()
+    .expect("valid full-version-list server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      request
+        .sec_ch_ua_full_version_list()
+        .map(|list| list.map(|list| list.header_value()))
+    },
+    |_| HttpResponse::ok("duplicate"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /full-version-list HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Full-Version-List: \"Chromium\";v=\"120.0\"\r\nsec-ch-ua-full-version-list: \"Firefox\";v=\"121.0\"\r\nConnection: close\r\n\r\n",
+  );
+  assert!(observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe duplicate Sec-CH-UA-Full-Version-List")
+    .is_err());
+  handle
+    .join()
+    .expect("duplicate full-version-list server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      request
+        .sec_ch_ua_full_version_list()
+        .map(|list| list.map(|list| list.header_value()))
+    },
+    |_| HttpResponse::ok("malformed"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /full-version-list HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Full-Version-List: Chromium;v=\"120.0\"\r\nConnection: close\r\n\r\n",
+  );
+  assert!(observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe malformed Sec-CH-UA-Full-Version-List")
+    .is_err());
+  handle
+    .join()
+    .expect("malformed full-version-list server thread");
+}
+
+#[test]
 fn sec_ch_ua_platform_version_parses_valid_duplicate_and_malformed_http11_headers() {
   let (addr, observed_rx, handle) = spawn_observed_facade_server(
     |request| {

@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt;
 
+use sfv::{BareItem, List, ListEntry, Parser, Version};
+
 pub const MAX_CLIENT_HINT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_CLIENT_HINT_NAMES: usize = 256;
 pub const MAX_DPR_VALUE_BYTES: usize = 64 * 1024;
@@ -14,6 +16,9 @@ pub const MAX_SEC_CH_UA_MODEL_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_ARCH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_BITNESS_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES: usize = 256;
 pub const MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_CONTRAST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
@@ -90,6 +95,23 @@ pub struct SecChUaPlatformVersion {
   value: String,
 }
 
+/// Parsed, bounded `Sec-CH-UA-Full-Version-List` request Client Hint metadata.
+///
+/// Entries are retained in wire order. This type only represents the syntax of
+/// the declared brand/version list; it does not identify a browser or apply
+/// user-agent policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SecChUaFullVersionList {
+  entries: Vec<SecChUaFullVersionListEntry>,
+}
+
+/// One ordered brand/version entry in a `Sec-CH-UA-Full-Version-List` value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SecChUaFullVersionListEntry {
+  brand: String,
+  version: String,
+}
+
 /// Parsed, bounded `Sec-CH-Prefers-Reduced-Motion` request Client Hint metadata.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PrefersReducedMotion {
@@ -157,6 +179,7 @@ pub type SecChUaModelParseError = ClientHintsParseError;
 pub type SecChUaArchParseError = ClientHintsParseError;
 pub type SecChUaBitnessParseError = ClientHintsParseError;
 pub type SecChUaPlatformVersionParseError = ClientHintsParseError;
+pub type SecChUaFullVersionListParseError = ClientHintsParseError;
 pub type PrefersReducedMotionParseError = ClientHintsParseError;
 pub type PrefersContrastParseError = ClientHintsParseError;
 pub type EctParseError = ClientHintsParseError;
@@ -513,6 +536,83 @@ impl SecChUaPlatformVersion {
     }
     header_value.push('"');
     header_value
+  }
+}
+
+impl SecChUaFullVersionList {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, SecChUaFullVersionListParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, SecChUaFullVersionListParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut values = values.into_iter();
+    let value = values
+      .next()
+      .ok_or_else(invalid_sec_ch_ua_full_version_list_value)?;
+    let mut total_bytes = 0;
+    validate_bounded_sec_ch_ua_full_version_list_value(value, &mut total_bytes)?;
+
+    let mut entries = Vec::new();
+    parse_sec_ch_ua_full_version_list_field(value, &mut entries)?;
+
+    let mut has_duplicate = false;
+    for value in values {
+      has_duplicate = true;
+      validate_bounded_sec_ch_ua_full_version_list_value(value, &mut total_bytes)?;
+    }
+    if has_duplicate {
+      return Err(ClientHintsParseError::new(
+        "duplicate Sec-CH-UA-Full-Version-List header fields",
+      ));
+    }
+
+    Ok(Self { entries })
+  }
+
+  pub fn entries(&self) -> &[SecChUaFullVersionListEntry] {
+    &self.entries
+  }
+
+  pub fn len(&self) -> usize {
+    self.entries.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.entries.is_empty()
+  }
+
+  pub fn header_value(&self) -> String {
+    self
+      .entries
+      .iter()
+      .map(SecChUaFullVersionListEntry::header_value)
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+}
+
+impl SecChUaFullVersionListEntry {
+  pub fn brand(&self) -> &str {
+    &self.brand
+  }
+
+  pub fn version(&self) -> &str {
+    &self.version
+  }
+
+  pub fn v(&self) -> &str {
+    &self.version
+  }
+
+  pub fn header_value(&self) -> String {
+    format!(
+      "{};v={}",
+      canonical_sec_ch_ua_full_version_list_string(&self.brand),
+      canonical_sec_ch_ua_full_version_list_string(&self.version),
+    )
   }
 }
 
@@ -1382,6 +1482,138 @@ fn parse_sec_ch_ua_platform_version_string(
   Ok(parsed)
 }
 
+fn validate_bounded_sec_ch_ua_full_version_list_value(
+  value: &str,
+  total_bytes: &mut usize,
+) -> Result<(), SecChUaFullVersionListParseError> {
+  if value.len() > MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-UA-Full-Version-List header value is too large",
+    ));
+  }
+  *total_bytes = total_bytes.saturating_add(value.len());
+  if *total_bytes > MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-UA-Full-Version-List header list is too large",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte > 0x7f || (byte.is_ascii_control() && !matches!(byte, b' ' | b'\t')))
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-UA-Full-Version-List control or non-ASCII byte",
+    ));
+  }
+  Ok(())
+}
+
+fn parse_sec_ch_ua_full_version_list_field(
+  value: &str,
+  entries: &mut Vec<SecChUaFullVersionListEntry>,
+) -> Result<(), SecChUaFullVersionListParseError> {
+  let value = value.trim_matches([' ', '\t']);
+  let list = Parser::new(value)
+    .with_version(Version::Rfc8941)
+    .parse::<List>()
+    .map_err(|_| invalid_sec_ch_ua_full_version_list_value())?;
+  if list.is_empty() {
+    return Err(invalid_sec_ch_ua_full_version_list_value());
+  }
+  reject_duplicate_sec_ch_ua_full_version_list_parameters(value)?;
+
+  for entry in list {
+    if entries.len() >= MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES {
+      return Err(ClientHintsParseError::new(
+        "too many Sec-CH-UA-Full-Version-List entries",
+      ));
+    }
+    let ListEntry::Item(item) = entry else {
+      return Err(invalid_sec_ch_ua_full_version_list_value());
+    };
+    let BareItem::String(brand) = item.bare_item else {
+      return Err(invalid_sec_ch_ua_full_version_list_value());
+    };
+    if item.params.len() != 1 {
+      return Err(invalid_sec_ch_ua_full_version_list_value());
+    }
+    let Some(BareItem::String(version)) = item.params.get("v") else {
+      return Err(invalid_sec_ch_ua_full_version_list_value());
+    };
+    entries.push(SecChUaFullVersionListEntry {
+      brand: brand.as_str().to_owned(),
+      version: version.as_str().to_owned(),
+    });
+  }
+  Ok(())
+}
+
+fn reject_duplicate_sec_ch_ua_full_version_list_parameters(
+  value: &str,
+) -> Result<(), SecChUaFullVersionListParseError> {
+  let bytes = value.as_bytes();
+  let mut in_string = false;
+  let mut escaped = false;
+  let mut version_seen = false;
+  let mut index = 0;
+  while index < bytes.len() {
+    let byte = bytes[index];
+    if in_string {
+      if escaped {
+        escaped = false;
+      } else if byte == b'\\' {
+        escaped = true;
+      } else if byte == b'"' {
+        in_string = false;
+      }
+      index += 1;
+      continue;
+    }
+    match byte {
+      b'"' => in_string = true,
+      b',' => version_seen = false,
+      b';' => {
+        index += 1;
+        while matches!(bytes.get(index), Some(b' ')) {
+          index += 1;
+        }
+        let start = index;
+        while matches!(
+          bytes.get(index),
+          Some(b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' | b'.' | b'*')
+        ) {
+          index += 1;
+        }
+        if &bytes[start..index] == b"v" {
+          if version_seen {
+            return Err(ClientHintsParseError::new(
+              "duplicate Sec-CH-UA-Full-Version-List v parameter",
+            ));
+          }
+          version_seen = true;
+        }
+        continue;
+      }
+      _ => {}
+    }
+    index += 1;
+  }
+  Ok(())
+}
+
+fn canonical_sec_ch_ua_full_version_list_string(value: &str) -> String {
+  let mut result = String::with_capacity(value.len() + 2);
+  result.push('"');
+  for character in value.chars() {
+    if matches!(character, '"' | '\\') {
+      result.push('\\');
+    }
+    result.push(character);
+  }
+  result.push('"');
+  result
+}
+
 fn parse_prefers_reduced_motion_singleton<'a, I>(
   values: I,
 ) -> Result<&'a str, PrefersReducedMotionParseError>
@@ -1675,6 +1907,10 @@ fn invalid_sec_ch_ua_bitness_value() -> SecChUaBitnessParseError {
 
 fn invalid_sec_ch_ua_platform_version_value() -> SecChUaPlatformVersionParseError {
   ClientHintsParseError::new("invalid Sec-CH-UA-Platform-Version header value")
+}
+
+fn invalid_sec_ch_ua_full_version_list_value() -> SecChUaFullVersionListParseError {
+  ClientHintsParseError::new("invalid Sec-CH-UA-Full-Version-List header value")
 }
 
 fn invalid_prefers_reduced_motion_value() -> PrefersReducedMotionParseError {

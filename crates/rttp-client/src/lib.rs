@@ -137,6 +137,7 @@ pub use rttp_protocol::client_hints::{
   EctParseError, PrefersColorScheme, PrefersColorSchemeParseError, PrefersContrast,
   PrefersContrastParseError, PrefersReducedMotion, PrefersReducedMotionParseError, Rtt,
   RttParseError, SecChUaArch, SecChUaArchParseError, SecChUaBitness, SecChUaBitnessParseError,
+  SecChUaFullVersionList, SecChUaFullVersionListEntry, SecChUaFullVersionListParseError,
   SecChUaMobile, SecChUaMobileParseError, SecChUaModel, SecChUaModelParseError, SecChUaPlatform,
   SecChUaPlatformParseError, SecChUaPlatformVersion, SecChUaPlatformVersionParseError,
   SecChUaWow64, SecChUaWow64ParseError, ViewportWidth, ViewportWidthParseError, Width,

@@ -748,6 +748,25 @@ helpers only expose metadata: RTTP does not infer a platform version or
 capabilities, negotiate the UA brands family, emit `Accept-CH`, retry, or apply
 browser policy.
 
+## Bounded Sec-CH-UA-Full-Version-List request Client Hint metadata
+
+With the client feature, `HttpClient::sec_ch_ua_full_version_list(value)`
+validates and emits one canonical `Sec-CH-UA-Full-Version-List` field through
+`rttp::SecChUaFullVersionList`, replacing existing same-name fields. The value
+is an RFC 8941 list of ordered string brands, each with exactly one string
+`v` parameter. `entries()` exposes each `brand()` and `version()` without
+reordering or interpreting the entries. The parser accepts at most 256
+entries and 64 KiB of combined field input, canonicalizes valid string quoting,
+and rejects empty lists, malformed members, duplicate or unknown parameters,
+duplicate fields, non-ASCII/control input, and oversized values.
+
+On the server facade, `Request::sec_ch_ua_full_version_list()` and
+`HttpRequest::sec_ch_ua_full_version_list()` parse the same metadata and return
+`Ok(None)` when absent. Parse errors leave the raw field available through
+`header()`. These helpers only expose caller-supplied metadata: RTTP does not
+infer browser identity, select a brand, negotiate Client Hints, or apply
+browser policy.
+
 ## Bounded Sec-CH-Prefers-Reduced-Motion request Client Hint metadata
 
 With the client feature, `HttpClient::prefers_reduced_motion(value)` validates

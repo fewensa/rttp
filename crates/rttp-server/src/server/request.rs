@@ -58,9 +58,13 @@ pub use rttp_protocol::client_hints::{
   PrefersReducedMotionParseError as HttpPrefersReducedMotionParseError, Rtt as HttpRtt,
   RttParseError as HttpRttParseError, SecChUaArch as HttpSecChUaArch,
   SecChUaArchParseError as HttpSecChUaArchParseError, SecChUaBitness as HttpSecChUaBitness,
-  SecChUaBitnessParseError as HttpSecChUaBitnessParseError, SecChUaMobile as HttpSecChUaMobile,
-  SecChUaMobileParseError as HttpSecChUaMobileParseError, SecChUaModel as HttpSecChUaModel,
-  SecChUaModelParseError as HttpSecChUaModelParseError, SecChUaPlatform as HttpSecChUaPlatform,
+  SecChUaBitnessParseError as HttpSecChUaBitnessParseError,
+  SecChUaFullVersionList as HttpSecChUaFullVersionList,
+  SecChUaFullVersionListEntry as HttpSecChUaFullVersionListEntry,
+  SecChUaFullVersionListParseError as HttpSecChUaFullVersionListParseError,
+  SecChUaMobile as HttpSecChUaMobile, SecChUaMobileParseError as HttpSecChUaMobileParseError,
+  SecChUaModel as HttpSecChUaModel, SecChUaModelParseError as HttpSecChUaModelParseError,
+  SecChUaPlatform as HttpSecChUaPlatform,
   SecChUaPlatformParseError as HttpSecChUaPlatformParseError,
   SecChUaPlatformVersion as HttpSecChUaPlatformVersion,
   SecChUaPlatformVersionParseError as HttpSecChUaPlatformVersionParseError,
@@ -635,6 +639,19 @@ impl Request {
       return Ok(None);
     }
     HttpSecChUaPlatformVersion::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Full-Version-List` request Client
+  /// Hint metadata without inferring browser identity, negotiating the UA
+  /// brands family, emitting Client Hints, or applying browser policy.
+  pub fn sec_ch_ua_full_version_list(
+    &self,
+  ) -> Result<Option<HttpSecChUaFullVersionList>, HttpSecChUaFullVersionListParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-UA-Full-Version-List").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaFullVersionList::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client
@@ -3200,6 +3217,28 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecChUaPlatformVersion::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Full-Version-List` request Client
+  /// Hint metadata without inferring browser identity, negotiating the UA
+  /// brands family, emitting Client Hints, or applying browser policy.
+  pub fn sec_ch_ua_full_version_list(
+    &self,
+  ) -> Result<Option<HttpSecChUaFullVersionList>, HttpSecChUaFullVersionListParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Sec-CH-UA-Full-Version-List")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaFullVersionList::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client

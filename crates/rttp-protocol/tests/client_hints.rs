@@ -1,15 +1,16 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
-  PrefersReducedMotion, Rtt, SecChUaArch, SecChUaBitness, SecChUaMobile, SecChUaModel,
-  SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width,
+  PrefersReducedMotion, Rtt, SecChUaArch, SecChUaBitness, SecChUaFullVersionList, SecChUaMobile,
+  SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width,
   MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
   MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
   MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
   MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_SEC_CH_UA_ARCH_VALUE_BYTES,
-  MAX_SEC_CH_UA_BITNESS_VALUE_BYTES, MAX_SEC_CH_UA_MOBILE_VALUE_BYTES,
-  MAX_SEC_CH_UA_MODEL_VALUE_BYTES, MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES,
-  MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES, MAX_SEC_CH_UA_WOW64_VALUE_BYTES,
-  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  MAX_SEC_CH_UA_BITNESS_VALUE_BYTES, MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES,
+  MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES, MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES,
+  MAX_SEC_CH_UA_MOBILE_VALUE_BYTES, MAX_SEC_CH_UA_MODEL_VALUE_BYTES,
+  MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES, MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES,
+  MAX_SEC_CH_UA_WOW64_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -653,6 +654,77 @@ fn sec_ch_ua_platform_version_rejects_invalid_duplicate_oversized_and_control_va
   );
   assert!(SecChUaPlatformVersion::parse(&oversized).is_err());
   assert!(SecChUaPlatformVersion::parse_values([r#""14.0.0""#, oversized.as_str()]).is_err());
+}
+
+#[test]
+fn sec_ch_ua_full_version_list_preserves_order_and_canonicalizes_strings() {
+  let list = SecChUaFullVersionList::parse(r#"  "Chromium";v="120.0", "Not(A:Brand";v="99\".0"  "#)
+    .expect("valid Sec-CH-UA-Full-Version-List");
+
+  assert_eq!(2, list.len());
+  assert_eq!("Chromium", list.entries()[0].brand());
+  assert_eq!("120.0", list.entries()[0].version());
+  assert_eq!("Not(A:Brand", list.entries()[1].brand());
+  assert_eq!("99\".0", list.entries()[1].version());
+  assert_eq!(
+    "\"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99\\\".0\"",
+    list.header_value()
+  );
+  assert_eq!(
+    list,
+    SecChUaFullVersionList::parse(list.header_value()).expect("canonical roundtrip")
+  );
+}
+
+#[test]
+fn sec_ch_ua_full_version_list_rejects_malformed_duplicate_and_bounded_input() {
+  assert!(SecChUaFullVersionList::parse_values([]).is_err());
+  for value in [
+    "",
+    " ",
+    r#""Chromium""#,
+    r#"Chromium;v="120.0""#,
+    r#""Chromium";v=120.0"#,
+    r#""Chromium";v="120.0";foo="bar""#,
+    r#""Chromium";foo="bar""#,
+    r#""Chromium";v="120.0";v="121.0""#,
+    r#""Chromium", ("Other");v="1""#,
+    r#""Chromium";v="120.0", "#,
+    "\"Chromium\0\";v=\"120.0\"",
+    "\"Chromium\u{80}\";v=\"120.0\"",
+  ] {
+    assert!(
+      SecChUaFullVersionList::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  assert!(SecChUaFullVersionList::parse_values([
+    r#""Chromium";v="120.0""#,
+    r#""Firefox";v="121.0""#,
+  ])
+  .is_err());
+  let too_many = std::iter::repeat_n(
+    r#""Brand";v="1""#,
+    MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES + 1,
+  )
+  .collect::<Vec<_>>()
+  .join(",");
+  assert!(SecChUaFullVersionList::parse(&too_many).is_err());
+  assert!(SecChUaFullVersionList::parse(format!(
+    r#""{}";v="1""#,
+    "x".repeat(MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES)
+  ))
+  .is_err());
+  let aggregate_member = format!(
+    r#""{}";v="1""#,
+    "x".repeat(MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES / 2)
+  );
+  assert!(SecChUaFullVersionList::parse_values([
+    aggregate_member.as_str(),
+    aggregate_member.as_str(),
+  ])
+  .is_err());
 }
 
 #[test]

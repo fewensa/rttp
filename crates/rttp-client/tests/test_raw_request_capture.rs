@@ -7154,6 +7154,106 @@ fn raw_sec_ch_ua_platform_version_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn sec_ch_ua_full_version_list_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-ua-full-version-list", "legacy"))
+      .sec_ch_ua_full_version_list("\t\"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99\\\".0\" \t")
+      .expect("Sec-CH-UA-Full-Version-List should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("\"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99\\\".0\""),
+    header_value(&request, "Sec-CH-UA-Full-Version-List")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| {
+        line
+          .to_ascii_lowercase()
+          .starts_with("sec-ch-ua-full-version-list:")
+      })
+      .count(),
+    "typed Sec-CH-UA-Full-Version-List should replace an existing same-name field"
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_full_version_list_helper_matches_blocking_contract() {
+  let request = capture_request(|base_url| {
+    block_on(
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .header(("SEC-CH-UA-FULL-VERSION-LIST", "legacy"))
+        .sec_ch_ua_full_version_list("\t\"Chromium\";v=\"120.0\" \t")
+        .expect("Sec-CH-UA-Full-Version-List should be accepted")
+        .rasync(),
+    )
+    .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("\"Chromium\";v=\"120.0\""),
+    header_value(&request, "Sec-CH-UA-Full-Version-List")
+  );
+}
+
+#[test]
+fn sec_ch_ua_full_version_list_helper_rejects_malformed_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "\"Chromium\"",
+    "Chromium;v=\"120.0\"",
+    "\"Chromium\";v=120.0",
+    "\"Chromium\";v=\"120.0\";foo=\"bar\"",
+    "\"Chromium\";v=\"120.0\";v=\"121.0\"",
+    "\"Chromium\";v=\"120.0\"\0",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_ch_ua_full_version_list(value)
+        .expect_err("invalid Sec-CH-UA-Full-Version-List input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA-Full-Version-List input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_sec_ch_ua_full_version_list_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-UA-Full-Version-List", "legacy"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy"),
+    header_value(&request, "Sec-CH-UA-Full-Version-List")
+  );
+}
+
+#[test]
 fn prefers_reduced_motion_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()

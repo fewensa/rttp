@@ -1501,6 +1501,24 @@ const SEC_CH_UA_PLATFORM_VERSION: SecChUaFieldSpec = SecChUaFieldSpec {
   valid_version: None,
 };
 
+const SEC_CH_UA_FULL_VERSION_LIST: SecChUaFieldSpec = SecChUaFieldSpec {
+  name: "Sec-CH-UA-Full-Version-List",
+  lowercase_name: "sec-ch-ua-full-version-list",
+  valid_input: "\t\"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99.0\" \t",
+  valid_value: "\"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99.0\"",
+  malformed_value: "Chromium;v=\"120.0\"",
+  structured_malformed_values: &[
+    r#""Chromium""#,
+    r#""Chromium";foo="bar""#,
+    r#""Chromium";v="120.0";v="121.0""#,
+  ],
+  duplicate_first: r#""Chromium";v="120.0""#,
+  duplicate_second: r#""Firefox";v="121.0""#,
+  client_helper: set_sec_ch_ua_full_version_list,
+  accessor: observe_sec_ch_ua_full_version_list,
+  valid_version: Some("HTTP/2"),
+};
+
 const SEC_CH_UA_PLATFORM: SecChUaFieldSpec = SecChUaFieldSpec {
   name: "Sec-CH-UA-Platform",
   lowercase_name: "sec-ch-ua-platform",
@@ -1593,6 +1611,13 @@ fn set_sec_ch_ua_platform_version(client: &mut HttpClient, value: &str) -> Resul
     .map_err(|error| error.to_string())
 }
 
+fn set_sec_ch_ua_full_version_list(client: &mut HttpClient, value: &str) -> Result<(), String> {
+  client
+    .sec_ch_ua_full_version_list(value)
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 fn set_sec_ch_ua_platform(client: &mut HttpClient, value: &str) -> Result<(), String> {
   client
     .sec_ch_ua_platform(value)
@@ -1632,6 +1657,13 @@ fn observe_sec_ch_ua_platform_version(request: &Request) -> Result<Option<String
   request
     .sec_ch_ua_platform_version()
     .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+    .map_err(|error| error.to_string())
+}
+
+fn observe_sec_ch_ua_full_version_list(request: &Request) -> Result<Option<String>, String> {
+  request
+    .sec_ch_ua_full_version_list()
+    .map(|metadata| metadata.map(|metadata| metadata.header_value()))
     .map_err(|error| error.to_string())
 }
 
@@ -1918,6 +1950,36 @@ fn h2c_sec_ch_ua_bitness_duplicate_reaches_server_accessor_with_raw_header() {
 #[test]
 fn h2c_sec_ch_ua_bitness_oversized_reaches_server_accessor_with_raw_header() {
   run_h2c_sec_ch_ua_oversized(SEC_CH_UA_BITNESS);
+}
+
+#[test]
+fn h2c_sec_ch_ua_full_version_list_helper_reaches_server_accessor() {
+  run_h2c_sec_ch_ua_helper(SEC_CH_UA_FULL_VERSION_LIST);
+}
+
+#[test]
+fn h2c_sec_ch_ua_full_version_list_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_malformed(SEC_CH_UA_FULL_VERSION_LIST);
+}
+
+#[test]
+fn h2c_sec_ch_ua_full_version_list_non_ascii_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_non_ascii(SEC_CH_UA_FULL_VERSION_LIST);
+}
+
+#[test]
+fn h2c_sec_ch_ua_full_version_list_structured_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_structured_malformed(SEC_CH_UA_FULL_VERSION_LIST);
+}
+
+#[test]
+fn h2c_sec_ch_ua_full_version_list_duplicate_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_duplicate(SEC_CH_UA_FULL_VERSION_LIST);
+}
+
+#[test]
+fn h2c_sec_ch_ua_full_version_list_oversized_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_oversized(SEC_CH_UA_FULL_VERSION_LIST);
 }
 
 #[test]
