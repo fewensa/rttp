@@ -6576,6 +6576,149 @@ fn raw_sec_ch_ua_platform_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn sec_ch_ua_model_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-ua-model", "legacy"))
+      .sec_ch_ua_model("\t\"Pixel 8\" \t")
+      .expect("Sec-CH-UA-Model should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#""Pixel 8""#),
+    header_value(&request, "Sec-CH-UA-Model")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| { line.to_ascii_lowercase().starts_with("sec-ch-ua-model:") })
+      .count(),
+    "typed Sec-CH-UA-Model should replace an existing same-name field"
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_model_helper_matches_blocking_contract() {
+  for (value, expected) in [
+    ("\t\"Pixel 8\" \t", r#""Pixel 8""#),
+    ("\t\"Galaxy S24\" \t", r#""Galaxy S24""#),
+  ] {
+    let request = capture_request(|base_url| {
+      block_on(
+        client()
+          .get()
+          .url(format!("{}/asset", base_url))
+          .header(("sec-ch-ua-model", "legacy"))
+          .sec_ch_ua_model(value)
+          .expect("Sec-CH-UA-Model should be accepted")
+          .rasync(),
+      )
+      .expect("request should succeed");
+    });
+    let request = request_text(&request);
+
+    assert_eq!(Some(expected), header_value(&request, "Sec-CH-UA-Model"));
+    assert_eq!(
+      1,
+      request
+        .lines()
+        .filter(|line| { line.to_ascii_lowercase().starts_with("sec-ch-ua-model:") })
+        .count(),
+      "typed Sec-CH-UA-Model should replace an existing same-name field"
+    );
+  }
+}
+
+#[test]
+fn sec_ch_ua_model_helper_rejects_malformed_values_before_connecting() {
+  let oversized = format!("\"{}\"", "x".repeat(64 * 1024));
+  for value in [
+    "",
+    " ",
+    "Pixel 8",
+    r#""Pixel 8", "Galaxy S24""#,
+    r#""Pixel 8";foo=bar"#,
+    r#""unterminated"#,
+    r#""bad\escape""#,
+    "\"Pixel \u{80}\"",
+    "\"Pixel\0\"",
+    "\"Pixel\r\nInjected: yes\"",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_ch_ua_model(value)
+        .expect_err("invalid Sec-CH-UA-Model input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA-Model input must not open a socket"
+    );
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_model_helper_rejects_malformed_values_before_connecting() {
+  let oversized = format!("\"{}\"", "x".repeat(64 * 1024));
+  for value in [
+    "",
+    " ",
+    "Pixel 8",
+    r#""Pixel 8", "Galaxy S24""#,
+    r#""Pixel 8";foo=bar"#,
+    r#""unterminated"#,
+    r#""bad\escape""#,
+    "\"Pixel \u{80}\"",
+    "\"Pixel\0\"",
+    "\"Pixel\r\nInjected: yes\"",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = block_on(async {
+        let mut http_client = client();
+        let request = http_client.get().url(format!("{}/asset", base_url));
+        request.sec_ch_ua_model(value)?.rasync().await
+      })
+      .expect_err("invalid Sec-CH-UA-Model input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA-Model input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_sec_ch_ua_model_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-UA-Model", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request, "Sec-CH-UA-Model")
+  );
+}
+
+#[test]
 fn sec_ch_ua_arch_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()

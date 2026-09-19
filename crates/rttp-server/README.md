@@ -548,6 +548,16 @@ while the raw field remains available. This is metadata-only: the server does
 not infer a platform, negotiate the UA brands family, emit `Accept-CH`, retry,
 or apply browser policy.
 
+`Request::sec_ch_ua_model()` and `HttpRequest::sec_ch_ua_model()` parse a
+singleton `Sec-CH-UA-Model` request Client Hint into `HttpSecChUaModel`,
+accepting one RFC 8941 Structured Fields string after optional SP or HTAB
+trimming and exposing canonical quoted-string text through `header_value()`.
+Empty, non-string, comma-list, parameterized, duplicate, non-ASCII,
+forbidden-control, invalid-escape, or oversized fields return
+`HttpSecChUaModelParseError` while the raw field remains available. This is
+metadata-only: the server does not infer device identity, negotiate the UA
+brands family, emit `Accept-CH`, retry, or apply browser policy.
+
 `Request::sec_ch_ua_arch()` and `HttpRequest::sec_ch_ua_arch()` parse a
 singleton `Sec-CH-UA-Arch` request Client Hint into `HttpSecChUaArch`,
 accepting one Structured Fields string after optional SP or HTAB trimming and

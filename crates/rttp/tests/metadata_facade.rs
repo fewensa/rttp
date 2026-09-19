@@ -30,9 +30,9 @@ use rttp::server::{
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
   HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecChUaArch,
   HttpSecChUaArchParseError, HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaMobile,
-  HttpSecChUaMobileParseError, HttpSecChUaPlatform, HttpSecChUaPlatformParseError,
-  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecChUaMobileParseError, HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaPlatform,
+  HttpSecChUaPlatformParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc,
+  HttpSecGpcParseError, HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
   HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
@@ -241,6 +241,37 @@ fn compatibility_facade_exports_sec_ch_ua_wow64_request_metadata() {
   .expect("duplicate Sec-CH-UA-WoW64 fields should remain parseable");
   assert!(duplicate.sec_ch_ua_wow64().is_err());
   assert_eq!(Some("?0"), duplicate.header("Sec-CH-UA-WoW64"));
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_ua_model_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Model: \t\"Pixel 8\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Model request should parse");
+  let model: HttpSecChUaModel = request
+    .sec_ch_ua_model()
+    .expect("Sec-CH-UA-Model should parse")
+    .expect("Sec-CH-UA-Model should be present");
+  assert_eq!("Pixel 8", model.value());
+  assert_eq!(r#""Pixel 8""#, model.header_value());
+  assert_eq!(Some(r#""Pixel 8""#), request.header("Sec-CH-UA-Model"));
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Model: Pixel 8\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-Model should remain available");
+  let _: HttpSecChUaModelParseError = malformed
+    .sec_ch_ua_model()
+    .expect_err("unquoted Sec-CH-UA-Model should fail");
+  assert_eq!(Some("Pixel 8"), malformed.header("Sec-CH-UA-Model"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Model: \"Pixel 8\"\r\nsec-ch-ua-model: \"Galaxy S24\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Model fields should remain parseable");
+  assert!(duplicate.sec_ch_ua_model().is_err());
+  assert_eq!(Some(r#""Pixel 8""#), duplicate.header("Sec-CH-UA-Model"));
 }
 
 #[test]
