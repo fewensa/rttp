@@ -248,6 +248,13 @@ fn public_facade_exports_content_negotiation_metadata_types() {
     .expect("server platform facade type should parse");
   assert_eq!("\"Linux\"", server_platform.header_value());
 
+  let model: rttp::SecChUaModel =
+    rttp::SecChUaModel::parse("\"Pixel 8\"").expect("model facade type should parse");
+  assert_eq!("\"Pixel 8\"", model.header_value());
+  let server_model = rttp_server::server::HttpSecChUaModel::parse("\"Galaxy S24\"")
+    .expect("server model facade type should parse");
+  assert_eq!("\"Galaxy S24\"", server_model.header_value());
+
   let arch: rttp::SecChUaArch =
     rttp::SecChUaArch::parse("\"x86\"").expect("arch facade type should parse");
   assert_eq!("\"x86\"", arch.header_value());
@@ -340,6 +347,87 @@ fn sec_ch_ua_platform_parses_valid_duplicate_and_malformed_http11_headers() {
   assert!(rttp::SecChUaPlatform::parse("Windows").is_err());
   assert!(rttp::SecChUaPlatform::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
   assert!(rttp::SecChUaPlatform::parse("\"Windows\0\"").is_err());
+}
+
+#[test]
+fn sec_ch_ua_model_parses_valid_duplicate_and_malformed_http11_headers() {
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_model()
+          .map(|model| model.map(|model| model.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Model").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("model"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /model HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Model: \t\"Pixel 8\" \t\r\nConnection: close\r\n\r\n",
+  );
+  assert_eq!(
+    (
+      Ok(Some("\"Pixel 8\"".to_owned())),
+      Some("\"Pixel 8\"".to_owned())
+    ),
+    observed_rx
+      .recv_timeout(TIMEOUT)
+      .expect("observe valid Sec-CH-UA-Model")
+  );
+  handle.join().expect("valid model server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_model()
+          .map(|model| model.map(|model| model.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Model").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("duplicate"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /model HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Model: \"Pixel 8\"\r\nsec-ch-ua-model: \"Galaxy S24\"\r\nConnection: close\r\n\r\n",
+  );
+  let observed = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe duplicate Sec-CH-UA-Model");
+  assert!(observed.0.is_err());
+  assert_eq!(Some("\"Pixel 8\"".to_owned()), observed.1);
+  handle.join().expect("duplicate model server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_model()
+          .map(|model| model.map(|model| model.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Model").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("malformed"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /model HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Model: \"Pixel 8\";v=1\r\nConnection: close\r\n\r\n",
+  );
+  let observed = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe parameterized Sec-CH-UA-Model");
+  assert!(observed.0.is_err());
+  assert_eq!(Some("\"Pixel 8\";v=1".to_owned()), observed.1);
+  handle.join().expect("malformed model server thread");
+
+  assert!(rttp::SecChUaModel::parse("Pixel 8").is_err());
+  assert!(rttp::SecChUaModel::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
+  assert!(rttp::SecChUaModel::parse("\"Pixel\0\"").is_err());
+  assert!(rttp::SecChUaModel::parse("\"Pixel \u{80}\"").is_err());
 }
 
 #[test]

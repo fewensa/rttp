@@ -1501,6 +1501,24 @@ const SEC_CH_UA_PLATFORM: SecChUaFieldSpec = SecChUaFieldSpec {
   valid_version: Some("HTTP/2"),
 };
 
+const SEC_CH_UA_MODEL: SecChUaFieldSpec = SecChUaFieldSpec {
+  name: "Sec-CH-UA-Model",
+  lowercase_name: "sec-ch-ua-model",
+  valid_input: "\t\"Pixel 8\" \t",
+  valid_value: "\"Pixel 8\"",
+  malformed_value: "Pixel 8",
+  structured_malformed_values: &[
+    r#""bad\escape""#,
+    r#""Pixel 8";foo=bar"#,
+    r#""Pixel 8", "Galaxy S24""#,
+  ],
+  duplicate_first: r#""Pixel 8""#,
+  duplicate_second: r#""Galaxy S24""#,
+  client_helper: set_sec_ch_ua_model,
+  accessor: observe_sec_ch_ua_model,
+  valid_version: Some("HTTP/2"),
+};
+
 const SEC_CH_UA_MOBILE: SecChUaFieldSpec = SecChUaFieldSpec {
   name: "Sec-CH-UA-Mobile",
   lowercase_name: "sec-ch-ua-mobile",
@@ -1564,6 +1582,13 @@ fn set_sec_ch_ua_mobile(client: &mut HttpClient, value: &str) -> Result<(), Stri
     .map_err(|error| error.to_string())
 }
 
+fn set_sec_ch_ua_model(client: &mut HttpClient, value: &str) -> Result<(), String> {
+  client
+    .sec_ch_ua_model(value)
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 fn observe_sec_ch_ua_arch(request: &Request) -> Result<Option<String>, String> {
   request
     .sec_ch_ua_arch()
@@ -1588,6 +1613,13 @@ fn observe_sec_ch_ua_platform(request: &Request) -> Result<Option<String>, Strin
 fn observe_sec_ch_ua_mobile(request: &Request) -> Result<Option<String>, String> {
   request
     .sec_ch_ua_mobile()
+    .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+    .map_err(|error| error.to_string())
+}
+
+fn observe_sec_ch_ua_model(request: &Request) -> Result<Option<String>, String> {
+  request
+    .sec_ch_ua_model()
     .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
     .map_err(|error| error.to_string())
 }
@@ -1884,6 +1916,36 @@ fn h2c_sec_ch_ua_platform_duplicate_reaches_server_accessor_with_raw_header() {
 #[test]
 fn h2c_sec_ch_ua_platform_oversized_reaches_server_accessor_with_raw_header() {
   run_h2c_sec_ch_ua_oversized(SEC_CH_UA_PLATFORM);
+}
+
+#[test]
+fn h2c_sec_ch_ua_model_helper_reaches_server_accessor() {
+  run_h2c_sec_ch_ua_helper(SEC_CH_UA_MODEL);
+}
+
+#[test]
+fn h2c_sec_ch_ua_model_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_malformed(SEC_CH_UA_MODEL);
+}
+
+#[test]
+fn h2c_sec_ch_ua_model_non_ascii_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_non_ascii(SEC_CH_UA_MODEL);
+}
+
+#[test]
+fn h2c_sec_ch_ua_model_structured_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_structured_malformed(SEC_CH_UA_MODEL);
+}
+
+#[test]
+fn h2c_sec_ch_ua_model_duplicate_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_duplicate(SEC_CH_UA_MODEL);
+}
+
+#[test]
+fn h2c_sec_ch_ua_model_oversized_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_oversized(SEC_CH_UA_MODEL);
 }
 
 #[test]

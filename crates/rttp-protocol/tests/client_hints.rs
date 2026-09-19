@@ -1,11 +1,12 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
-  PrefersReducedMotion, Rtt, SecChUaArch, SecChUaBitness, SecChUaMobile, SecChUaPlatform,
-  SecChUaWow64, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
-  MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
-  MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
-  MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_SEC_CH_UA_ARCH_VALUE_BYTES,
-  MAX_SEC_CH_UA_BITNESS_VALUE_BYTES, MAX_SEC_CH_UA_MOBILE_VALUE_BYTES,
+  PrefersReducedMotion, Rtt, SecChUaArch, SecChUaBitness, SecChUaMobile, SecChUaModel,
+  SecChUaPlatform, SecChUaWow64, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
+  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES,
+  MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES,
+  MAX_PREFERS_CONTRAST_VALUE_BYTES, MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES,
+  MAX_SEC_CH_UA_ARCH_VALUE_BYTES, MAX_SEC_CH_UA_BITNESS_VALUE_BYTES,
+  MAX_SEC_CH_UA_MOBILE_VALUE_BYTES, MAX_SEC_CH_UA_MODEL_VALUE_BYTES,
   MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES, MAX_SEC_CH_UA_WOW64_VALUE_BYTES,
   MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
@@ -445,6 +446,55 @@ fn sec_ch_ua_platform_rejects_invalid_duplicate_oversized_and_control_values() {
   let oversized = format!("\"{}\"", "x".repeat(MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES));
   assert!(SecChUaPlatform::parse(&oversized).is_err());
   assert!(SecChUaPlatform::parse_values([r#""Windows""#, oversized.as_str()]).is_err());
+}
+
+#[test]
+fn sec_ch_ua_model_accepts_structured_strings_and_canonicalizes_them() {
+  for (value, expected_value, canonical) in [
+    (r#""Pixel 8""#, "Pixel 8", r#""Pixel 8""#),
+    (r#""Galaxy S24""#, "Galaxy S24", r#""Galaxy S24""#),
+    (r#""Model\\\"""#, "Model\\\"", r#""Model\\\"""#),
+  ] {
+    let model = SecChUaModel::parse(format!("\t{value} \t")).expect("valid Sec-CH-UA-Model value");
+    assert_eq!(expected_value, model.value());
+    assert_eq!(canonical, model.header_value());
+    assert_eq!(
+      model,
+      SecChUaModel::parse(model.header_value()).expect("roundtrip")
+    );
+  }
+}
+
+#[test]
+fn sec_ch_ua_model_rejects_invalid_duplicate_oversized_and_control_values() {
+  assert!(SecChUaModel::parse_values([r#""Pixel 8""#, r#""Galaxy S24""#]).is_err());
+  assert!(SecChUaModel::parse_values([]).is_err());
+
+  for value in [
+    "",
+    " ",
+    "Pixel 8",
+    r#""Pixel 8", "Galaxy S24""#,
+    r#""Pixel 8";foo=bar"#,
+    r#""unterminated"#,
+    r#""bad"quote""#,
+    r#""bad\escape""#,
+    "\"\u{1f34e}\"",
+    "\"Pixel \u{80}\"",
+    "\"\u{65e5}\u{672c}\u{8a9e}\"",
+    "\"Pixel\0\"",
+    "\"Pixel\r\nInjected: yes\"",
+    "\"Pixel\u{7f}\"",
+  ] {
+    assert!(
+      SecChUaModel::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let oversized = format!("\"{}\"", "x".repeat(MAX_SEC_CH_UA_MODEL_VALUE_BYTES));
+  assert!(SecChUaModel::parse(&oversized).is_err());
+  assert!(SecChUaModel::parse_values([r#""Pixel 8""#, oversized.as_str()]).is_err());
 }
 
 #[test]
