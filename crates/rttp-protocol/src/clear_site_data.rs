@@ -8,7 +8,8 @@ use std::error::Error;
 use std::fmt;
 
 pub const MAX_CLEAR_SITE_DATA_VALUE_BYTES: usize = 64 * 1024;
-pub const MAX_CLEAR_SITE_DATA_DIRECTIVES: usize = 256;
+/// Closed set of recognized `Clear-Site-Data` directives; duplicates are rejected.
+pub const MAX_CLEAR_SITE_DATA_DIRECTIVES: usize = 5;
 
 /// A directive declared by the `Clear-Site-Data` response header.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
