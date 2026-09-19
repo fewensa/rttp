@@ -51,21 +51,22 @@ use rttp_server::server::{
   HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
   HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
   HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
-  HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
-  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
-  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
-  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
-  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
-  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
-  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpSaveDataParseError, HttpScheduleTag, HttpSecChUaBitness, HttpSecChUaBitnessParseError,
+  HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
+  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
+  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
+  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
+  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
+  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
   HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
   HttpViaParseError, HttpViewportWidth, HttpViewportWidthParseError, HttpWantContentDigest,
@@ -2018,6 +2019,53 @@ fn request_facade_parses_prefers_reduced_motion_metadata_without_negotiation() {
     HttpPrefersReducedMotion::parse("reduce\0").expect_err("control byte should fail");
   assert!(
     HttpPrefersReducedMotion::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized value should fail"
+  );
+}
+
+#[test]
+fn request_facade_parses_sec_ch_ua_bitness_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Bitness: \t\"64\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Bitness request should parse");
+  let bitness: HttpSecChUaBitness = request
+    .sec_ch_ua_bitness()
+    .expect("Sec-CH-UA-Bitness should parse")
+    .expect("Sec-CH-UA-Bitness should be present");
+  assert_eq!("64", bitness.value());
+  assert_eq!(r#""64""#, bitness.header_value());
+  assert_eq!(Some(r#""64""#), request.header("Sec-CH-UA-Bitness"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-Bitness should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_ua_bitness()
+      .expect("missing Sec-CH-UA-Bitness should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Bitness: 64\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-Bitness should remain available");
+  let _: HttpSecChUaBitnessParseError = malformed
+    .sec_ch_ua_bitness()
+    .expect_err("unquoted Sec-CH-UA-Bitness should fail");
+  assert_eq!(Some("64"), malformed.header("Sec-CH-UA-Bitness"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Bitness: \"64\"\r\nsec-ch-ua-bitness: \"32\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Bitness request should retain raw metadata");
+  assert!(duplicate.sec_ch_ua_bitness().is_err());
+  assert_eq!(Some(r#""64""#), duplicate.header("Sec-CH-UA-Bitness"));
+
+  let _: HttpSecChUaBitnessParseError =
+    HttpSecChUaBitness::parse("64").expect_err("unquoted Sec-CH-UA-Bitness should fail");
+  assert!(
+    HttpSecChUaBitness::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err(),
     "oversized value should fail"
   );
 }

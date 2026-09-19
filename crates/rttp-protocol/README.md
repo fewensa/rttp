@@ -693,6 +693,18 @@ escape, and oversized values are errors. This parser reports request metadata
 only; it does not infer an architecture, negotiate the UA brands family, emit
 `Accept-CH`, retry, or apply browser policy.
 
+## Sec-CH-UA-Bitness
+
+`client_hints::SecChUaBitness` parses a singleton HTTP `Sec-CH-UA-Bitness`
+request Client Hint as one bounded Structured Fields string. The field value is
+bounded to 64 KiB, optional outer SP and HTAB are trimmed, and
+`header_value()` emits canonical quoted-string syntax with quote and backslash
+escapes. `value()` exposes the decoded ASCII string. Empty, non-string,
+comma-list, parameterized, duplicate, non-ASCII, forbidden-control, invalid
+escape, and oversized values are errors. This parser reports request metadata
+only; it does not infer an architecture, negotiate the UA brands family, emit
+`Accept-CH`, retry, or apply browser policy.
+
 ## Sec-CH-Prefers-Reduced-Motion
 
 `client_hints::PrefersReducedMotion` parses a singleton HTTP

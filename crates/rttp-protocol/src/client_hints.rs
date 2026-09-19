@@ -10,6 +10,7 @@ pub const MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_MOBILE_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_ARCH_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_BITNESS_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_CONTRAST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
@@ -58,6 +59,12 @@ pub struct SecChUaPlatform {
 /// Parsed, bounded `Sec-CH-UA-Arch` request Client Hint metadata.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SecChUaArch {
+  value: String,
+}
+
+/// Parsed, bounded `Sec-CH-UA-Bitness` request Client Hint metadata.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SecChUaBitness {
   value: String,
 }
 
@@ -124,6 +131,7 @@ pub type PrefersColorSchemeParseError = ClientHintsParseError;
 pub type SecChUaMobileParseError = ClientHintsParseError;
 pub type SecChUaPlatformParseError = ClientHintsParseError;
 pub type SecChUaArchParseError = ClientHintsParseError;
+pub type SecChUaBitnessParseError = ClientHintsParseError;
 pub type PrefersReducedMotionParseError = ClientHintsParseError;
 pub type PrefersContrastParseError = ClientHintsParseError;
 pub type EctParseError = ClientHintsParseError;
@@ -331,6 +339,39 @@ impl SecChUaArch {
     let value = parse_sec_ch_ua_arch_singleton(values)?;
     let value = value.trim_matches([' ', '\t']);
     let value = parse_sec_ch_ua_arch_string(value)?;
+    Ok(Self { value })
+  }
+
+  pub fn value(&self) -> &str {
+    &self.value
+  }
+
+  pub fn header_value(&self) -> String {
+    let mut header_value = String::with_capacity(self.value.len() + 2);
+    header_value.push('"');
+    for character in self.value.chars() {
+      if matches!(character, '"' | '\\') {
+        header_value.push('\\');
+      }
+      header_value.push(character);
+    }
+    header_value.push('"');
+    header_value
+  }
+}
+
+impl SecChUaBitness {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, SecChUaBitnessParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, SecChUaBitnessParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let value = parse_sec_ch_ua_bitness_singleton(values)?;
+    let value = value.trim_matches([' ', '\t']);
+    let value = parse_sec_ch_ua_bitness_string(value)?;
     Ok(Self { value })
   }
 
@@ -970,6 +1011,71 @@ fn parse_sec_ch_ua_arch_string(value: &str) -> Result<String, SecChUaArchParseEr
   Ok(parsed)
 }
 
+fn parse_sec_ch_ua_bitness_singleton<'a, I>(values: I) -> Result<&'a str, SecChUaBitnessParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values.next().ok_or_else(invalid_sec_ch_ua_bitness_value)?;
+  validate_bounded_sec_ch_ua_bitness_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_sec_ch_ua_bitness_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(
+      "duplicate Sec-CH-UA-Bitness header fields",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_bounded_sec_ch_ua_bitness_value(value: &str) -> Result<(), SecChUaBitnessParseError> {
+  if value.len() > MAX_SEC_CH_UA_BITNESS_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-UA-Bitness header value is too large",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-UA-Bitness control byte",
+    ));
+  }
+  Ok(())
+}
+
+fn parse_sec_ch_ua_bitness_string(value: &str) -> Result<String, SecChUaBitnessParseError> {
+  let characters: Vec<char> = value.chars().collect();
+  if characters.len() < 2 || characters[0] != '"' || characters[characters.len() - 1] != '"' {
+    return Err(invalid_sec_ch_ua_bitness_value());
+  }
+
+  let mut parsed = String::with_capacity(value.len() - 2);
+  let mut index = 1;
+  while index < characters.len() - 1 {
+    match characters[index] {
+      '\\' => {
+        index += 1;
+        if index >= characters.len() - 1 || !matches!(characters[index], '"' | '\\') {
+          return Err(invalid_sec_ch_ua_bitness_value());
+        }
+        parsed.push(characters[index]);
+      }
+      '"' => return Err(invalid_sec_ch_ua_bitness_value()),
+      character if !character.is_ascii() || character.is_ascii_control() => {
+        return Err(invalid_sec_ch_ua_bitness_value());
+      }
+      character => parsed.push(character),
+    }
+    index += 1;
+  }
+  Ok(parsed)
+}
+
 fn parse_prefers_reduced_motion_singleton<'a, I>(
   values: I,
 ) -> Result<&'a str, PrefersReducedMotionParseError>
@@ -1247,6 +1353,10 @@ fn invalid_sec_ch_ua_platform_value() -> SecChUaPlatformParseError {
 
 fn invalid_sec_ch_ua_arch_value() -> SecChUaArchParseError {
   ClientHintsParseError::new("invalid Sec-CH-UA-Arch header value")
+}
+
+fn invalid_sec_ch_ua_bitness_value() -> SecChUaBitnessParseError {
+  ClientHintsParseError::new("invalid Sec-CH-UA-Bitness header value")
 }
 
 fn invalid_prefers_reduced_motion_value() -> PrefersReducedMotionParseError {
