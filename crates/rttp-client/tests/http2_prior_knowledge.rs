@@ -285,6 +285,20 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
         .value
         .as_slice()
     );
+    assert_eq!(
+      b"\"Windows\"",
+      find_header_value(&request_headers.payload, b"sec-ch-ua-platform")
+        .expect("sec-ch-ua-platform")
+        .value
+        .as_slice()
+    );
+    assert_eq!(
+      b"\"x86\"",
+      find_header_value(&request_headers.payload, b"sec-ch-ua-arch")
+        .expect("sec-ch-ua-arch")
+        .value
+        .as_slice()
+    );
 
     write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
     write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 3, &[0x88]);
@@ -296,6 +310,10 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
     .url(format!("http://{}/upgrade?via=h2c", addr))
     .te("gzip")
     .expect("transfer coding should be accepted")
+    .sec_ch_ua_platform("\t\"Windows\" \t")
+    .expect("Sec-CH-UA-Platform should be accepted")
+    .sec_ch_ua_arch("\t\"x86\" \t")
+    .expect("Sec-CH-UA-Arch should be accepted")
     .emit_http2_upgrade()
     .expect("h2c upgrade response");
 
