@@ -8,8 +8,10 @@ use std::error::Error;
 use std::fmt;
 
 pub const MAX_CLEAR_SITE_DATA_VALUE_BYTES: usize = 64 * 1024;
-/// Closed set of recognized `Clear-Site-Data` directives; duplicates are rejected.
-pub const MAX_CLEAR_SITE_DATA_DIRECTIVES: usize = 5;
+/// Production directive-count cap. The closed five-name set and duplicate
+/// rejection make this bound unreachable through valid unique names; the
+/// parser still enforces it before accepting another directive.
+pub const MAX_CLEAR_SITE_DATA_DIRECTIVES: usize = 256;
 
 /// A directive declared by the `Clear-Site-Data` response header.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

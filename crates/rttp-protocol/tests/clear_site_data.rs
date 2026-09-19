@@ -326,7 +326,7 @@ fn clear_site_data_rejects_escaped_non_ascii_and_control_bytes() {
 #[test]
 fn clear_site_data_enforces_value_byte_and_directive_bounds() {
   assert_eq!(64 * 1024, MAX_CLEAR_SITE_DATA_VALUE_BYTES);
-  assert_eq!(5, MAX_CLEAR_SITE_DATA_DIRECTIVES);
+  assert_eq!(256, MAX_CLEAR_SITE_DATA_DIRECTIVES);
 
   let quoted = "\"executionContexts\"";
   let padding = MAX_CLEAR_SITE_DATA_VALUE_BYTES - quoted.len();
@@ -359,8 +359,9 @@ fn clear_site_data_enforces_value_byte_and_directive_bounds() {
     .expect_err("an oversized later field should be rejected");
   assert!(oversized_field.to_string().contains("too large"));
 
-  let at_limit = "\"cache\", \"cookies\", \"storage\", \"executionContexts\", \"*\"";
-  let parsed = ClearSiteData::parse(at_limit).expect("the five recognized directives should parse");
+  let closed_set = "\"cache\", \"cookies\", \"storage\", \"executionContexts\", \"*\"";
+  let parsed =
+    ClearSiteData::parse(closed_set).expect("the five recognized directives should parse");
   assert_eq!(
     parsed.directives(),
     &[
@@ -371,83 +372,84 @@ fn clear_site_data_enforces_value_byte_and_directive_bounds() {
       ClearSiteDataDirective::Wildcard,
     ]
   );
-  assert_eq!(parsed.directives().len(), MAX_CLEAR_SITE_DATA_DIRECTIVES);
+  assert_eq!(parsed.directives().len(), 5);
+  assert!(parsed.directives().len() < MAX_CLEAR_SITE_DATA_DIRECTIVES);
+  assert!(parsed.is_wildcard());
+  assert!(parsed.clears_cache());
+  assert!(parsed.clears_cookies());
+  assert!(parsed.clears_storage());
+  assert!(parsed.clears_execution_contexts());
+  assert_eq!(
+    parsed.header_value(),
+    "\"cache\", \"cookies\", \"storage\", \"executionContexts\", \"*\""
+  );
 
-  let at_limit_fields = [
+  let closed_set_fields = [
     "\"cache\"",
     "\"cookies\"",
     "\"storage\"",
     "\"executionContexts\"",
     "\"*\"",
   ];
-  let parsed_fields = ClearSiteData::parse_values(at_limit_fields)
+  let parsed_fields = ClearSiteData::parse_values(closed_set_fields)
     .expect("the five recognized directives should parse across fields");
   assert_eq!(parsed_fields.directives(), parsed.directives());
-  assert_eq!(
-    parsed_fields.directives().len(),
-    MAX_CLEAR_SITE_DATA_DIRECTIVES
+  assert_eq!(parsed_fields.directives().len(), 5);
+
+  // The closed five-name set plus duplicate rejection makes 256 unique
+  // directives unreachable. A sixth item after five known names must keep
+  // unknown-name or duplicate precedence, not the count-cap error.
+  let sixth_unknown = parse_error(&format!("{closed_set}, \"prefetchCache\""));
+  assert!(
+    sixth_unknown
+      .to_string()
+      .contains("invalid Clear-Site-Data directive"),
+    "a sixth unknown name after the closed set must stay an unknown-name error, got {sixth_unknown}"
+  );
+  assert!(
+    !sixth_unknown.to_string().contains("too many"),
+    "the 256-directive cap must not preempt unknown-name validation, got {sixth_unknown}"
   );
 
-  let overflow = format!("{at_limit}, \"cache\"");
-  let overflow_error = parse_error(&overflow);
-  let overflow_message = overflow_error.to_string();
+  let sixth_unknown_field = ClearSiteData::parse_values([closed_set, "\"prefetchCache\""])
+    .expect_err("an unknown sixth field after five known names should be rejected");
   assert!(
-    overflow_message.contains("too many Clear-Site-Data directives"),
-    "over-limit list should mention the directive bound, got {overflow_error}"
+    sixth_unknown_field
+      .to_string()
+      .contains("invalid Clear-Site-Data directive"),
+    "unknown names across fields must stay unknown-name errors, got {sixth_unknown_field}"
   );
   assert!(
-    !overflow_message.contains("duplicate"),
-    "the count limit must reject item six before duplicate policy, got {overflow_error}"
-  );
-
-  let unknown_overflow = format!("{at_limit}, \"unknown\"");
-  let unknown_overflow_error = parse_error(&unknown_overflow);
-  let unknown_overflow_message = unknown_overflow_error.to_string();
-  assert!(
-    unknown_overflow_message.contains("too many Clear-Site-Data directives"),
-    "a sixth unknown name must hit the count limit, got {unknown_overflow_error}"
-  );
-  assert!(
-    !unknown_overflow_message.contains("invalid"),
-    "the count limit must reject item six before unknown-name policy, got {unknown_overflow_error}"
+    !sixth_unknown_field.to_string().contains("too many"),
+    "the 256-directive cap must not preempt unknown-name validation across fields, got {sixth_unknown_field}"
   );
 
-  let fields = [
-    "\"cache\", \"cookies\"",
-    "\"storage\"",
-    "\"executionContexts\"",
-    "\"*\"",
-    "\"cache\"",
-  ];
-  let field_overflow = ClearSiteData::parse_values(fields)
-    .expect_err("a sixth directive across fields should be rejected");
-  let field_overflow_message = field_overflow.to_string();
+  let sixth_duplicate = parse_error(&format!("{closed_set}, \"cache\""));
   assert!(
-    field_overflow_message.contains("too many Clear-Site-Data directives"),
-    "over-limit fields should mention the directive bound, got {field_overflow}"
+    sixth_duplicate.to_string().contains("duplicate"),
+    "a repeated known name after the closed set must stay a duplicate, got {sixth_duplicate}"
   );
   assert!(
-    !field_overflow_message.contains("duplicate"),
-    "a later field past the cap must hit the count limit, got {field_overflow}"
+    !sixth_duplicate.to_string().contains("too many"),
+    "the 256-directive cap must not preempt duplicate detection, got {sixth_duplicate}"
   );
 
-  let repeated = std::iter::repeat_n("\"cache\"", MAX_CLEAR_SITE_DATA_DIRECTIVES + 1)
+  let overflow = std::iter::repeat_n("\"cache\"", MAX_CLEAR_SITE_DATA_DIRECTIVES + 1)
     .collect::<Vec<_>>()
     .join(", ");
-  let repeated_error = parse_error(&repeated);
+  let overflow_error = parse_error(&overflow);
   assert!(
-    repeated_error.to_string().contains("duplicate"),
-    "repeated directives past the cap must stay rejected as duplicates, got {repeated_error}"
+    overflow_error.to_string().contains("duplicate"),
+    "repeated directives past the cap must stay rejected as duplicates, got {overflow_error}"
+  );
+  assert!(
+    !overflow_error.to_string().contains("too many"),
+    "duplicate policy must take precedence over the 256-directive cap, got {overflow_error}"
   );
 
-  let repeated_fields = vec!["\"cookies\""; MAX_CLEAR_SITE_DATA_DIRECTIVES + 1];
-  let repeated_field_overflow = ClearSiteData::parse_values(repeated_fields)
-    .expect_err("repeated directives across fields past the cap should be rejected");
-  assert!(
-    repeated_field_overflow.to_string().contains("duplicate"),
-    "duplicate policy must still apply across fields, got {repeated_field_overflow}"
-  );
-
-  let pair = parse_error("\"storage\", \"storage\"");
-  assert!(pair.to_string().contains("duplicate"));
+  let fields = vec!["\"cookies\""; MAX_CLEAR_SITE_DATA_DIRECTIVES + 1];
+  let field_overflow = ClearSiteData::parse_values(fields)
+    .expect_err("repeated directives across fields should stay duplicates");
+  assert!(field_overflow.to_string().contains("duplicate"));
+  assert!(!field_overflow.to_string().contains("too many"));
 }
