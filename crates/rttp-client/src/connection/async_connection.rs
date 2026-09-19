@@ -1452,6 +1452,12 @@ where
     3 => {
       let mut len = [0u8; 1];
       stream.read_exact(&mut len).await.map_err(error::request)?;
+      if len[0] == 0 {
+        return Err(error::request(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "invalid domain address",
+        )));
+      }
       usize::from(len[0])
     }
     _ => {
