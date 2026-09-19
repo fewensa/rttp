@@ -1617,6 +1617,184 @@ fn h2c_sec_ch_ua_arch_oversized_reaches_server_accessor_with_raw_header() {
 }
 
 #[test]
+fn h2c_sec_ch_ua_platform_helper_reaches_server_accessor() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c Sec-CH-UA-Platform server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.target().to_string(),
+          request.header("Sec-CH-UA-Platform").map(str::to_string),
+          request
+            .sec_ch_ua_platform()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value()))
+            .map_err(|error| error.to_string()),
+        ))
+        .expect("record Sec-CH-UA-Platform");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve h2c Sec-CH-UA-Platform request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .sec_ch_ua_platform("\t\"Windows\" \t")
+    .expect("Sec-CH-UA-Platform should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "/asset".to_string(),
+      Some("\"Windows\"".to_string()),
+      Ok(Some("\"Windows\"".to_string()))
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded Sec-CH-UA-Platform")
+  );
+  handle.join().expect("h2c Sec-CH-UA-Platform server thread");
+}
+
+#[test]
+fn h2c_sec_ch_ua_platform_malformed_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c malformed Sec-CH-UA-Platform server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("Sec-CH-UA-Platform").map(str::to_string),
+          request.sec_ch_ua_platform().is_err(),
+        ))
+        .expect("record malformed Sec-CH-UA-Platform");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve malformed h2c Sec-CH-UA-Platform request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Sec-CH-UA-Platform", "Windows"))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some("Windows".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded malformed Sec-CH-UA-Platform")
+  );
+  handle
+    .join()
+    .expect("malformed h2c Sec-CH-UA-Platform server thread");
+}
+
+#[test]
+fn h2c_sec_ch_ua_platform_duplicate_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c duplicate Sec-CH-UA-Platform server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("Sec-CH-UA-Platform").map(str::to_string),
+          request.sec_ch_ua_platform().is_err(),
+        ))
+        .expect("record duplicate Sec-CH-UA-Platform");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve duplicate h2c Sec-CH-UA-Platform request");
+  });
+
+  let authority = addr.to_string();
+  let _stream = send_h2c_prior_knowledge_headers(
+    addr,
+    &[
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", "/asset"),
+      (":authority", authority.as_str()),
+      ("Sec-CH-UA-Platform", r#""Windows""#),
+      ("sec-ch-ua-platform", r#""Linux""#),
+    ],
+  );
+
+  assert_eq!(
+    (Some("\"Windows\"".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded duplicate Sec-CH-UA-Platform")
+  );
+  handle
+    .join()
+    .expect("duplicate h2c Sec-CH-UA-Platform server thread");
+}
+
+#[test]
+fn h2c_sec_ch_ua_platform_oversized_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c oversized Sec-CH-UA-Platform server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)))
+    .with_http2_policy(Http2ServerPolicy::new().with_max_header_list_size(256 * 1024));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let raw = request.header("Sec-CH-UA-Platform").map(str::to_string);
+        tx.send((
+          raw.as_ref().map(String::len),
+          request.sec_ch_ua_platform().is_err(),
+          raw.is_some(),
+        ))
+        .expect("record oversized Sec-CH-UA-Platform");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve oversized h2c Sec-CH-UA-Platform request");
+  });
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Sec-CH-UA-Platform", oversized.as_str()))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some(64 * 1024 + 1), true, true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded oversized Sec-CH-UA-Platform")
+  );
+  handle
+    .join()
+    .expect("oversized h2c Sec-CH-UA-Platform server thread");
+}
+
+#[test]
 fn h2c_malformed_dnt_reaches_server_accessor() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c malformed DNT server")
