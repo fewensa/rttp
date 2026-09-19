@@ -57,7 +57,8 @@ pub use rttp_protocol::client_hints::{
   PrefersReducedMotion as HttpPrefersReducedMotion,
   PrefersReducedMotionParseError as HttpPrefersReducedMotionParseError, Rtt as HttpRtt,
   RttParseError as HttpRttParseError, SecChUaArch as HttpSecChUaArch,
-  SecChUaArchParseError as HttpSecChUaArchParseError, SecChUaMobile as HttpSecChUaMobile,
+  SecChUaArchParseError as HttpSecChUaArchParseError, SecChUaBitness as HttpSecChUaBitness,
+  SecChUaBitnessParseError as HttpSecChUaBitnessParseError, SecChUaMobile as HttpSecChUaMobile,
   SecChUaMobileParseError as HttpSecChUaMobileParseError, SecChUaPlatform as HttpSecChUaPlatform,
   SecChUaPlatformParseError as HttpSecChUaPlatformParseError, ViewportWidth as HttpViewportWidth,
   ViewportWidthParseError as HttpViewportWidthParseError, Width as HttpWidth,
@@ -582,6 +583,19 @@ impl Request {
       return Ok(None);
     }
     HttpSecChUaArch::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Bitness` request Client Hint metadata
+  /// without inferring CPU bitness or architecture, negotiating the UA brands
+  /// family, or emitting Client Hints.
+  pub fn sec_ch_ua_bitness(
+    &self,
+  ) -> Result<Option<HttpSecChUaBitness>, HttpSecChUaBitnessParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-UA-Bitness").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaBitness::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client
@@ -3075,6 +3089,24 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecChUaArch::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Bitness` request Client Hint metadata
+  /// without inferring CPU bitness or architecture, negotiating the UA brands
+  /// family, or emitting Client Hints.
+  pub fn sec_ch_ua_bitness(
+    &self,
+  ) -> Result<Option<HttpSecChUaBitness>, HttpSecChUaBitnessParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-CH-UA-Bitness"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaBitness::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client

@@ -690,6 +690,20 @@ forbidden-control, invalid-escape, and oversized values are rejected. These
 helpers only expose metadata: RTTP does not infer an architecture, negotiate
 the UA brands family, emit `Accept-CH`, retry, or apply browser policy.
 
+## Bounded Sec-CH-UA-Bitness request Client Hint metadata
+
+With the client feature, `HttpClient::sec_ch_ua_bitness(value)` validates and
+emits one singleton `Sec-CH-UA-Bitness` request field through
+`rttp::SecChUaBitness`, replacing any existing case-insensitive field. The value
+must be one Structured Fields string; optional surrounding SP or HTAB is
+trimmed and `header_value()` emits canonical quoted-string syntax. On the
+server facade, `Request::sec_ch_ua_bitness()` and `HttpRequest::sec_ch_ua_bitness()`
+parse received fields into `HttpSecChUaBitness`; parse errors leave the raw header
+available. Empty, non-string, comma-list, parameterized, duplicate, non-ASCII,
+forbidden-control, invalid-escape, and oversized values are rejected. These
+helpers only expose metadata: RTTP does not infer an architecture, negotiate
+the UA brands family, emit `Accept-CH`, retry, or apply browser policy.
+
 ## Bounded Sec-CH-Prefers-Reduced-Motion request Client Hint metadata
 
 With the client feature, `HttpClient::prefers_reduced_motion(value)` validates

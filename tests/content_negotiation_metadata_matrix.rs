@@ -254,6 +254,13 @@ fn public_facade_exports_content_negotiation_metadata_types() {
   let server_arch = rttp_server::server::HttpSecChUaArch::parse("\"arm64\"")
     .expect("server arch facade type should parse");
   assert_eq!("\"arm64\"", server_arch.header_value());
+
+  let bitness: rttp::SecChUaBitness =
+    rttp::SecChUaBitness::parse("\"64\"").expect("bitness facade type should parse");
+  assert_eq!("\"64\"", bitness.header_value());
+  let server_bitness = rttp_server::server::HttpSecChUaBitness::parse("\"32\"")
+    .expect("server bitness facade type should parse");
+  assert_eq!("\"32\"", server_bitness.header_value());
 }
 
 #[test]
@@ -391,6 +398,73 @@ fn sec_ch_ua_arch_parses_valid_duplicate_and_malformed_http11_headers() {
   assert!(rttp::SecChUaArch::parse("x86").is_err());
   assert!(rttp::SecChUaArch::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
   assert!(rttp::SecChUaArch::parse("\"x86\0\"").is_err());
+}
+
+#[test]
+fn sec_ch_ua_bitness_parses_valid_duplicate_and_malformed_http11_headers() {
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_bitness()
+          .map(|bitness| bitness.map(|bitness| bitness.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Bitness").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("bitness"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /bitness HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Bitness: \"64\"\r\nConnection: close\r\n\r\n",
+  );
+  assert_eq!(
+    (Ok(Some("\"64\"".to_owned())), Some("\"64\"".to_owned())),
+    observed_rx
+      .recv_timeout(TIMEOUT)
+      .expect("observe valid Sec-CH-UA-Bitness")
+  );
+  handle.join().expect("valid bitness server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      request
+        .sec_ch_ua_bitness()
+        .map(|bitness| bitness.map(|bitness| bitness.header_value()))
+    },
+    |_| HttpResponse::ok("duplicate"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /bitness HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Bitness: \"64\"\r\nsec-ch-ua-bitness: \"32\"\r\nConnection: close\r\n\r\n",
+  );
+  assert!(observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe duplicate Sec-CH-UA-Bitness")
+    .is_err());
+  handle.join().expect("duplicate bitness server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      request
+        .sec_ch_ua_bitness()
+        .map(|bitness| bitness.map(|bitness| bitness.header_value()))
+    },
+    |_| HttpResponse::ok("malformed"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /bitness HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Bitness: 64\r\nConnection: close\r\n\r\n",
+  );
+  assert!(observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe malformed Sec-CH-UA-Bitness")
+    .is_err());
+  handle.join().expect("malformed bitness server thread");
+
+  assert!(rttp::SecChUaBitness::parse("64").is_err());
+  assert!(rttp::SecChUaBitness::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
+  assert!(rttp::SecChUaBitness::parse("\"64\0\"").is_err());
 }
 
 #[test]
