@@ -1515,6 +1515,20 @@ const SEC_CH_UA_MOBILE: SecChUaFieldSpec = SecChUaFieldSpec {
   valid_version: Some("HTTP/2"),
 };
 
+const SEC_CH_UA_WOW64: SecChUaFieldSpec = SecChUaFieldSpec {
+  name: "Sec-CH-UA-WoW64",
+  lowercase_name: "sec-ch-ua-wow64",
+  valid_input: "\t?1 \t",
+  valid_value: "?1",
+  malformed_value: "true",
+  structured_malformed_values: &[r#"?1;foo=bar"#, "?1, ?1", r#""?1""#],
+  duplicate_first: "?0",
+  duplicate_second: "?1",
+  client_helper: set_sec_ch_ua_wow64,
+  accessor: observe_sec_ch_ua_wow64,
+  valid_version: Some("HTTP/2"),
+};
+
 struct ObservedH2cSecChUa {
   version: String,
   target: String,
@@ -1574,6 +1588,20 @@ fn observe_sec_ch_ua_platform(request: &Request) -> Result<Option<String>, Strin
 fn observe_sec_ch_ua_mobile(request: &Request) -> Result<Option<String>, String> {
   request
     .sec_ch_ua_mobile()
+    .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+    .map_err(|error| error.to_string())
+}
+
+fn set_sec_ch_ua_wow64(client: &mut HttpClient, value: &str) -> Result<(), String> {
+  client
+    .sec_ch_ua_wow64(value)
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+fn observe_sec_ch_ua_wow64(request: &Request) -> Result<Option<String>, String> {
+  request
+    .sec_ch_ua_wow64()
     .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
     .map_err(|error| error.to_string())
 }
@@ -1886,6 +1914,36 @@ fn h2c_sec_ch_ua_mobile_duplicate_reaches_server_accessor_with_raw_header() {
 #[test]
 fn h2c_sec_ch_ua_mobile_oversized_reaches_server_accessor_with_raw_header() {
   run_h2c_sec_ch_ua_oversized(SEC_CH_UA_MOBILE);
+}
+
+#[test]
+fn h2c_sec_ch_ua_wow64_helper_reaches_server_accessor() {
+  run_h2c_sec_ch_ua_helper(SEC_CH_UA_WOW64);
+}
+
+#[test]
+fn h2c_sec_ch_ua_wow64_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_malformed(SEC_CH_UA_WOW64);
+}
+
+#[test]
+fn h2c_sec_ch_ua_wow64_non_ascii_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_non_ascii(SEC_CH_UA_WOW64);
+}
+
+#[test]
+fn h2c_sec_ch_ua_wow64_structured_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_structured_malformed(SEC_CH_UA_WOW64);
+}
+
+#[test]
+fn h2c_sec_ch_ua_wow64_duplicate_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_duplicate(SEC_CH_UA_WOW64);
+}
+
+#[test]
+fn h2c_sec_ch_ua_wow64_oversized_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_oversized(SEC_CH_UA_WOW64);
 }
 
 #[test]

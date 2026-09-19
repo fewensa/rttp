@@ -8,6 +8,7 @@ pub const MAX_DOWNLINK_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DEVICE_MEMORY_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_MOBILE_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_WOW64_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_ARCH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_BITNESS_VALUE_BYTES: usize = 64 * 1024;
@@ -48,6 +49,13 @@ pub enum PrefersColorScheme {
 pub enum SecChUaMobile {
   NotMobile,
   Mobile,
+}
+
+/// Parsed, bounded `Sec-CH-UA-WoW64` request Client Hint metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SecChUaWow64 {
+  NotWow64,
+  Wow64,
 }
 
 /// Parsed, bounded `Sec-CH-UA-Platform` request Client Hint metadata.
@@ -129,6 +137,7 @@ pub type DownlinkParseError = ClientHintsParseError;
 pub type DeviceMemoryParseError = ClientHintsParseError;
 pub type PrefersColorSchemeParseError = ClientHintsParseError;
 pub type SecChUaMobileParseError = ClientHintsParseError;
+pub type SecChUaWow64ParseError = ClientHintsParseError;
 pub type SecChUaPlatformParseError = ClientHintsParseError;
 pub type SecChUaArchParseError = ClientHintsParseError;
 pub type SecChUaBitnessParseError = ClientHintsParseError;
@@ -290,6 +299,38 @@ impl SecChUaMobile {
     match self {
       Self::NotMobile => "?0",
       Self::Mobile => "?1",
+    }
+  }
+}
+
+impl SecChUaWow64 {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, SecChUaWow64ParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, SecChUaWow64ParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let value = parse_sec_ch_ua_wow64_singleton(values)?;
+    let value = value.trim_matches([' ', '\t']);
+    if value == "?0" {
+      Ok(Self::NotWow64)
+    } else if value == "?1" {
+      Ok(Self::Wow64)
+    } else {
+      Err(invalid_sec_ch_ua_wow64_value())
+    }
+  }
+
+  pub const fn is_wow64(self) -> bool {
+    matches!(self, Self::Wow64)
+  }
+
+  pub const fn header_value(self) -> &'static str {
+    match self {
+      Self::NotWow64 => "?0",
+      Self::Wow64 => "?1",
     }
   }
 }
@@ -879,6 +920,48 @@ fn validate_bounded_sec_ch_ua_mobile_value(value: &str) -> Result<(), SecChUaMob
   Ok(())
 }
 
+fn parse_sec_ch_ua_wow64_singleton<'a, I>(values: I) -> Result<&'a str, SecChUaWow64ParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values.next().ok_or_else(invalid_sec_ch_ua_wow64_value)?;
+  validate_bounded_sec_ch_ua_wow64_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_sec_ch_ua_wow64_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(
+      "duplicate Sec-CH-UA-WoW64 header fields",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_bounded_sec_ch_ua_wow64_value(value: &str) -> Result<(), SecChUaWow64ParseError> {
+  if value.len() > MAX_SEC_CH_UA_WOW64_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-UA-WoW64 header value is too large",
+    ));
+  }
+  if !value.is_ascii() {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-UA-WoW64 non-ASCII byte",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-UA-WoW64 control byte",
+    ));
+  }
+  Ok(())
+}
+
 fn parse_sec_ch_ua_platform_singleton<'a, I>(
   values: I,
 ) -> Result<&'a str, SecChUaPlatformParseError>
@@ -1345,6 +1428,10 @@ fn invalid_prefers_color_scheme_value() -> PrefersColorSchemeParseError {
 
 fn invalid_sec_ch_ua_mobile_value() -> SecChUaMobileParseError {
   ClientHintsParseError::new("invalid Sec-CH-UA-Mobile header value")
+}
+
+fn invalid_sec_ch_ua_wow64_value() -> SecChUaWow64ParseError {
+  ClientHintsParseError::new("invalid Sec-CH-UA-WoW64 header value")
 }
 
 fn invalid_sec_ch_ua_platform_value() -> SecChUaPlatformParseError {

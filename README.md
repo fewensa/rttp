@@ -1907,6 +1907,7 @@ gain additional HTTP/2 header-block handling.
 | Device-Memory request Client Hint | `HttpClient::device_memory` emits bounded singleton `Device-Memory` request metadata through `DeviceMemory`; server `Request::device_memory()` and `HttpRequest::device_memory()` parse non-negative finite decimal GiB values while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, content adaptation, retry, or transport changes |
 | Sec-CH-Prefers-Color-Scheme request Client Hint | `HttpClient::prefers_color_scheme` emits bounded singleton `Sec-CH-Prefers-Color-Scheme` metadata through `PrefersColorScheme`; server `Request::prefers_color_scheme()` and `HttpRequest::prefers_color_scheme()` parse case-insensitive `light`/`dark` tokens and preserve raw values on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Mobile request Client Hint | `HttpClient::sec_ch_ua_mobile` emits bounded singleton `Sec-CH-UA-Mobile` metadata through `SecChUaMobile`; server `Request::sec_ch_ua_mobile()` and `HttpRequest::sec_ch_ua_mobile()` parse Structured Fields `?0`/`?1` tokens and preserve raw values on errors | No mobile preference inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
+| Sec-CH-UA-WoW64 request Client Hint | `HttpClient::sec_ch_ua_wow64` emits bounded singleton `Sec-CH-UA-WoW64` metadata through `SecChUaWow64`; server `Request::sec_ch_ua_wow64()` and `HttpRequest::sec_ch_ua_wow64()` parse one RFC 8941 `?0`/`?1` item and preserve raw values on errors | No platform-architecture inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Platform request Client Hint | `HttpClient::sec_ch_ua_platform` emits bounded singleton `Sec-CH-UA-Platform` metadata through `SecChUaPlatform`; server `Request::sec_ch_ua_platform()` and `HttpRequest::sec_ch_ua_platform()` parse one Structured Fields string and preserve raw values on errors | No platform inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Arch request Client Hint | `HttpClient::sec_ch_ua_arch` emits bounded singleton `Sec-CH-UA-Arch` metadata through `SecChUaArch`; server `Request::sec_ch_ua_arch()` and `HttpRequest::sec_ch_ua_arch()` parse one Structured Fields string and preserve raw values on errors | No architecture inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Bitness request Client Hint | `HttpClient::sec_ch_ua_bitness` emits bounded singleton `Sec-CH-UA-Bitness` metadata through `SecChUaBitness`; server `Request::sec_ch_ua_bitness()` and `HttpRequest::sec_ch_ua_bitness()` parse one Structured Fields string and preserve raw values on errors | No architecture inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
@@ -1941,6 +1942,7 @@ gain additional HTTP/2 header-block handling.
 | Device-Memory | `DeviceMemory::parse`, `HttpClient::device_memory`, `Request::device_memory`, and `HttpRequest::device_memory` validate, emit, or parse bounded singleton non-negative finite decimal GiB request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, content adaptation, retry, or transport changes |
 | Sec-CH-Prefers-Color-Scheme | `PrefersColorScheme::parse`, `HttpClient::prefers_color_scheme`, `Request::prefers_color_scheme`, and `HttpRequest::prefers_color_scheme` validate, emit, or parse bounded singleton `light`/`dark` request Client Hint metadata with case-insensitive parsing and lowercase formatting while preserving raw headers on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Mobile | `SecChUaMobile::parse`, `HttpClient::sec_ch_ua_mobile`, `Request::sec_ch_ua_mobile`, and `HttpRequest::sec_ch_ua_mobile` validate, emit, or parse bounded singleton Structured Fields `?0`/`?1` request Client Hint metadata while preserving raw headers on errors | No mobile preference inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
+| Sec-CH-UA-WoW64 | `SecChUaWow64::parse`, `HttpClient::sec_ch_ua_wow64`, `Request::sec_ch_ua_wow64`, and `HttpRequest::sec_ch_ua_wow64` validate, emit, or parse one bounded RFC 8941 `?0`/`?1` boolean item while preserving raw headers on errors | No platform-architecture inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Platform | `SecChUaPlatform::parse`, `HttpClient::sec_ch_ua_platform`, `Request::sec_ch_ua_platform`, and `HttpRequest::sec_ch_ua_platform` validate, emit, or parse bounded singleton Structured Fields string request Client Hint metadata while preserving raw headers on errors | No platform inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Arch | `SecChUaArch::parse`, `HttpClient::sec_ch_ua_arch`, `Request::sec_ch_ua_arch`, and `HttpRequest::sec_ch_ua_arch` validate, emit, or parse bounded singleton Structured Fields string request Client Hint metadata while preserving raw headers on errors | No architecture inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Bitness | `SecChUaBitness::parse`, `HttpClient::sec_ch_ua_bitness`, `Request::sec_ch_ua_bitness`, and `HttpRequest::sec_ch_ua_bitness` validate, emit, or parse bounded singleton Structured Fields string request Client Hint metadata while preserving raw headers on errors | No architecture inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
@@ -2819,6 +2821,23 @@ These helpers are metadata-only. RTTP does not infer a mobile preference,
 negotiate the UA brands family, emit `Accept-CH`, generate Client Hints
 automatically, retry, replay, redirect, or apply browser policy from
 `Sec-CH-UA-Mobile`.
+
+### Bounded Sec-CH-UA-WoW64 request Client Hint metadata
+
+`HttpClient::sec_ch_ua_wow64(value)` validates and emits one singleton
+`Sec-CH-UA-WoW64` request Client Hint through the shared `SecChUaWow64` type.
+`Request::sec_ch_ua_wow64()` and `HttpRequest::sec_ch_ua_wow64()` parse received
+fields into `HttpSecChUaWow64`, accepting exactly one RFC 8941 boolean item
+(`?0` or `?1`) after trimming optional SP or HTAB and exposing the canonical
+tokens through `header_value()`. Empty, unknown, comma-list, parameterized,
+duplicate, non-ASCII, control-byte, and oversized values return parser errors
+while raw headers remain available; `header(("Sec-CH-UA-WoW64", "..."))`
+remains an escape hatch.
+
+These helpers are metadata-only. RTTP does not infer platform architecture,
+negotiate the UA brands family, emit `Accept-CH`, generate Client Hints
+automatically, retry, replay, redirect, or apply browser policy from
+`Sec-CH-UA-WoW64`.
 
 ### Bounded Sec-CH-UA-Platform request Client Hint metadata
 

@@ -261,6 +261,15 @@ fn public_facade_exports_content_negotiation_metadata_types() {
   let server_bitness = rttp_server::server::HttpSecChUaBitness::parse("\"32\"")
     .expect("server bitness facade type should parse");
   assert_eq!("\"32\"", server_bitness.header_value());
+
+  let wow64: rttp::SecChUaWow64 =
+    rttp::SecChUaWow64::parse("?1").expect("wow64 facade type should parse");
+  assert_eq!("?1", wow64.header_value());
+  assert!(wow64.is_wow64());
+  let server_wow64 = rttp_server::server::HttpSecChUaWow64::parse("?0")
+    .expect("server wow64 facade type should parse");
+  assert_eq!("?0", server_wow64.header_value());
+  assert!(!server_wow64.is_wow64());
 }
 
 #[test]
@@ -465,6 +474,107 @@ fn sec_ch_ua_bitness_parses_valid_duplicate_and_malformed_http11_headers() {
   assert!(rttp::SecChUaBitness::parse("64").is_err());
   assert!(rttp::SecChUaBitness::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
   assert!(rttp::SecChUaBitness::parse("\"64\0\"").is_err());
+}
+
+#[test]
+fn sec_ch_ua_wow64_parses_valid_duplicate_and_malformed_http11_headers() {
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_wow64()
+          .map(|wow64| wow64.map(|wow64| wow64.header_value().to_owned()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-WoW64").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("wow64"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /wow64 HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-WoW64: \t?1 \t\r\nConnection: close\r\n\r\n",
+  );
+  assert_eq!(
+    (Ok(Some("?1".to_owned())), Some("?1".to_owned())),
+    observed_rx
+      .recv_timeout(TIMEOUT)
+      .expect("observe valid Sec-CH-UA-WoW64")
+  );
+  handle.join().expect("valid wow64 server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_wow64()
+          .map(|wow64| wow64.map(|wow64| wow64.header_value().to_owned()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-WoW64").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("duplicate"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /wow64 HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-WoW64: ?0\r\nsec-ch-ua-wow64: ?1\r\nConnection: close\r\n\r\n",
+  );
+  let observed = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe duplicate Sec-CH-UA-WoW64");
+  assert!(observed.0.is_err());
+  assert_eq!(Some("?0".to_owned()), observed.1);
+  handle.join().expect("duplicate wow64 server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_wow64()
+          .map(|wow64| wow64.map(|wow64| wow64.header_value().to_owned()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-WoW64").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("malformed"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /wow64 HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-WoW64: true\r\nConnection: close\r\n\r\n",
+  );
+  let observed = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe malformed Sec-CH-UA-WoW64");
+  assert!(observed.0.is_err());
+  assert_eq!(Some("true".to_owned()), observed.1);
+  handle.join().expect("malformed wow64 server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_wow64()
+          .map(|wow64| wow64.map(|wow64| wow64.header_value().to_owned()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-WoW64").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("non-ascii"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /wow64 HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-WoW64: \x80\r\nConnection: close\r\n\r\n",
+  );
+  let observed = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe non-ASCII Sec-CH-UA-WoW64");
+  assert!(observed.0.is_err());
+  assert_eq!(Some("\u{0080}".to_owned()), observed.1);
+  handle.join().expect("non-ASCII wow64 server thread");
+
+  assert!(rttp::SecChUaWow64::parse("true").is_err());
+  assert!(rttp::SecChUaWow64::parse("a".repeat(64 * 1024 + 1)).is_err());
+  assert!(rttp::SecChUaWow64::parse("?1\0").is_err());
+  assert!(rttp::SecChUaWow64::parse("?\u{80}").is_err());
 }
 
 #[test]

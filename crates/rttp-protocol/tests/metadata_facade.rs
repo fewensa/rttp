@@ -17,7 +17,7 @@ use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::cdn_loop::{CdnLoop, CdnLoopParseError};
-use rttp_protocol::client_hints::{AcceptCh, CriticalCh, SecChUaBitness};
+use rttp_protocol::client_hints::{AcceptCh, CriticalCh, SecChUaBitness, SecChUaWow64};
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_disposition::ContentDisposition;
 use rttp_protocol::content_dpr::ContentDpr;
@@ -156,6 +156,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let sec_ch_ua_bitness = SecChUaBitness::parse("\"64\"").expect("Sec-CH-UA-Bitness should parse");
+  let sec_ch_ua_wow64 = SecChUaWow64::parse("\t?1\t").expect("Sec-CH-UA-WoW64 should parse");
   let entity_tag = EntityTag::parse("\"revision-42\"").expect("entity tag should parse");
   let delta_base = DeltaBase::parse("\"revision-42\"").expect("Delta-Base should parse");
   let _: DeltaBaseParseError =
@@ -396,6 +397,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(sec_ch_ua_bitness.value(), "64");
   assert_eq!(sec_ch_ua_bitness.header_value(), r#""64""#);
+  assert!(sec_ch_ua_wow64.is_wow64());
+  assert_eq!(sec_ch_ua_wow64.header_value(), "?1");
   assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(request_method.method(), "PATCH");

@@ -661,6 +661,20 @@ values are rejected. These helpers only expose metadata: RTTP does not infer a
 mobile preference, negotiate the UA brands family, emit `Accept-CH`, retry, or
 apply browser policy.
 
+## Bounded Sec-CH-UA-WoW64 request Client Hint metadata
+
+With the client feature, `HttpClient::sec_ch_ua_wow64(value)` validates and
+emits one singleton `Sec-CH-UA-WoW64` request field through
+`rttp::SecChUaWow64`, replacing any existing case-insensitive field. The value
+must be exactly one RFC 8941 boolean item (`?0` or `?1`); optional surrounding
+SP or HTAB is trimmed and `header_value()` emits the canonical tokens. On the
+server facade, `Request::sec_ch_ua_wow64()` and `HttpRequest::sec_ch_ua_wow64()`
+parse received fields into `HttpSecChUaWow64`; parse errors leave the raw
+header available. Empty, unknown, comma-list, parameterized, duplicate,
+non-ASCII, control-byte, and oversized values are rejected. These helpers only
+expose metadata: RTTP does not infer platform architecture, negotiate the UA
+brands family, emit `Accept-CH`, retry, or apply browser policy.
+
 ## Bounded Sec-CH-UA-Platform request Client Hint metadata
 
 With the client feature, `HttpClient::sec_ch_ua_platform(value)` validates and

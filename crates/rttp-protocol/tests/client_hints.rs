@@ -1,12 +1,13 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
   PrefersReducedMotion, Rtt, SecChUaArch, SecChUaBitness, SecChUaMobile, SecChUaPlatform,
-  ViewportWidth, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
+  SecChUaWow64, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
   MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
   MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
   MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_SEC_CH_UA_ARCH_VALUE_BYTES,
   MAX_SEC_CH_UA_BITNESS_VALUE_BYTES, MAX_SEC_CH_UA_MOBILE_VALUE_BYTES,
-  MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES, MAX_SEC_CH_UA_WOW64_VALUE_BYTES,
+  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -339,6 +340,60 @@ fn sec_ch_ua_mobile_rejects_invalid_duplicate_oversized_and_control_values() {
   let oversized = "a".repeat(MAX_SEC_CH_UA_MOBILE_VALUE_BYTES + 1);
   assert!(SecChUaMobile::parse(&oversized).is_err());
   assert!(SecChUaMobile::parse_values(["?1", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn sec_ch_ua_wow64_accepts_ows_around_structured_boolean_tokens_and_canonicalizes_them() {
+  assert_eq!("?0", SecChUaWow64::NotWow64.header_value());
+  assert_eq!("?1", SecChUaWow64::Wow64.header_value());
+  assert!(!SecChUaWow64::NotWow64.is_wow64());
+  assert!(SecChUaWow64::Wow64.is_wow64());
+
+  for (value, expected, canonical) in [
+    ("?0", SecChUaWow64::NotWow64, "?0"),
+    ("?1", SecChUaWow64::Wow64, "?1"),
+  ] {
+    let wow64 = SecChUaWow64::parse(format!("\t{value} \t")).expect("valid Sec-CH-UA-WoW64 value");
+    assert_eq!(expected, wow64);
+    assert_eq!(canonical, wow64.header_value());
+    assert_eq!(
+      wow64,
+      SecChUaWow64::parse(wow64.header_value()).expect("roundtrip")
+    );
+  }
+}
+
+#[test]
+fn sec_ch_ua_wow64_rejects_invalid_duplicate_oversized_and_control_values() {
+  assert!(SecChUaWow64::parse_values(["?0", "?1"]).is_err());
+  assert!(SecChUaWow64::parse_values([]).is_err());
+
+  for value in [
+    "",
+    " ",
+    "true",
+    "false",
+    "?2",
+    "?1, ?1",
+    "?1;foo=?1",
+    "(?1)",
+    "\"?1\"",
+    "1",
+    "?1\0",
+    "?1\r\nInjected: yes",
+    "?1\u{7f}",
+    "?\u{80}",
+    "?1é",
+  ] {
+    assert!(
+      SecChUaWow64::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let oversized = "a".repeat(MAX_SEC_CH_UA_WOW64_VALUE_BYTES + 1);
+  assert!(SecChUaWow64::parse(&oversized).is_err());
+  assert!(SecChUaWow64::parse_values(["?1", oversized.as_str()]).is_err());
 }
 
 #[test]

@@ -1442,6 +1442,20 @@ emit `Accept-CH`, generate Client Hints automatically, retry, or apply browser
 policy. Raw values remain available through
 `header(("Sec-CH-UA-Mobile", "..."))`.
 
+## Bounded Sec-CH-UA-WoW64 request Client Hint metadata
+
+`HttpClient::sec_ch_ua_wow64(value)` validates and emits one bounded
+`Sec-CH-UA-WoW64` request field through the shared `SecChUaWow64` type,
+replacing any existing case-insensitive field. `SecChUaWow64::parse()` accepts
+exactly one RFC 8941 boolean item, the tokens `?0` and `?1`, with optional
+surrounding SP or HTAB, while `header_value()` emits the canonical tokens.
+Empty, unknown, comma-list, parameterized, duplicate, non-ASCII, control-byte,
+and oversized values are rejected before connecting. This helper declares
+metadata only; it does not infer platform architecture, negotiate the UA brands
+family, emit `Accept-CH`, generate Client Hints automatically, retry, or apply
+browser policy. Raw values remain available through
+`header(("Sec-CH-UA-WoW64", "..."))`.
+
 ## Bounded Sec-CH-UA-Platform request Client Hint metadata
 
 `HttpClient::sec_ch_ua_platform(value)` validates and emits one bounded

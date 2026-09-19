@@ -528,6 +528,16 @@ remains available. This is metadata-only: the server does not infer a mobile
 preference, negotiate the UA brands family, emit `Accept-CH`, retry, or apply
 browser policy.
 
+`Request::sec_ch_ua_wow64()` and `HttpRequest::sec_ch_ua_wow64()` parse a
+singleton `Sec-CH-UA-WoW64` request Client Hint into `HttpSecChUaWow64`,
+accepting exactly one RFC 8941 boolean item (`?0` or `?1`) after optional SP
+or HTAB trimming and exposing the canonical tokens through `header_value()`.
+Empty, unknown, comma-list, parameterized, duplicate, non-ASCII, control-byte,
+or oversized fields return `HttpSecChUaWow64ParseError` while the raw field
+remains available. This is metadata-only: the server does not infer platform
+architecture, negotiate the UA brands family, emit `Accept-CH`, retry, or apply
+browser policy.
+
 `Request::sec_ch_ua_platform()` and `HttpRequest::sec_ch_ua_platform()` parse a
 singleton `Sec-CH-UA-Platform` request Client Hint into `HttpSecChUaPlatform`,
 accepting one Structured Fields string after optional SP or HTAB trimming and

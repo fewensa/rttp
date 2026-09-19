@@ -30,8 +30,9 @@ use rttp::server::{
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
   HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecChUaArch,
   HttpSecChUaArchParseError, HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaMobile,
-  HttpSecChUaMobileParseError, HttpSecChUaPlatform, HttpSecChUaPlatformParseError, HttpSecGpc,
-  HttpSecGpcParseError, HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecChUaMobileParseError, HttpSecChUaPlatform, HttpSecChUaPlatformParseError,
+  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
   HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
@@ -195,6 +196,51 @@ fn compatibility_facade_exports_sec_ch_ua_mobile_request_metadata() {
   .expect("duplicate Sec-CH-UA-Mobile fields should remain parseable");
   assert!(duplicate.sec_ch_ua_mobile().is_err());
   assert_eq!(Some("?0"), duplicate.header("Sec-CH-UA-Mobile"));
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_ua_wow64_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-WoW64: \t?1 \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-WoW64 request should parse");
+  let wow64: HttpSecChUaWow64 = request
+    .sec_ch_ua_wow64()
+    .expect("Sec-CH-UA-WoW64 should parse")
+    .expect("Sec-CH-UA-WoW64 should be present");
+  assert_eq!("?1", wow64.header_value());
+  assert!(wow64.is_wow64());
+  assert_eq!(Some("?1"), request.header("Sec-CH-UA-WoW64"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-WoW64 should parse");
+  assert_eq!(
+    None,
+    absent.sec_ch_ua_wow64().expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-WoW64: true\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-WoW64 should remain available");
+  let _: HttpSecChUaWow64ParseError = malformed
+    .sec_ch_ua_wow64()
+    .expect_err("unknown Sec-CH-UA-WoW64 should fail");
+  assert_eq!(Some("true"), malformed.header("Sec-CH-UA-WoW64"));
+
+  let non_ascii = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-WoW64: \x80\r\n\r\n",
+  )
+  .expect("non-ASCII Sec-CH-UA-WoW64 should remain available");
+  assert!(non_ascii.sec_ch_ua_wow64().is_err());
+  assert_eq!(Some("\u{0080}"), non_ascii.header("Sec-CH-UA-WoW64"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-WoW64: ?0\r\nsec-ch-ua-wow64: ?1\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-WoW64 fields should remain parseable");
+  assert!(duplicate.sec_ch_ua_wow64().is_err());
+  assert_eq!(Some("?0"), duplicate.header("Sec-CH-UA-WoW64"));
 }
 
 #[test]

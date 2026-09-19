@@ -60,7 +60,8 @@ pub use rttp_protocol::client_hints::{
   SecChUaArchParseError as HttpSecChUaArchParseError, SecChUaBitness as HttpSecChUaBitness,
   SecChUaBitnessParseError as HttpSecChUaBitnessParseError, SecChUaMobile as HttpSecChUaMobile,
   SecChUaMobileParseError as HttpSecChUaMobileParseError, SecChUaPlatform as HttpSecChUaPlatform,
-  SecChUaPlatformParseError as HttpSecChUaPlatformParseError, ViewportWidth as HttpViewportWidth,
+  SecChUaPlatformParseError as HttpSecChUaPlatformParseError, SecChUaWow64 as HttpSecChUaWow64,
+  SecChUaWow64ParseError as HttpSecChUaWow64ParseError, ViewportWidth as HttpViewportWidth,
   ViewportWidthParseError as HttpViewportWidthParseError, Width as HttpWidth,
   WidthParseError as HttpWidthParseError,
 };
@@ -559,6 +560,17 @@ impl Request {
       return Ok(None);
     }
     HttpSecChUaMobile::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-WoW64` request Client Hint metadata
+  /// without inferring platform architecture, negotiating the UA brands family,
+  /// or applying browser policy.
+  pub fn sec_ch_ua_wow64(&self) -> Result<Option<HttpSecChUaWow64>, HttpSecChUaWow64ParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-UA-WoW64").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaWow64::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-UA-Platform` request Client Hint metadata
@@ -3055,6 +3067,22 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecChUaMobile::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-WoW64` request Client Hint metadata
+  /// without inferring platform architecture, negotiating the UA brands family,
+  /// or applying browser policy.
+  pub fn sec_ch_ua_wow64(&self) -> Result<Option<HttpSecChUaWow64>, HttpSecChUaWow64ParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-CH-UA-WoW64"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaWow64::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-UA-Platform` request Client Hint metadata
