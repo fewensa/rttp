@@ -29,7 +29,8 @@ use rttp::server::{
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
   HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecChUaArch,
-  HttpSecChUaArchParseError, HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaMobile,
+  HttpSecChUaArchParseError, HttpSecChUaBitness, HttpSecChUaBitnessParseError,
+  HttpSecChUaFullVersionList, HttpSecChUaFullVersionListParseError, HttpSecChUaMobile,
   HttpSecChUaMobileParseError, HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaPlatform,
   HttpSecChUaPlatformParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
   HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError,
@@ -388,6 +389,60 @@ fn compatibility_facade_exports_sec_ch_ua_bitness_request_metadata() {
   .expect("duplicate Sec-CH-UA-Bitness fields should remain parseable");
   assert!(duplicate.sec_ch_ua_bitness().is_err());
   assert_eq!(Some(r#""64""#), duplicate.header("Sec-CH-UA-Bitness"));
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_ua_full_version_list_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Full-Version-List: \"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99.0\"\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Full-Version-List request should parse");
+  let list: HttpSecChUaFullVersionList = request
+    .sec_ch_ua_full_version_list()
+    .expect("Sec-CH-UA-Full-Version-List should parse")
+    .expect("Sec-CH-UA-Full-Version-List should be present");
+  assert_eq!("Chromium", list.entries()[0].brand());
+  assert_eq!("120.0", list.entries()[0].version());
+  assert_eq!("Not(A:Brand", list.entries()[1].brand());
+  assert_eq!(
+    "\"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99.0\"",
+    list.header_value()
+  );
+  assert_eq!(
+    Some("\"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99.0\""),
+    request.header("Sec-CH-UA-Full-Version-List")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-Full-Version-List should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_ua_full_version_list()
+      .expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Full-Version-List: Chromium;v=\"120.0\"\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-Full-Version-List should remain available");
+  let _: HttpSecChUaFullVersionListParseError = malformed
+    .sec_ch_ua_full_version_list()
+    .expect_err("unquoted Sec-CH-UA-Full-Version-List brand should fail");
+  assert_eq!(
+    Some("Chromium;v=\"120.0\""),
+    malformed.header("Sec-CH-UA-Full-Version-List")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Full-Version-List: \"Chromium\";v=\"120.0\"\r\nsec-ch-ua-full-version-list: \"Firefox\";v=\"121.0\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Full-Version-List fields should remain parseable");
+  assert!(duplicate.sec_ch_ua_full_version_list().is_err());
+  assert_eq!(
+    Some("\"Chromium\";v=\"120.0\""),
+    duplicate.header("Sec-CH-UA-Full-Version-List")
+  );
 }
 
 #[test]

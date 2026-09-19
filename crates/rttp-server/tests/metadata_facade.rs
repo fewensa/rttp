@@ -52,9 +52,10 @@ use rttp_server::server::{
   HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
   HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
   HttpSaveDataParseError, HttpScheduleTag, HttpSecChUaBitness, HttpSecChUaBitnessParseError,
-  HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaPlatformVersion,
-  HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc,
-  HttpSecGpcParseError, HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecChUaFullVersionList, HttpSecChUaFullVersionListParseError, HttpSecChUaModel,
+  HttpSecChUaModelParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
+  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
   HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
@@ -2068,6 +2069,36 @@ fn request_facade_parses_sec_ch_ua_bitness_metadata_without_negotiation() {
   assert!(
     HttpSecChUaBitness::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err(),
     "oversized value should fail"
+  );
+}
+
+#[test]
+fn request_facade_parses_sec_ch_ua_full_version_list_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Full-Version-List: \t\"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99.0\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Full-Version-List request should parse");
+  let list: HttpSecChUaFullVersionList = request
+    .sec_ch_ua_full_version_list()
+    .expect("Sec-CH-UA-Full-Version-List should parse")
+    .expect("Sec-CH-UA-Full-Version-List should be present");
+  assert_eq!("Chromium", list.entries()[0].brand());
+  assert_eq!("120.0", list.entries()[0].version());
+  assert_eq!(
+    "\"Chromium\";v=\"120.0\", \"Not(A:Brand\";v=\"99.0\"",
+    list.header_value()
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Full-Version-List: Chromium;v=\"120.0\"\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-Full-Version-List should remain available");
+  let _: HttpSecChUaFullVersionListParseError = malformed
+    .sec_ch_ua_full_version_list()
+    .expect_err("malformed Sec-CH-UA-Full-Version-List should fail");
+  assert_eq!(
+    Some("Chromium;v=\"120.0\""),
+    malformed.header("Sec-CH-UA-Full-Version-List")
   );
 }
 
