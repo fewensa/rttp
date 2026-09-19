@@ -626,6 +626,8 @@ fn sec_ch_ua_platform_version_rejects_invalid_duplicate_oversized_and_control_va
   for value in [
     "",
     " ",
+    r#""""#,
+    "\t\"\" \t",
     "14.0.0",
     r#""14.0.0", "15.0.0""#,
     r#""14.0.0";foo=bar"#,

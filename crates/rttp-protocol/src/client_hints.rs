@@ -1376,6 +1376,9 @@ fn parse_sec_ch_ua_platform_version_string(
     }
     index += 1;
   }
+  if parsed.is_empty() {
+    return Err(invalid_sec_ch_ua_platform_version_value());
+  }
   Ok(parsed)
 }
 
