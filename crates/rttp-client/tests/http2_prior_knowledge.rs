@@ -325,6 +325,78 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
 }
 
 #[test]
+fn http2_upgrade_raw_client_hint_headers_preserve_unquoted_values() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+    let request = String::from_utf8(read_http1_request_head(&mut stream)).expect("request utf8");
+    assert!(request.starts_with("GET /upgrade-raw-client-hint HTTP/1.1\r\n"));
+    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings\r\n"));
+    assert!(request.contains("\r\nUpgrade: h2c\r\n"));
+
+    stream
+      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+      .expect("write upgrade response");
+
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(3, request_headers.stream_id);
+    assert_eq!(
+      b"/upgrade-raw-client-hint",
+      find_header_value(&request_headers.payload, b":path")
+        .expect("request path")
+        .value
+        .as_slice()
+    );
+    assert_eq!(
+      b"Windows",
+      find_header_value(&request_headers.payload, b"sec-ch-ua-platform")
+        .expect("sec-ch-ua-platform")
+        .value
+        .as_slice()
+    );
+    assert_eq!(
+      b"x86",
+      find_header_value(&request_headers.payload, b"sec-ch-ua-arch")
+        .expect("sec-ch-ua-arch")
+        .value
+        .as_slice()
+    );
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 3, &[0x88]);
+    write_frame(
+      &mut stream,
+      FRAME_DATA,
+      FLAG_END_STREAM,
+      3,
+      b"raw client hint",
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/upgrade-raw-client-hint", addr))
+    .header(("Sec-CH-UA-Platform", "Windows"))
+    .header(("Sec-CH-UA-Arch", "x86"))
+    .emit_http2_upgrade()
+    .expect("h2c upgrade response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!("raw client hint", response.body().string().unwrap());
+
+  handle
+    .join()
+    .expect("h2c upgrade raw client hint peer thread");
+}
+
+#[test]
 fn http2_upgrade_rejects_goaway_before_opening_stream_three() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
   let addr = listener.local_addr().expect("h2c upgrade peer addr");
