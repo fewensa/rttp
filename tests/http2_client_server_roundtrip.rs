@@ -1447,6 +1447,7 @@ struct SecChUaFieldSpec {
   valid_input: &'static str,
   valid_value: &'static str,
   malformed_value: &'static str,
+  structured_malformed_values: &'static [&'static str],
   duplicate_first: &'static str,
   duplicate_second: &'static str,
   client_helper: fn(&mut HttpClient, &str) -> Result<(), String>,
@@ -1460,6 +1461,7 @@ const SEC_CH_UA_ARCH: SecChUaFieldSpec = SecChUaFieldSpec {
   valid_input: "\t\"x86\" \t",
   valid_value: "\"x86\"",
   malformed_value: "x86",
+  structured_malformed_values: &[r#""bad\escape""#, r#""x86";foo=bar"#, r#""x86", "arm64""#],
   duplicate_first: r#""x86""#,
   duplicate_second: r#""arm64""#,
   client_helper: set_sec_ch_ua_arch,
@@ -1473,6 +1475,11 @@ const SEC_CH_UA_PLATFORM: SecChUaFieldSpec = SecChUaFieldSpec {
   valid_input: "\t\"Windows\" \t",
   valid_value: "\"Windows\"",
   malformed_value: "Windows",
+  structured_malformed_values: &[
+    r#""bad\escape""#,
+    r#""Windows";foo=bar"#,
+    r#""Windows", "Linux""#,
+  ],
   duplicate_first: r#""Windows""#,
   duplicate_second: r#""Linux""#,
   client_helper: set_sec_ch_ua_platform,
@@ -1635,6 +1642,28 @@ fn run_h2c_sec_ch_ua_non_ascii(field: SecChUaFieldSpec) {
   }
 }
 
+fn run_h2c_sec_ch_ua_structured_malformed(field: SecChUaFieldSpec) {
+  for &value in field.structured_malformed_values {
+    let (addr, rx, handle) = spawn_h2c_sec_ch_ua_observer(field, "structured malformed", false);
+    let response = HttpClient::new()
+      .get()
+      .url(format!("http://{addr}/asset"))
+      .header((field.name, value))
+      .emit_http2_prior_knowledge()
+      .expect("receive h2c response");
+
+    assert_eq!("ok", response.body().string().expect("h2c response body"));
+    let observed = receive_h2c_sec_ch_ua(&rx, field, "structured malformed");
+    assert_eq!(Some(value.to_string()), observed.raw);
+    assert!(
+      observed.parsed.is_err(),
+      "structured malformed {} must fail closed",
+      field.name
+    );
+    join_h2c_sec_ch_ua(handle, field, "structured malformed");
+  }
+}
+
 fn run_h2c_sec_ch_ua_duplicate(field: SecChUaFieldSpec) {
   let (addr, rx, handle) = spawn_h2c_sec_ch_ua_observer(field, "duplicate", false);
   let authority = addr.to_string();
@@ -1699,6 +1728,11 @@ fn h2c_sec_ch_ua_arch_non_ascii_reaches_server_accessor_with_raw_header() {
 }
 
 #[test]
+fn h2c_sec_ch_ua_arch_structured_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_structured_malformed(SEC_CH_UA_ARCH);
+}
+
+#[test]
 fn h2c_sec_ch_ua_arch_duplicate_reaches_server_accessor_with_raw_header() {
   run_h2c_sec_ch_ua_duplicate(SEC_CH_UA_ARCH);
 }
@@ -1721,6 +1755,11 @@ fn h2c_sec_ch_ua_platform_malformed_reaches_server_accessor_with_raw_header() {
 #[test]
 fn h2c_sec_ch_ua_platform_non_ascii_reaches_server_accessor_with_raw_header() {
   run_h2c_sec_ch_ua_non_ascii(SEC_CH_UA_PLATFORM);
+}
+
+#[test]
+fn h2c_sec_ch_ua_platform_structured_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_structured_malformed(SEC_CH_UA_PLATFORM);
 }
 
 #[test]
