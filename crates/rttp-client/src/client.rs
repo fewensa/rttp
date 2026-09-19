@@ -23,7 +23,7 @@ use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::client_hints::{
   DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast, PrefersReducedMotion, Rtt,
-  SecChUaArch, SecChUaBitness, SecChUaMobile, SecChUaPlatform, ViewportWidth, Width,
+  SecChUaArch, SecChUaBitness, SecChUaMobile, SecChUaPlatform, SecChUaWow64, ViewportWidth, Width,
 };
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -582,6 +582,22 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-CH-UA-Mobile",
       sec_ch_ua_mobile.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-CH-UA-WoW64` request Client Hint metadata.
+  ///
+  /// The value must be the Structured Fields boolean token `?0` or `?1`, with
+  /// optional surrounding HTTP optional whitespace. This replaces any existing
+  /// case-insensitive `Sec-CH-UA-WoW64` field and only declares request
+  /// metadata; RTTP does not infer platform architecture, negotiate the UA
+  /// brands family, emit `Accept-CH`, or apply browser policy.
+  pub fn sec_ch_ua_wow64<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_ch_ua_wow64 = SecChUaWow64::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-CH-UA-WoW64",
+      sec_ch_ua_wow64.header_value(),
     )))
   }
 

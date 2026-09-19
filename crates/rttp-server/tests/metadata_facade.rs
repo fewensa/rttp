@@ -52,21 +52,21 @@ use rttp_server::server::{
   HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
   HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
   HttpSaveDataParseError, HttpScheduleTag, HttpSecChUaBitness, HttpSecChUaBitnessParseError,
-  HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
-  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
-  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
-  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
-  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
+  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
+  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
   HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
   HttpViaParseError, HttpViewportWidth, HttpViewportWidthParseError, HttpWantContentDigest,
@@ -2066,6 +2066,60 @@ fn request_facade_parses_sec_ch_ua_bitness_metadata_without_negotiation() {
     HttpSecChUaBitness::parse("64").expect_err("unquoted Sec-CH-UA-Bitness should fail");
   assert!(
     HttpSecChUaBitness::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err(),
+    "oversized value should fail"
+  );
+}
+
+#[test]
+fn request_facade_parses_sec_ch_ua_wow64_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-WoW64: \t?1 \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-WoW64 request should parse");
+  let wow64: HttpSecChUaWow64 = request
+    .sec_ch_ua_wow64()
+    .expect("Sec-CH-UA-WoW64 should parse")
+    .expect("Sec-CH-UA-WoW64 should be present");
+  assert!(wow64.is_wow64());
+  assert_eq!("?1", wow64.header_value());
+  assert_eq!(Some("?1"), request.header("Sec-CH-UA-WoW64"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-WoW64 should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_ua_wow64()
+      .expect("missing Sec-CH-UA-WoW64 should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-WoW64: true\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-WoW64 should remain available");
+  let _: HttpSecChUaWow64ParseError = malformed
+    .sec_ch_ua_wow64()
+    .expect_err("unknown Sec-CH-UA-WoW64 should fail");
+  assert_eq!(Some("true"), malformed.header("Sec-CH-UA-WoW64"));
+
+  let non_ascii = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-WoW64: \x80\r\n\r\n",
+  )
+  .expect("non-ASCII Sec-CH-UA-WoW64 should remain available");
+  assert!(non_ascii.sec_ch_ua_wow64().is_err());
+  assert_eq!(Some("\u{0080}"), non_ascii.header("Sec-CH-UA-WoW64"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-WoW64: ?0\r\nsec-ch-ua-wow64: ?1\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-WoW64 request should retain raw metadata");
+  assert!(duplicate.sec_ch_ua_wow64().is_err());
+  assert_eq!(Some("?0"), duplicate.header("Sec-CH-UA-WoW64"));
+
+  let _: HttpSecChUaWow64ParseError =
+    HttpSecChUaWow64::parse("true").expect_err("unknown Sec-CH-UA-WoW64 should fail");
+  assert!(
+    HttpSecChUaWow64::parse("a".repeat(64 * 1024 + 1)).is_err(),
     "oversized value should fail"
   );
 }

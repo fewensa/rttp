@@ -6298,6 +6298,143 @@ fn raw_sec_ch_ua_mobile_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn sec_ch_ua_wow64_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-ua-wow64", "legacy"))
+      .sec_ch_ua_wow64("\t?1 \t")
+      .expect("Sec-CH-UA-WoW64 should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("?1"), header_value(&request, "Sec-CH-UA-WoW64"));
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| { line.to_ascii_lowercase().starts_with("sec-ch-ua-wow64:") })
+      .count(),
+    "typed Sec-CH-UA-WoW64 should replace an existing same-name field"
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_wow64_helper_matches_blocking_contract() {
+  for (value, expected) in [("\t?0 \t", "?0"), ("\t?1 \t", "?1")] {
+    let request = capture_request(|base_url| {
+      block_on(
+        client()
+          .get()
+          .url(format!("{}/asset", base_url))
+          .header(("sec-ch-ua-wow64", "legacy"))
+          .sec_ch_ua_wow64(value)
+          .expect("Sec-CH-UA-WoW64 should be accepted")
+          .rasync(),
+      )
+      .expect("request should succeed");
+    });
+    let request = request_text(&request);
+
+    assert_eq!(Some(expected), header_value(&request, "Sec-CH-UA-WoW64"));
+    assert_eq!(
+      1,
+      request
+        .lines()
+        .filter(|line| { line.to_ascii_lowercase().starts_with("sec-ch-ua-wow64:") })
+        .count(),
+      "typed Sec-CH-UA-WoW64 should replace an existing same-name field"
+    );
+  }
+}
+
+#[test]
+fn sec_ch_ua_wow64_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    " ",
+    "true",
+    "false",
+    "?2",
+    "?1, ?1",
+    "?1;foo=?1",
+    "?\u{80}",
+    "?1\0",
+    "?1\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_ch_ua_wow64(value)
+        .expect_err("invalid Sec-CH-UA-WoW64 input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA-WoW64 input must not open a socket"
+    );
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_wow64_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    " ",
+    "true",
+    "false",
+    "?2",
+    "?1, ?1",
+    "?1;foo=?1",
+    "?\u{80}",
+    "?1\0",
+    "?1\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = block_on(async {
+        let mut http_client = client();
+        let request = http_client.get().url(format!("{}/asset", base_url));
+        request.sec_ch_ua_wow64(value)?.rasync().await
+      })
+      .expect_err("invalid Sec-CH-UA-WoW64 input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA-WoW64 input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_sec_ch_ua_wow64_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-UA-WoW64", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request, "Sec-CH-UA-WoW64")
+  );
+}
+
+#[test]
 fn sec_ch_ua_platform_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()
