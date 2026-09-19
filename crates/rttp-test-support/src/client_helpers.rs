@@ -21,8 +21,17 @@ fn read_exact_bytes<R: Read>(stream: &mut R, len: usize) -> io::Result<Vec<u8>> 
   Ok(bytes)
 }
 
-fn socks5_target_addr(stream: &mut TcpStream, auth: Option<(&str, &str)>) -> io::Result<String> {
+fn socks5_target_addr<S: Read + Write>(
+  stream: &mut S,
+  auth: Option<(&str, &str)>,
+) -> io::Result<String> {
   let header = read_exact_bytes(stream, 2)?;
+  if header[0] != 0x05 {
+    return Err(io::Error::other("invalid socks5 greeting version"));
+  }
+  if header[1] == 0 {
+    return Err(io::Error::other("empty socks5 method list"));
+  }
   let methods = read_exact_bytes(stream, header[1] as usize)?;
 
   match auth {
@@ -35,6 +44,9 @@ fn socks5_target_addr(stream: &mut TcpStream, auth: Option<(&str, &str)>) -> io:
       stream.write_all(&[0x05, 0x02])?;
 
       let auth_header = read_exact_bytes(stream, 2)?;
+      if auth_header[0] != 0x01 {
+        return Err(io::Error::other("invalid socks5 auth version"));
+      }
       let user = read_exact_bytes(stream, auth_header[1] as usize)?;
       let password_len = read_exact_bytes(stream, 1)?[0] as usize;
       let password_bytes = read_exact_bytes(stream, password_len)?;
@@ -53,8 +65,14 @@ fn socks5_target_addr(stream: &mut TcpStream, auth: Option<(&str, &str)>) -> io:
   }
 
   let request = read_exact_bytes(stream, 4)?;
-  if request[0] != 0x05 || request[1] != 0x01 {
+  if request[0] != 0x05 {
+    return Err(io::Error::other("invalid socks5 request version"));
+  }
+  if request[1] != 0x01 {
     return Err(io::Error::other("unsupported socks5 command"));
+  }
+  if request[2] != 0x00 {
+    return Err(io::Error::other("invalid socks5 reserved byte"));
   }
 
   let host = match request[3] {
@@ -1188,4 +1206,158 @@ pub fn spawn_tls_redirect_server(location: String) -> (SocketAddr, JoinHandle<()
   });
 
   (addr, handle)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::socks5_target_addr;
+  use std::io::{self, Read, Write};
+
+  const CONNECT_SUCCESS: &[u8] = &[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0];
+
+  struct InMemoryStream {
+    read: Vec<u8>,
+    written: Vec<u8>,
+  }
+
+  impl InMemoryStream {
+    fn new(read: Vec<u8>) -> Self {
+      Self {
+        read,
+        written: Vec::new(),
+      }
+    }
+  }
+
+  impl Read for InMemoryStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+      let read = buf.len().min(self.read.len());
+      buf[..read].copy_from_slice(&self.read[..read]);
+      self.read.drain(..read);
+      Ok(read)
+    }
+  }
+
+  impl Write for InMemoryStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+      self.written.extend_from_slice(buf);
+      Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+      Ok(())
+    }
+  }
+
+  fn connect_request() -> Vec<u8> {
+    let mut request = vec![0x05, 0x01, 0x00, 0x03, 12];
+    request.extend_from_slice(b"example.test");
+    request.extend_from_slice(&[0x01, 0xbb]);
+    request
+  }
+
+  fn run(input: Vec<u8>, auth: Option<(&str, &str)>) -> (io::Result<String>, Vec<u8>) {
+    let mut stream = InMemoryStream::new(input);
+    let result = socks5_target_addr(&mut stream, auth);
+    (result, stream.written)
+  }
+
+  fn assert_rejected(input: Vec<u8>, auth: Option<(&str, &str)>, message: &str) {
+    let (result, written) = run(input, auth);
+    assert_eq!(
+      result
+        .expect_err("malformed SOCKS5 handshake should fail")
+        .to_string(),
+      message
+    );
+    assert!(!written
+      .windows(CONNECT_SUCCESS.len())
+      .any(|window| window == CONNECT_SUCCESS));
+  }
+
+  #[test]
+  fn socks5_target_addr_accepts_no_auth_handshake() {
+    let mut input = vec![0x05, 0x01, 0x00];
+    input.extend_from_slice(&connect_request());
+
+    let (result, written) = run(input, None);
+
+    assert_eq!(
+      result.expect("no-auth SOCKS5 handshake should succeed"),
+      "example.test:443"
+    );
+    assert_eq!(
+      written,
+      [0x05, 0x00]
+        .into_iter()
+        .chain(CONNECT_SUCCESS.iter().copied())
+        .collect::<Vec<_>>()
+    );
+  }
+
+  #[test]
+  fn socks5_target_addr_accepts_username_password_handshake() {
+    let mut input = vec![0x05, 0x01, 0x02, 0x01, 0x04];
+    input.extend_from_slice(b"user");
+    input.extend_from_slice(&[0x04]);
+    input.extend_from_slice(b"pass");
+    input.extend_from_slice(&connect_request());
+
+    let (result, written) = run(input, Some(("user", "pass")));
+
+    assert_eq!(
+      result.expect("authenticated SOCKS5 handshake should succeed"),
+      "example.test:443"
+    );
+    assert_eq!(
+      written,
+      [0x05, 0x02, 0x01, 0x00]
+        .into_iter()
+        .chain(CONNECT_SUCCESS.iter().copied())
+        .collect::<Vec<_>>()
+    );
+  }
+
+  #[test]
+  fn socks5_target_addr_rejects_invalid_greeting_version() {
+    assert_rejected(
+      vec![0x04, 0x01, 0x00],
+      None,
+      "invalid socks5 greeting version",
+    );
+  }
+
+  #[test]
+  fn socks5_target_addr_rejects_empty_method_list() {
+    assert_rejected(vec![0x05, 0x00], None, "empty socks5 method list");
+  }
+
+  #[test]
+  fn socks5_target_addr_rejects_invalid_auth_version() {
+    assert_rejected(
+      vec![0x05, 0x01, 0x02, 0x02, 0x04, b'u', b's', b'e', b'r'],
+      Some(("user", "pass")),
+      "invalid socks5 auth version",
+    );
+  }
+
+  #[test]
+  fn socks5_target_addr_rejects_invalid_request_version() {
+    let mut input = vec![0x05, 0x01, 0x00];
+    let mut request = connect_request();
+    request[0] = 0x04;
+    input.extend_from_slice(&request);
+
+    assert_rejected(input, None, "invalid socks5 request version");
+  }
+
+  #[test]
+  fn socks5_target_addr_rejects_nonzero_request_reserved_byte() {
+    let mut input = vec![0x05, 0x01, 0x00];
+    let mut request = connect_request();
+    request[2] = 0x01;
+    input.extend_from_slice(&request);
+
+    assert_rejected(input, None, "invalid socks5 reserved byte");
+  }
 }
