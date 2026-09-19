@@ -7075,6 +7075,8 @@ fn sec_ch_ua_platform_version_helper_rejects_malformed_values_before_connecting(
   for value in [
     "",
     " ",
+    r#""""#,
+    "\t\"\" \t",
     "14.0.0",
     r#""14.0.0", "15.0.0""#,
     r#""14.0.0";foo=bar"#,
@@ -7106,6 +7108,8 @@ fn async_sec_ch_ua_platform_version_helper_rejects_malformed_values_before_conne
   for value in [
     "",
     " ",
+    r#""""#,
+    "\t\"\" \t",
     "14.0.0",
     r#""14.0.0", "15.0.0""#,
     r#""14.0.0";foo=bar"#,
