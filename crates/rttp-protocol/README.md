@@ -749,11 +749,11 @@ input is bounded to 64 KiB, and the list accepts at most 256 items. Optional
 outer SP and HTAB are trimmed, item order is preserved, and `header_value()`
 emits canonical quoted-string syntax with quote and backslash escapes.
 `items()` exposes the decoded ASCII strings without reordering or interpreting
-them. Empty lists, non-string members, inner lists, parameterized members,
-duplicate fields, non-ASCII, forbidden-control, invalid-escape, and oversized
-values are errors. This parser reports request metadata only; it does not infer
-a device class, negotiate Client Hints, emit `Accept-CH`, retry, or apply
-browser policy.
+them. Repeated field lines are combined in order. Empty lists, non-string
+members, inner lists, parameterized members, non-ASCII, forbidden-control,
+invalid-escape, and oversized values are errors. This parser reports request
+metadata only; it does not infer a device class, negotiate Client Hints, emit
+`Accept-CH`, retry, or apply browser policy.
 
 ## Sec-CH-Prefers-Reduced-Motion
 

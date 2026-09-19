@@ -1533,10 +1533,11 @@ through `header(("Sec-CH-UA-Platform-Version", "..."))`.
 type, replacing any existing case-insensitive field. The value must be an RFC
 8941 list of ordered structured strings; optional surrounding SP or HTAB is
 trimmed and canonical quoted-string escaping is emitted. The parser accepts at
-most 256 items and 64 KiB of combined field input, and rejects empty lists,
-malformed members, parameterized members, duplicate fields, non-ASCII/control
-input, and oversized values before connecting. This helper declares metadata
-only; it does not infer a device class, negotiate Client Hints, emit
+most 256 items and 64 KiB of combined field input, combines repeated field
+lines in order, and rejects empty lists, malformed members, parameterized
+members, non-ASCII/control input, and oversized values before connecting. This
+helper declares metadata only; it does not infer a device class, negotiate
+Client Hints, emit
 `Accept-CH`, generate Client Hints automatically, retry, or apply browser
 policy. Raw values remain available through
 `header(("Sec-CH-UA-Form-Factors", "..."))`.

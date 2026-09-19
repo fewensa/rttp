@@ -2116,6 +2116,17 @@ fn request_facade_parses_sec_ch_ua_form_factors_metadata_without_negotiation() {
   assert_eq!(["Desktop", "Tablet"], form_factors.items());
   assert_eq!(r#""Desktop", "Tablet""#, form_factors.header_value());
 
+  let split = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Form-Factors: \"Desktop\"\r\nsec-ch-ua-form-factors: \"Tablet\"\r\n\r\n",
+  )
+  .expect("split Sec-CH-UA-Form-Factors fields should remain parseable");
+  let form_factors = split
+    .sec_ch_ua_form_factors()
+    .expect("split list sections should combine")
+    .expect("form factors should be present");
+  assert_eq!(["Desktop", "Tablet"], form_factors.items());
+  assert_eq!(Some(r#""Desktop""#), split.header("Sec-CH-UA-Form-Factors"));
+
   let malformed = HttpRequest::parse(
     b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Form-Factors: Desktop\r\n\r\n",
   )

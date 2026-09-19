@@ -481,15 +481,17 @@ fn compatibility_facade_exports_sec_ch_ua_form_factors_request_metadata() {
     .expect_err("unquoted Sec-CH-UA-Form-Factors item should fail");
   assert_eq!(Some("Desktop"), malformed.header("Sec-CH-UA-Form-Factors"));
 
-  let duplicate = HttpRequest::parse(
+  let split = HttpRequest::parse(
     b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Form-Factors: \"Desktop\"\r\nsec-ch-ua-form-factors: \"Tablet\"\r\n\r\n",
   )
-  .expect("duplicate Sec-CH-UA-Form-Factors fields should remain parseable");
-  assert!(duplicate.sec_ch_ua_form_factors().is_err());
-  assert_eq!(
-    Some(r#""Desktop""#),
-    duplicate.header("Sec-CH-UA-Form-Factors")
-  );
+  .expect("split Sec-CH-UA-Form-Factors fields should remain parseable");
+  let form_factors = split
+    .sec_ch_ua_form_factors()
+    .expect("split list sections should combine")
+    .expect("form factors should be present");
+  assert_eq!(["Desktop", "Tablet"], form_factors.items());
+  assert_eq!(r#""Desktop", "Tablet""#, form_factors.header_value());
+  assert_eq!(Some(r#""Desktop""#), split.header("Sec-CH-UA-Form-Factors"));
 }
 
 #[test]

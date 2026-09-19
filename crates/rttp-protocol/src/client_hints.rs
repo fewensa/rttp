@@ -117,9 +117,10 @@ pub struct SecChUaFullVersionListEntry {
 
 /// Parsed, bounded `Sec-CH-UA-Form-Factors` request Client Hint metadata.
 ///
-/// Items are retained in wire order. This type only represents the syntax of
-/// the declared RFC 8941 string list; it does not identify a device class or
-/// apply browser policy.
+/// Items are retained in wire order. Repeated field lines are combined in that
+/// order, as Structured Fields requires for lists. This type only represents
+/// the syntax of the declared RFC 8941 string list; it does not identify a
+/// device class or apply browser policy.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SecChUaFormFactors {
   items: Vec<String>,
@@ -649,15 +650,9 @@ impl SecChUaFormFactors {
     let mut items = Vec::new();
     parse_sec_ch_ua_form_factors_field(value, &mut items)?;
 
-    let mut has_duplicate = false;
     for value in values {
-      has_duplicate = true;
       validate_bounded_sec_ch_ua_form_factors_value(value, &mut total_bytes)?;
-    }
-    if has_duplicate {
-      return Err(ClientHintsParseError::new(
-        "duplicate Sec-CH-UA-Form-Factors header fields",
-      ));
+      parse_sec_ch_ua_form_factors_field(value, &mut items)?;
     }
 
     Ok(Self { items })

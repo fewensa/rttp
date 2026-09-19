@@ -769,7 +769,19 @@ fn sec_ch_ua_form_factors_rejects_malformed_duplicate_and_bounded_input() {
     );
   }
 
-  assert!(SecChUaFormFactors::parse_values([r#""Desktop""#, r#""Tablet""#]).is_err());
+  let combined = SecChUaFormFactors::parse_values([r#""Desktop""#, r#""Tablet""#])
+    .expect("split Sec-CH-UA-Form-Factors list sections should combine");
+  assert_eq!(["Desktop", "Tablet"], combined.items());
+  assert_eq!(r#""Desktop", "Tablet""#, combined.header_value());
+  let ordered = SecChUaFormFactors::parse_values([r#""Desktop""#, r#""Tablet", "Watch""#])
+    .expect("later list sections should append in order");
+  assert_eq!(["Desktop", "Tablet", "Watch"], ordered.items());
+  assert!(SecChUaFormFactors::parse_values([r#""Desktop""#, "Tablet"]).is_err());
+  assert!(SecChUaFormFactors::parse_values([r#""Desktop""#, ""]).is_err());
+  let max_items = std::iter::repeat_n(r#""Desktop""#, MAX_SEC_CH_UA_FORM_FACTORS_ITEMS)
+    .collect::<Vec<_>>()
+    .join(",");
+  assert!(SecChUaFormFactors::parse_values([max_items.as_str(), r#""Tablet""#]).is_err());
   let too_many = std::iter::repeat_n(r#""Desktop""#, MAX_SEC_CH_UA_FORM_FACTORS_ITEMS + 1)
     .collect::<Vec<_>>()
     .join(",");

@@ -703,11 +703,15 @@ fn sec_ch_ua_form_factors_parses_valid_duplicate_and_malformed_http11_headers() 
     addr,
     b"GET /form-factors HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Form-Factors: \"Desktop\"\r\nsec-ch-ua-form-factors: \"Tablet\"\r\nConnection: close\r\n\r\n",
   );
-  let observed = observed_rx
-    .recv_timeout(TIMEOUT)
-    .expect("observe duplicate Sec-CH-UA-Form-Factors");
-  assert!(observed.0.is_err());
-  assert_eq!(Some("\"Desktop\"".to_owned()), observed.1);
+  assert_eq!(
+    (
+      Ok(Some("\"Desktop\", \"Tablet\"".to_owned())),
+      Some("\"Desktop\"".to_owned())
+    ),
+    observed_rx
+      .recv_timeout(TIMEOUT)
+      .expect("observe split Sec-CH-UA-Form-Factors")
+  );
   handle.join().expect("duplicate form-factors server thread");
 
   let (addr, observed_rx, handle) = spawn_observed_facade_server(

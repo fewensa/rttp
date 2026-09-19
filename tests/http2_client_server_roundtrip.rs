@@ -1880,6 +1880,10 @@ fn run_h2c_sec_ch_ua_structured_malformed(field: SecChUaFieldSpec) {
 }
 
 fn run_h2c_sec_ch_ua_duplicate(field: SecChUaFieldSpec) {
+  run_h2c_sec_ch_ua_repeated_fields(field, None);
+}
+
+fn run_h2c_sec_ch_ua_repeated_fields(field: SecChUaFieldSpec, combined: Option<&str>) {
   let (addr, rx, handle) = spawn_h2c_sec_ch_ua_observer(field, "duplicate", false);
   let authority = addr.to_string();
   let _stream = send_h2c_prior_knowledge_headers(
@@ -1896,7 +1900,10 @@ fn run_h2c_sec_ch_ua_duplicate(field: SecChUaFieldSpec) {
 
   let observed = receive_h2c_sec_ch_ua(&rx, field, "duplicate");
   assert_eq!(Some(field.duplicate_first.to_string()), observed.raw);
-  assert_h2c_sec_ch_ua_error(field, "duplicate", &observed.parsed);
+  match combined {
+    Some(combined) => assert_eq!(Ok(Some(combined.to_owned())), observed.parsed),
+    None => assert_h2c_sec_ch_ua_error(field, "duplicate", &observed.parsed),
+  }
   join_h2c_sec_ch_ua(handle, field, "duplicate");
 }
 
@@ -2036,7 +2043,7 @@ fn h2c_sec_ch_ua_form_factors_structured_malformed_reaches_server_accessor_with_
 
 #[test]
 fn h2c_sec_ch_ua_form_factors_duplicate_reaches_server_accessor_with_raw_header() {
-  run_h2c_sec_ch_ua_duplicate(SEC_CH_UA_FORM_FACTORS);
+  run_h2c_sec_ch_ua_repeated_fields(SEC_CH_UA_FORM_FACTORS, Some(r#""Desktop", "Tablet""#));
 }
 
 #[test]

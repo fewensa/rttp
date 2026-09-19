@@ -610,9 +610,10 @@ parse a bounded `Sec-CH-UA-Form-Factors` request Client Hint into
 `HttpSecChUaFormFactors`. Each ordered member must be an RFC 8941 structured
 string; `items()` exposes the decoded values without reordering or interpreting
 them. The parser permits 256 items and 64 KiB of aggregate field input,
-canonicalizes valid quoting, and rejects empty lists, malformed members,
-parameterized members, duplicate fields, non-ASCII/control input, and oversized
-values. Parse errors leave the raw field available through `header()`.
+canonicalizes valid quoting, combines repeated field lines in order, and
+rejects empty lists, malformed members, parameterized members, non-ASCII/control
+input, and oversized values. Parse errors leave the raw field available through
+`header()`.
 
 This is metadata-only: the server does not infer a device class, negotiate
 Client Hints, emit `Accept-CH`, retry, or apply browser policy.

@@ -775,8 +775,9 @@ and emits one canonical `Sec-CH-UA-Form-Factors` field through
 an RFC 8941 list of ordered structured strings. `items()` exposes each decoded
 string without reordering or interpreting the entries. The parser accepts at
 most 256 items and 64 KiB of combined field input, canonicalizes valid string
-quoting, and rejects empty lists, malformed members, parameterized members,
-duplicate fields, non-ASCII/control input, and oversized values.
+quoting, combines repeated field lines in order, and rejects empty lists,
+malformed members, parameterized members, non-ASCII/control input, and
+oversized values.
 
 On the server facade, `Request::sec_ch_ua_form_factors()` and
 `HttpRequest::sec_ch_ua_form_factors()` parse the same metadata and return
