@@ -28,8 +28,9 @@ use rttp::server::{
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
-  HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecChUaMobile,
-  HttpSecChUaMobileParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
+  HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecChUaArch,
+  HttpSecChUaArchParseError, HttpSecChUaMobile, HttpSecChUaMobileParseError, HttpSecChUaPlatform,
+  HttpSecChUaPlatformParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
   HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
   HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
   HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
@@ -194,6 +195,83 @@ fn compatibility_facade_exports_sec_ch_ua_mobile_request_metadata() {
   .expect("duplicate Sec-CH-UA-Mobile fields should remain parseable");
   assert!(duplicate.sec_ch_ua_mobile().is_err());
   assert_eq!(Some("?0"), duplicate.header("Sec-CH-UA-Mobile"));
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_ua_platform_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform: \t\"Windows\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Platform request should parse");
+  let platform: HttpSecChUaPlatform = request
+    .sec_ch_ua_platform()
+    .expect("Sec-CH-UA-Platform should parse")
+    .expect("Sec-CH-UA-Platform should be present");
+  assert_eq!("Windows", platform.value());
+  assert_eq!(r#""Windows""#, platform.header_value());
+  assert_eq!(Some(r#""Windows""#), request.header("Sec-CH-UA-Platform"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-Platform should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_ua_platform()
+      .expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform: Windows\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-Platform should remain available");
+  let _: HttpSecChUaPlatformParseError = malformed
+    .sec_ch_ua_platform()
+    .expect_err("unquoted Sec-CH-UA-Platform should fail");
+  assert_eq!(Some("Windows"), malformed.header("Sec-CH-UA-Platform"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform: \"Windows\"\r\nsec-ch-ua-platform: \"Linux\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Platform fields should remain parseable");
+  assert!(duplicate.sec_ch_ua_platform().is_err());
+  assert_eq!(Some(r#""Windows""#), duplicate.header("Sec-CH-UA-Platform"));
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_ua_arch_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Arch: \t\"x86\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Arch request should parse");
+  let arch: HttpSecChUaArch = request
+    .sec_ch_ua_arch()
+    .expect("Sec-CH-UA-Arch should parse")
+    .expect("Sec-CH-UA-Arch should be present");
+  assert_eq!("x86", arch.value());
+  assert_eq!(r#""x86""#, arch.header_value());
+  assert_eq!(Some(r#""x86""#), request.header("Sec-CH-UA-Arch"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-Arch should parse");
+  assert_eq!(
+    None,
+    absent.sec_ch_ua_arch().expect("absence should be valid")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Arch: x86\r\n\r\n")
+      .expect("malformed Sec-CH-UA-Arch should remain available");
+  let _: HttpSecChUaArchParseError = malformed
+    .sec_ch_ua_arch()
+    .expect_err("unquoted Sec-CH-UA-Arch should fail");
+  assert_eq!(Some("x86"), malformed.header("Sec-CH-UA-Arch"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Arch: \"x86\"\r\nsec-ch-ua-arch: \"arm64\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Arch fields should remain parseable");
+  assert!(duplicate.sec_ch_ua_arch().is_err());
+  assert_eq!(Some(r#""x86""#), duplicate.header("Sec-CH-UA-Arch"));
 }
 
 #[test]
