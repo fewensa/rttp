@@ -1483,6 +1483,24 @@ const SEC_CH_UA_BITNESS: SecChUaFieldSpec = SecChUaFieldSpec {
   valid_version: None,
 };
 
+const SEC_CH_UA_PLATFORM_VERSION: SecChUaFieldSpec = SecChUaFieldSpec {
+  name: "Sec-CH-UA-Platform-Version",
+  lowercase_name: "sec-ch-ua-platform-version",
+  valid_input: "\t\"14.0.0\" \t",
+  valid_value: "\"14.0.0\"",
+  malformed_value: "14.0.0",
+  structured_malformed_values: &[
+    r#""bad\escape""#,
+    r#""14.0.0";foo=bar"#,
+    r#""14.0.0", "15.0.0""#,
+  ],
+  duplicate_first: r#""14.0.0""#,
+  duplicate_second: r#""15.0.0""#,
+  client_helper: set_sec_ch_ua_platform_version,
+  accessor: observe_sec_ch_ua_platform_version,
+  valid_version: None,
+};
+
 const SEC_CH_UA_PLATFORM: SecChUaFieldSpec = SecChUaFieldSpec {
   name: "Sec-CH-UA-Platform",
   lowercase_name: "sec-ch-ua-platform",
@@ -1568,6 +1586,13 @@ fn set_sec_ch_ua_bitness(client: &mut HttpClient, value: &str) -> Result<(), Str
     .map_err(|error| error.to_string())
 }
 
+fn set_sec_ch_ua_platform_version(client: &mut HttpClient, value: &str) -> Result<(), String> {
+  client
+    .sec_ch_ua_platform_version(value)
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 fn set_sec_ch_ua_platform(client: &mut HttpClient, value: &str) -> Result<(), String> {
   client
     .sec_ch_ua_platform(value)
@@ -1599,6 +1624,13 @@ fn observe_sec_ch_ua_arch(request: &Request) -> Result<Option<String>, String> {
 fn observe_sec_ch_ua_bitness(request: &Request) -> Result<Option<String>, String> {
   request
     .sec_ch_ua_bitness()
+    .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+    .map_err(|error| error.to_string())
+}
+
+fn observe_sec_ch_ua_platform_version(request: &Request) -> Result<Option<String>, String> {
+  request
+    .sec_ch_ua_platform_version()
     .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
     .map_err(|error| error.to_string())
 }
@@ -1886,6 +1918,36 @@ fn h2c_sec_ch_ua_bitness_duplicate_reaches_server_accessor_with_raw_header() {
 #[test]
 fn h2c_sec_ch_ua_bitness_oversized_reaches_server_accessor_with_raw_header() {
   run_h2c_sec_ch_ua_oversized(SEC_CH_UA_BITNESS);
+}
+
+#[test]
+fn h2c_sec_ch_ua_platform_version_helper_reaches_server_accessor() {
+  run_h2c_sec_ch_ua_helper(SEC_CH_UA_PLATFORM_VERSION);
+}
+
+#[test]
+fn h2c_sec_ch_ua_platform_version_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_malformed(SEC_CH_UA_PLATFORM_VERSION);
+}
+
+#[test]
+fn h2c_sec_ch_ua_platform_version_non_ascii_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_non_ascii(SEC_CH_UA_PLATFORM_VERSION);
+}
+
+#[test]
+fn h2c_sec_ch_ua_platform_version_structured_malformed_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_structured_malformed(SEC_CH_UA_PLATFORM_VERSION);
+}
+
+#[test]
+fn h2c_sec_ch_ua_platform_version_duplicate_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_duplicate(SEC_CH_UA_PLATFORM_VERSION);
+}
+
+#[test]
+fn h2c_sec_ch_ua_platform_version_oversized_reaches_server_accessor_with_raw_header() {
+  run_h2c_sec_ch_ua_oversized(SEC_CH_UA_PLATFORM_VERSION);
 }
 
 #[test]

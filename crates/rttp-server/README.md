@@ -578,6 +578,18 @@ the raw field remains available. This is metadata-only: the server does not
 infer an architecture, negotiate the UA brands family, emit `Accept-CH`, retry,
 or apply browser policy.
 
+`Request::sec_ch_ua_platform_version()` and
+`HttpRequest::sec_ch_ua_platform_version()` parse a singleton
+`Sec-CH-UA-Platform-Version` request Client Hint into
+`HttpSecChUaPlatformVersion`, accepting one Structured Fields string after
+optional SP or HTAB trimming and exposing canonical quoted-string text through
+`header_value()`. Empty, non-string, comma-list, parameterized, duplicate,
+non-ASCII, forbidden-control, invalid-escape, or oversized fields return
+`HttpSecChUaPlatformVersionParseError` while the raw field remains available.
+This is metadata-only: the server does not infer a platform version or
+capabilities, negotiate the UA brands family, emit `Accept-CH`, retry, or apply
+browser policy.
+
 `Request::prefers_reduced_motion()` and `HttpRequest::prefers_reduced_motion()`
 parse a singleton `Sec-CH-Prefers-Reduced-Motion` request Client Hint into
 `HttpPrefersReducedMotion`, accepting `no-preference` and `reduce`

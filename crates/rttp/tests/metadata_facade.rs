@@ -31,8 +31,9 @@ use rttp::server::{
   HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecChUaArch,
   HttpSecChUaArchParseError, HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaMobile,
   HttpSecChUaMobileParseError, HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaPlatform,
-  HttpSecChUaPlatformParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc,
-  HttpSecGpcParseError, HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecChUaPlatformParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
+  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
   HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
@@ -387,6 +388,55 @@ fn compatibility_facade_exports_sec_ch_ua_bitness_request_metadata() {
   .expect("duplicate Sec-CH-UA-Bitness fields should remain parseable");
   assert!(duplicate.sec_ch_ua_bitness().is_err());
   assert_eq!(Some(r#""64""#), duplicate.header("Sec-CH-UA-Bitness"));
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_ua_platform_version_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform-Version: \t\"14.0.0\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Platform-Version request should parse");
+  let platform_version: HttpSecChUaPlatformVersion = request
+    .sec_ch_ua_platform_version()
+    .expect("Sec-CH-UA-Platform-Version should parse")
+    .expect("Sec-CH-UA-Platform-Version should be present");
+  assert_eq!("14.0.0", platform_version.value());
+  assert_eq!(r#""14.0.0""#, platform_version.header_value());
+  assert_eq!(
+    Some(r#""14.0.0""#),
+    request.header("Sec-CH-UA-Platform-Version")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-Platform-Version should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_ua_platform_version()
+      .expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform-Version: 14.0.0\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-Platform-Version should remain available");
+  let _: HttpSecChUaPlatformVersionParseError = malformed
+    .sec_ch_ua_platform_version()
+    .expect_err("unquoted Sec-CH-UA-Platform-Version should fail");
+  assert_eq!(
+    Some("14.0.0"),
+    malformed.header("Sec-CH-UA-Platform-Version")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform-Version: \"14.0.0\"\r\nsec-ch-ua-platform-version: \"15.0.0\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Platform-Version fields should remain parseable");
+  assert!(duplicate.sec_ch_ua_platform_version().is_err());
+  assert_eq!(
+    Some(r#""14.0.0""#),
+    duplicate.header("Sec-CH-UA-Platform-Version")
+  );
 }
 
 #[test]

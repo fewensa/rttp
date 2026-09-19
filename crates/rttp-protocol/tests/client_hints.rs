@@ -1,13 +1,14 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
   PrefersReducedMotion, Rtt, SecChUaArch, SecChUaBitness, SecChUaMobile, SecChUaModel,
-  SecChUaPlatform, SecChUaWow64, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
-  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES,
-  MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES,
-  MAX_PREFERS_CONTRAST_VALUE_BYTES, MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES,
-  MAX_SEC_CH_UA_ARCH_VALUE_BYTES, MAX_SEC_CH_UA_BITNESS_VALUE_BYTES,
-  MAX_SEC_CH_UA_MOBILE_VALUE_BYTES, MAX_SEC_CH_UA_MODEL_VALUE_BYTES,
-  MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES, MAX_SEC_CH_UA_WOW64_VALUE_BYTES,
+  SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width,
+  MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
+  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
+  MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
+  MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_SEC_CH_UA_ARCH_VALUE_BYTES,
+  MAX_SEC_CH_UA_BITNESS_VALUE_BYTES, MAX_SEC_CH_UA_MOBILE_VALUE_BYTES,
+  MAX_SEC_CH_UA_MODEL_VALUE_BYTES, MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES,
+  MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES, MAX_SEC_CH_UA_WOW64_VALUE_BYTES,
   MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
@@ -596,6 +597,62 @@ fn sec_ch_ua_bitness_rejects_invalid_duplicate_oversized_and_control_values() {
   let oversized = format!("\"{}\"", "x".repeat(MAX_SEC_CH_UA_BITNESS_VALUE_BYTES));
   assert!(SecChUaBitness::parse(&oversized).is_err());
   assert!(SecChUaBitness::parse_values([r#""64""#, oversized.as_str()]).is_err());
+}
+
+#[test]
+fn sec_ch_ua_platform_version_accepts_structured_strings_and_canonicalizes_them() {
+  for (value, expected_value, canonical) in [
+    (r#""14.0.0""#, "14.0.0", r#""14.0.0""#),
+    (r#""15.0.0""#, "15.0.0", r#""15.0.0""#),
+    (r#""10.0.0""#, "10.0.0", r#""10.0.0""#),
+    (r#""14.0.0\\\"""#, "14.0.0\\\"", r#""14.0.0\\\"""#),
+  ] {
+    let platform_version = SecChUaPlatformVersion::parse(format!("\t{value} \t"))
+      .expect("valid Sec-CH-UA-Platform-Version value");
+    assert_eq!(expected_value, platform_version.value());
+    assert_eq!(canonical, platform_version.header_value());
+    assert_eq!(
+      platform_version,
+      SecChUaPlatformVersion::parse(platform_version.header_value()).expect("roundtrip")
+    );
+  }
+}
+
+#[test]
+fn sec_ch_ua_platform_version_rejects_invalid_duplicate_oversized_and_control_values() {
+  assert!(SecChUaPlatformVersion::parse_values([r#""14.0.0""#, r#""15.0.0""#]).is_err());
+  assert!(SecChUaPlatformVersion::parse_values([]).is_err());
+
+  for value in [
+    "",
+    " ",
+    r#""""#,
+    "\t\"\" \t",
+    "14.0.0",
+    r#""14.0.0", "15.0.0""#,
+    r#""14.0.0";foo=bar"#,
+    r#""unterminated"#,
+    r#""bad"quote""#,
+    r#""bad\escape""#,
+    "\"\u{1f34e}\"",
+    "\"14.0.0\u{80}\"",
+    "\"\u{65e5}\u{672c}\u{8a9e}\"",
+    "\"14.0.0\0\"",
+    "\"14.0.0\r\nInjected: yes\"",
+    "\"14.0.0\u{7f}\"",
+  ] {
+    assert!(
+      SecChUaPlatformVersion::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let oversized = format!(
+    "\"{}\"",
+    "x".repeat(MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES)
+  );
+  assert!(SecChUaPlatformVersion::parse(&oversized).is_err());
+  assert!(SecChUaPlatformVersion::parse_values([r#""14.0.0""#, oversized.as_str()]).is_err());
 }
 
 #[test]

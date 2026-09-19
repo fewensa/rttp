@@ -269,6 +269,15 @@ fn public_facade_exports_content_negotiation_metadata_types() {
     .expect("server bitness facade type should parse");
   assert_eq!("\"32\"", server_bitness.header_value());
 
+  let platform_version: rttp::SecChUaPlatformVersion =
+    rttp::SecChUaPlatformVersion::parse("\"14.0.0\"")
+      .expect("platform version facade type should parse");
+  assert_eq!("\"14.0.0\"", platform_version.header_value());
+  let server_platform_version =
+    rttp_server::server::HttpSecChUaPlatformVersion::parse("\"15.0.0\"")
+      .expect("server platform version facade type should parse");
+  assert_eq!("\"15.0.0\"", server_platform_version.header_value());
+
   let wow64: rttp::SecChUaWow64 =
     rttp::SecChUaWow64::parse("?1").expect("wow64 facade type should parse");
   assert_eq!("?1", wow64.header_value());
@@ -562,6 +571,88 @@ fn sec_ch_ua_bitness_parses_valid_duplicate_and_malformed_http11_headers() {
   assert!(rttp::SecChUaBitness::parse("64").is_err());
   assert!(rttp::SecChUaBitness::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
   assert!(rttp::SecChUaBitness::parse("\"64\0\"").is_err());
+}
+
+#[test]
+fn sec_ch_ua_platform_version_parses_valid_duplicate_and_malformed_http11_headers() {
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_platform_version()
+          .map(|platform_version| {
+            platform_version.map(|platform_version| platform_version.header_value())
+          })
+          .map_err(|error| error.to_string()),
+        request
+          .header("Sec-CH-UA-Platform-Version")
+          .map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("platform-version"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /platform-version HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Platform-Version: \"14.0.0\"\r\nConnection: close\r\n\r\n",
+  );
+  assert_eq!(
+    (
+      Ok(Some("\"14.0.0\"".to_owned())),
+      Some("\"14.0.0\"".to_owned())
+    ),
+    observed_rx
+      .recv_timeout(TIMEOUT)
+      .expect("observe valid Sec-CH-UA-Platform-Version")
+  );
+  handle.join().expect("valid platform version server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      request
+        .sec_ch_ua_platform_version()
+        .map(|platform_version| {
+          platform_version.map(|platform_version| platform_version.header_value())
+        })
+    },
+    |_| HttpResponse::ok("duplicate"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /platform-version HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Platform-Version: \"14.0.0\"\r\nsec-ch-ua-platform-version: \"15.0.0\"\r\nConnection: close\r\n\r\n",
+  );
+  assert!(observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe duplicate Sec-CH-UA-Platform-Version")
+    .is_err());
+  handle
+    .join()
+    .expect("duplicate platform version server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      request
+        .sec_ch_ua_platform_version()
+        .map(|platform_version| {
+          platform_version.map(|platform_version| platform_version.header_value())
+        })
+    },
+    |_| HttpResponse::ok("malformed"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /platform-version HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Platform-Version: 14.0.0\r\nConnection: close\r\n\r\n",
+  );
+  assert!(observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe malformed Sec-CH-UA-Platform-Version")
+    .is_err());
+  handle
+    .join()
+    .expect("malformed platform version server thread");
+
+  assert!(rttp::SecChUaPlatformVersion::parse("14.0.0").is_err());
+  assert!(rttp::SecChUaPlatformVersion::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
+  assert!(rttp::SecChUaPlatformVersion::parse("\"14.0.0\0\"").is_err());
 }
 
 #[test]

@@ -1912,6 +1912,7 @@ gain additional HTTP/2 header-block handling.
 | Sec-CH-UA-Model request Client Hint | `HttpClient::sec_ch_ua_model` emits bounded singleton `Sec-CH-UA-Model` metadata through `SecChUaModel`; server `Request::sec_ch_ua_model()` and `HttpRequest::sec_ch_ua_model()` parse one RFC 8941 Structured Fields string and preserve raw values on errors | No device-identity inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Arch request Client Hint | `HttpClient::sec_ch_ua_arch` emits bounded singleton `Sec-CH-UA-Arch` metadata through `SecChUaArch`; server `Request::sec_ch_ua_arch()` and `HttpRequest::sec_ch_ua_arch()` parse one Structured Fields string and preserve raw values on errors | No architecture inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Bitness request Client Hint | `HttpClient::sec_ch_ua_bitness` emits bounded singleton `Sec-CH-UA-Bitness` metadata through `SecChUaBitness`; server `Request::sec_ch_ua_bitness()` and `HttpRequest::sec_ch_ua_bitness()` parse one Structured Fields string and preserve raw values on errors | No architecture inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
+| Sec-CH-UA-Platform-Version request Client Hint | `HttpClient::sec_ch_ua_platform_version` emits bounded singleton `Sec-CH-UA-Platform-Version` metadata through `SecChUaPlatformVersion`; server `Request::sec_ch_ua_platform_version()` and `HttpRequest::sec_ch_ua_platform_version()` parse one Structured Fields string and preserve raw values on errors | No platform-version or capability inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-Prefers-Reduced-Motion request Client Hint | `HttpClient::prefers_reduced_motion` emits bounded singleton `Sec-CH-Prefers-Reduced-Motion` metadata through `PrefersReducedMotion`; server `Request::prefers_reduced_motion()` and `HttpRequest::prefers_reduced_motion()` parse case-insensitive `no-preference`/`reduce` tokens and preserve raw values on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-Prefers-Contrast request Client Hint | `HttpClient::prefers_contrast` emits a bounded (64 KiB) singleton `Sec-CH-Prefers-Contrast` metadata field through `PrefersContrast`; server `Request::prefers_contrast()` and `HttpRequest::prefers_contrast()` parse case-insensitive `no-preference`/`more`/`less`/`custom` tokens and preserve raw values on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | ECT request Client Hint | `HttpClient::ect` emits bounded singleton `ECT` request metadata through `Ect` using tokens `slow-2g`, `2g`, `3g`, and `4g`; server `Request::ect()` and `HttpRequest::ect()` parse received fields as `HttpEct` while preserving raw values on errors | No network-condition inference, `Accept-CH` emission, Client Hints policy persistence, automatic Client Hints generation, retry, or transport changes |
@@ -1948,6 +1949,7 @@ gain additional HTTP/2 header-block handling.
 | Sec-CH-UA-Model | `SecChUaModel::parse`, `HttpClient::sec_ch_ua_model`, `Request::sec_ch_ua_model`, and `HttpRequest::sec_ch_ua_model` validate, emit, or parse bounded singleton RFC 8941 Structured Fields string request Client Hint metadata while preserving raw headers on errors | No device-identity inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Arch | `SecChUaArch::parse`, `HttpClient::sec_ch_ua_arch`, `Request::sec_ch_ua_arch`, and `HttpRequest::sec_ch_ua_arch` validate, emit, or parse bounded singleton Structured Fields string request Client Hint metadata while preserving raw headers on errors | No architecture inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-UA-Bitness | `SecChUaBitness::parse`, `HttpClient::sec_ch_ua_bitness`, `Request::sec_ch_ua_bitness`, and `HttpRequest::sec_ch_ua_bitness` validate, emit, or parse bounded singleton Structured Fields string request Client Hint metadata while preserving raw headers on errors | No architecture inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
+| Sec-CH-UA-Platform-Version | `SecChUaPlatformVersion::parse`, `HttpClient::sec_ch_ua_platform_version`, `Request::sec_ch_ua_platform_version`, and `HttpRequest::sec_ch_ua_platform_version` validate, emit, or parse bounded singleton Structured Fields string request Client Hint metadata while preserving raw headers on errors | No platform-version or capability inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-Prefers-Reduced-Motion | `PrefersReducedMotion::parse`, `HttpClient::prefers_reduced_motion`, `Request::prefers_reduced_motion`, and `HttpRequest::prefers_reduced_motion` validate, emit, or parse bounded singleton `no-preference`/`reduce` request Client Hint metadata with case-insensitive parsing and lowercase formatting while preserving raw headers on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-Prefers-Contrast | `PrefersContrast::parse`, `HttpClient::prefers_contrast`, `Request::prefers_contrast`, and `HttpRequest::prefers_contrast` validate, emit, or parse bounded (64 KiB) singleton `no-preference`/`more`/`less`/`custom` request Client Hint metadata with case-insensitive parsing and lowercase formatting while preserving raw headers on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | ECT | `Ect::parse`, `HttpClient::ect`, `Request::ect`, and `HttpRequest::ect` validate, emit, or parse bounded singleton `slow-2g`/`2g`/`3g`/`4g` request Client Hint metadata while preserving raw headers on errors | No network-condition inference, `Accept-CH` emission, Client Hints policy persistence, automatic Client Hints generation, retry, or transport changes |
@@ -2900,6 +2902,24 @@ oversized values return parser errors while raw headers remain available;
 These helpers are metadata-only. RTTP does not infer an architecture, negotiate
 the UA brands family, emit `Accept-CH`, generate Client Hints automatically,
 retry, replay, redirect, or apply browser policy from `Sec-CH-UA-Bitness`.
+
+### Bounded Sec-CH-UA-Platform-Version request Client Hint metadata
+
+`HttpClient::sec_ch_ua_platform_version(value)` validates and emits one
+singleton `Sec-CH-UA-Platform-Version` request Client Hint through the shared
+`SecChUaPlatformVersion` type. `Request::sec_ch_ua_platform_version()` and
+`HttpRequest::sec_ch_ua_platform_version()` parse received fields into
+`HttpSecChUaPlatformVersion`, accepting one Structured Fields string after
+trimming optional SP or HTAB and exposing canonical quoted-string text through
+`header_value()`. Empty, non-string, comma-list, parameterized, duplicate,
+non-ASCII, forbidden-control, invalid-escape, and oversized values return
+parser errors while raw headers remain available;
+`header(("Sec-CH-UA-Platform-Version", "..."))` remains an escape hatch.
+
+These helpers are metadata-only. RTTP does not infer a platform version or
+capabilities, negotiate the UA brands family, emit `Accept-CH`, generate Client
+Hints automatically, retry, replay, redirect, or apply browser policy from
+`Sec-CH-UA-Platform-Version`.
 
 ### Bounded Sec-CH-Prefers-Reduced-Motion request Client Hint metadata
 

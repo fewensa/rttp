@@ -61,10 +61,12 @@ pub use rttp_protocol::client_hints::{
   SecChUaBitnessParseError as HttpSecChUaBitnessParseError, SecChUaMobile as HttpSecChUaMobile,
   SecChUaMobileParseError as HttpSecChUaMobileParseError, SecChUaModel as HttpSecChUaModel,
   SecChUaModelParseError as HttpSecChUaModelParseError, SecChUaPlatform as HttpSecChUaPlatform,
-  SecChUaPlatformParseError as HttpSecChUaPlatformParseError, SecChUaWow64 as HttpSecChUaWow64,
-  SecChUaWow64ParseError as HttpSecChUaWow64ParseError, ViewportWidth as HttpViewportWidth,
-  ViewportWidthParseError as HttpViewportWidthParseError, Width as HttpWidth,
-  WidthParseError as HttpWidthParseError,
+  SecChUaPlatformParseError as HttpSecChUaPlatformParseError,
+  SecChUaPlatformVersion as HttpSecChUaPlatformVersion,
+  SecChUaPlatformVersionParseError as HttpSecChUaPlatformVersionParseError,
+  SecChUaWow64 as HttpSecChUaWow64, SecChUaWow64ParseError as HttpSecChUaWow64ParseError,
+  ViewportWidth as HttpViewportWidth, ViewportWidthParseError as HttpViewportWidthParseError,
+  Width as HttpWidth, WidthParseError as HttpWidthParseError,
 };
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
@@ -620,6 +622,19 @@ impl Request {
       return Ok(None);
     }
     HttpSecChUaBitness::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Platform-Version` request Client Hint
+  /// metadata without inferring a platform version or capabilities,
+  /// negotiating the UA brands family, or emitting Client Hints.
+  pub fn sec_ch_ua_platform_version(
+    &self,
+  ) -> Result<Option<HttpSecChUaPlatformVersion>, HttpSecChUaPlatformVersionParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-UA-Platform-Version").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaPlatformVersion::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client
@@ -3163,6 +3178,28 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecChUaBitness::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Platform-Version` request Client Hint
+  /// metadata without inferring a platform version or capabilities,
+  /// negotiating the UA brands family, or emitting Client Hints.
+  pub fn sec_ch_ua_platform_version(
+    &self,
+  ) -> Result<Option<HttpSecChUaPlatformVersion>, HttpSecChUaPlatformVersionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Sec-CH-UA-Platform-Version")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaPlatformVersion::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Reduced-Motion` request Client
