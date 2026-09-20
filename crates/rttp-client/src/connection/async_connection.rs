@@ -19,14 +19,13 @@ use std::sync::Arc;
 use crate::connection::connection::{
   connect_tcp_stream, parse_proxy_connect_response, prepend_informational_responses,
   request_expects_continue, Connection, ExpectContinueResult,
-  MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES,
 };
 use crate::connection::connection_reader::{
-  content_length_from_response_body_kind, is_skippable_informational_status,
-  parse_informational_response, response_body_kind, response_connection_reusable,
+  append_informational_response, content_length_from_response_body_kind,
+  is_skippable_informational_status, response_body_kind, response_connection_reusable,
   response_connection_should_close, response_headers, response_status_code,
   validate_response_trailer_header, ResponseBodyKind, ResponseParts,
-  MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_RESPONSE_HEAD_BYTES,
+  MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::error;
 use crate::request::RawRequest;
@@ -632,12 +631,12 @@ impl<'a> AsyncConnection<'a> {
       let header = async_read_response_header(stream).await?;
       let status_code = response_status_code(&header)?;
       if status_code == 100 {
-        informational_responses.push(parse_informational_response(&header)?);
+        append_informational_response(&mut informational_responses, &header)?;
         self.async_write_request_body(stream).await?;
         return Ok(ExpectContinueResult::BodySent(informational_responses));
       }
       if is_skippable_informational_status(status_code) {
-        informational_responses.push(parse_informational_response(&header)?);
+        append_informational_response(&mut informational_responses, &header)?;
         continue;
       }
       return self
@@ -657,10 +656,15 @@ async fn async_read_response_head<S>(stream: &mut S) -> error::Result<Vec<u8>>
 where
   S: AsyncRead + Unpin + ?Sized,
 {
+  let mut informational_responses = 0;
   loop {
     let header = async_read_response_header(stream).await?;
     let status_code = response_status_code(&header)?;
     if is_skippable_informational_status(status_code) {
+      if informational_responses == MAX_INFORMATIONAL_RESPONSES {
+        return Err(error::bad_response("Too many informational responses"));
+      }
+      informational_responses += 1;
       continue;
     }
     return Ok(header);
@@ -678,7 +682,7 @@ where
     let header = async_read_response_header(stream).await?;
     let status_code = response_status_code(&header)?;
     if is_skippable_informational_status(status_code) {
-      informational_responses.push(parse_informational_response(&header)?);
+      append_informational_response(&mut informational_responses, &header)?;
       continue;
     }
     return Ok((header, informational_responses));
@@ -886,7 +890,7 @@ impl<'a> AsyncConnection<'a> {
         return self
           .async_read_stream_parts(url, stream)
           .await
-          .map(|parts| prepend_informational_responses(parts, informational_responses));
+          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -976,7 +980,7 @@ impl<'a> AsyncConnection<'a> {
         return self
           .async_read_stream_parts(url, &mut tls_stream)
           .await
-          .map(|parts| prepend_informational_responses(parts, informational_responses));
+          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -1044,7 +1048,7 @@ impl<'a> AsyncConnection<'a> {
         return self
           .async_read_stream_parts(url, &mut tls_stream)
           .await
-          .map(|parts| prepend_informational_responses(parts, informational_responses));
+          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -1211,7 +1215,7 @@ where
     let status_code = response_status_code(&header)
       .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
     if is_skippable_informational_status(status_code) {
-      if informational_responses == MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES {
+      if informational_responses == MAX_INFORMATIONAL_RESPONSES {
         return Err(error::bad_proxy("Too many informational proxy responses"));
       }
       informational_responses += 1;
@@ -1506,7 +1510,7 @@ impl<'a> AsyncConnection<'a> {
         return self
           .async_read_stream_parts(url, &mut stream)
           .await
-          .map(|parts| prepend_informational_responses(parts, informational_responses));
+          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }

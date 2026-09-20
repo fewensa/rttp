@@ -207,7 +207,7 @@ impl<'a> BlockConnection<'a> {
         return self
           .conn
           .block_read_stream_parts(url, &mut stream)
-          .map(|parts| prepend_informational_responses(parts, informational_responses));
+          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
