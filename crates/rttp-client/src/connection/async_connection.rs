@@ -17,8 +17,8 @@ use url::Url;
 use std::sync::Arc;
 
 use crate::connection::connection::{
-  connect_tcp_stream, parse_proxy_connect_response, prepend_informational_responses,
-  request_expects_continue, Connection, ExpectContinueResult,
+  connect_tcp_stream, parse_proxy_connect_response, request_expects_continue, Connection,
+  ExpectContinueResult,
 };
 use crate::connection::connection_reader::{
   append_informational_response, content_length_from_response_body_kind,
@@ -566,14 +566,28 @@ impl<'a> AsyncConnection<'a> {
 
   async fn async_read_stream_parts<S>(
     &self,
-    _url: &Url,
+    url: &Url,
     stream: &mut S,
   ) -> error::Result<ResponseParts>
   where
     S: AsyncRead + Unpin,
   {
+    self
+      .async_read_stream_parts_with_informational(url, stream, Vec::new())
+      .await
+  }
+
+  async fn async_read_stream_parts_with_informational<S>(
+    &self,
+    _url: &Url,
+    stream: &mut S,
+    informational_responses: Vec<crate::response::InformationalResponse>,
+  ) -> error::Result<ResponseParts>
+  where
+    S: AsyncRead + Unpin,
+  {
     let (binary, informational_responses) =
-      async_read_response_head_with_informational(stream).await?;
+      async_read_response_head_with_existing_informational(stream, informational_responses).await?;
     self
       .async_read_stream_parts_after_header_with_informational(
         stream,
@@ -671,13 +685,13 @@ where
   }
 }
 
-async fn async_read_response_head_with_informational<S>(
+async fn async_read_response_head_with_existing_informational<S>(
   stream: &mut S,
+  mut informational_responses: Vec<crate::response::InformationalResponse>,
 ) -> error::Result<(Vec<u8>, Vec<crate::response::InformationalResponse>)>
 where
   S: AsyncRead + Unpin + ?Sized,
 {
-  let mut informational_responses = Vec::new();
   loop {
     let header = async_read_response_header(stream).await?;
     let status_code = response_status_code(&header)?;
@@ -888,9 +902,8 @@ impl<'a> AsyncConnection<'a> {
       ExpectContinueResult::NotUsed => self.async_write_stream(stream).await?,
       ExpectContinueResult::BodySent(informational_responses) => {
         return self
-          .async_read_stream_parts(url, stream)
-          .await
-          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
+          .async_read_stream_parts_with_informational(url, stream, informational_responses)
+          .await;
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -978,9 +991,8 @@ impl<'a> AsyncConnection<'a> {
       ExpectContinueResult::NotUsed => self.async_write_stream(&mut tls_stream).await?,
       ExpectContinueResult::BodySent(informational_responses) => {
         return self
-          .async_read_stream_parts(url, &mut tls_stream)
-          .await
-          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
+          .async_read_stream_parts_with_informational(url, &mut tls_stream, informational_responses)
+          .await;
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -1046,9 +1058,8 @@ impl<'a> AsyncConnection<'a> {
       ExpectContinueResult::NotUsed => self.async_write_stream(&mut tls_stream).await?,
       ExpectContinueResult::BodySent(informational_responses) => {
         return self
-          .async_read_stream_parts(url, &mut tls_stream)
-          .await
-          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
+          .async_read_stream_parts_with_informational(url, &mut tls_stream, informational_responses)
+          .await;
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -1508,9 +1519,8 @@ impl<'a> AsyncConnection<'a> {
       ExpectContinueResult::NotUsed => self.async_write_request(&mut stream, &header).await?,
       ExpectContinueResult::BodySent(informational_responses) => {
         return self
-          .async_read_stream_parts(url, &mut stream)
-          .await
-          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
+          .async_read_stream_parts_with_informational(url, &mut stream, informational_responses)
+          .await;
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -1568,7 +1578,13 @@ mod tests {
   use futures::executor::block_on;
   use futures::io::AllowStdIo;
 
-  use super::{async_read_response_head, async_streaming_response_after_header};
+  use super::{
+    async_read_response_head, async_read_response_head_with_existing_informational,
+    async_streaming_response_after_header,
+  };
+  use crate::connection::connection_reader::{
+    parse_informational_response, MAX_INFORMATIONAL_RESPONSES,
+  };
 
   #[test]
   fn async_streaming_response_reads_fixed_length_body_incrementally() {
@@ -1665,6 +1681,42 @@ mod tests {
         (raw.len() - "OK".len()) as u64,
         cursor.get_ref().position(),
         "malformed response headers must be rejected before body bytes are consumed"
+      );
+    });
+  }
+
+  #[test]
+  fn existing_informational_history_rejects_the_next_head_before_the_final_response() {
+    block_on(async {
+      let existing = vec![
+        parse_informational_response(b"HTTP/1.1 100 Continue\r\n\r\n").unwrap();
+        MAX_INFORMATIONAL_RESPONSES
+      ];
+      let raw = concat!(
+        "HTTP/1.1 103 Early Hints\r\n",
+        "Link: </style.css>; rel=preload\r\n",
+        "\r\n",
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Length: 2\r\n",
+        "\r\n",
+        "OK"
+      );
+      let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+
+      let error = async_read_response_head_with_existing_informational(&mut cursor, existing)
+        .await
+        .expect_err("combined informational history should be rejected on the next skippable head");
+
+      assert!(
+        error
+          .to_string()
+          .contains("Too many informational responses"),
+        "unexpected error: {error}"
+      );
+      assert_eq!(
+        b"HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\n".len() as u64,
+        cursor.get_ref().position(),
+        "the extra informational head should be rejected before the final response is read"
       );
     });
   }

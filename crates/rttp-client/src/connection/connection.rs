@@ -13,8 +13,9 @@ use url::Url;
 use crate::connection::connection_reader::{
   append_informational_response, is_skippable_informational_status, read_response_head,
   read_response_header, read_response_parts_after_header,
-  read_response_parts_after_header_with_informational_and_limit, response_status_code,
-  ConnectionReader, ResponseParts, MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
+  read_response_parts_after_header_with_informational_and_limit,
+  read_response_parts_with_existing_informational_and_limit, response_status_code, ResponseParts,
+  MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::request::{RawRequest, RequestBody};
 use crate::response::{InformationalResponse, Response};
@@ -538,6 +539,7 @@ pub(crate) enum ExpectContinueResult {
   Final(ResponseParts),
 }
 
+#[cfg(test)]
 pub(crate) fn prepend_informational_responses(
   mut parts: ResponseParts,
   mut informational_responses: Vec<InformationalResponse>,
@@ -786,13 +788,24 @@ impl<'a> Connection<'a> {
   where
     S: io::Read,
   {
-    let mut reader = ConnectionReader::new_with_limit(
-      url,
+    self.block_read_stream_parts_with_informational(url, stream, Vec::new())
+  }
+
+  pub(crate) fn block_read_stream_parts_with_informational<S>(
+    &self,
+    _url: &Url,
+    stream: &mut S,
+    informational_responses: Vec<InformationalResponse>,
+  ) -> error::Result<ResponseParts>
+  where
+    S: io::Read,
+  {
+    read_response_parts_with_existing_informational_and_limit(
       stream,
       self.expect_no_response_body(),
       self.config().max_buffered_response_body_bytes(),
-    );
-    reader.response_parts()
+      informational_responses,
+    )
   }
 
   pub(crate) fn block_send_expect_continue_parts<S>(
@@ -946,9 +959,11 @@ impl<'a> Connection<'a> {
     match self.block_send_expect_continue_parts(stream)? {
       ExpectContinueResult::NotUsed => self.block_write_stream(stream)?,
       ExpectContinueResult::BodySent(informational_responses) => {
-        return self
-          .block_read_stream_parts(url, stream)
-          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
+        return self.block_read_stream_parts_with_informational(
+          url,
+          stream,
+          informational_responses,
+        );
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -1053,9 +1068,11 @@ impl<'a> Connection<'a> {
     match self.block_send_expect_continue_parts(&mut ssl_stream)? {
       ExpectContinueResult::NotUsed => self.block_write_stream(&mut ssl_stream)?,
       ExpectContinueResult::BodySent(informational_responses) => {
-        return self
-          .block_read_stream_parts(url, &mut ssl_stream)
-          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
+        return self.block_read_stream_parts_with_informational(
+          url,
+          &mut ssl_stream,
+          informational_responses,
+        );
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -1134,9 +1151,11 @@ impl<'a> Connection<'a> {
     match self.block_send_expect_continue_parts(&mut tls)? {
       ExpectContinueResult::NotUsed => self.block_write_stream(&mut tls)?,
       ExpectContinueResult::BodySent(informational_responses) => {
-        return self
-          .block_read_stream_parts(url, &mut tls)
-          .and_then(|parts| prepend_informational_responses(parts, informational_responses));
+        return self.block_read_stream_parts_with_informational(
+          url,
+          &mut tls,
+          informational_responses,
+        );
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
