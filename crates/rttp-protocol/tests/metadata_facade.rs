@@ -263,7 +263,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let _: PermissionsPolicyReportOnlyParseError =
     PermissionsPolicyReportOnly::parse("geolocation=src").expect_err("src should be rejected");
   let supports_loading_mode = SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
-      .expect("Supports-Loading-Mode should parse");
+    .expect("Supports-Loading-Mode should parse");
   let proxy_authentication_info = ProxyAuthenticationInfo::parse(
     "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
   )

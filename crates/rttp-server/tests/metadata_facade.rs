@@ -37,29 +37,28 @@ use rttp_server::server::{
   HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginTrialParseError,
   HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError, HttpPermissionsPolicy,
   HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
-  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError,
-  HttpPermissionsPolicyReportOnly, HttpPermissionsPolicyReportOnlyParseError, HttpPragma,
-  HttpPragmaDirective, HttpPragmaParseError, HttpPreferenceKind, HttpPrefersColorScheme,
-  HttpPrefersColorSchemeParseError, HttpPrefersContrast, HttpPrefersContrastParseError,
-  HttpPrefersReducedData, HttpPrefersReducedDataParseError, HttpPrefersReducedMotion,
-  HttpPrefersReducedMotionParseError, HttpPrefersReducedTransparency,
-  HttpPrefersReducedTransparencyParseError, HttpProxyAuthenticate, HttpProxyAuthenticateChallenge,
-  HttpProxyAuthenticateParameter, HttpProxyAuthenticateParseError, HttpProxyAuthenticationInfo,
-  HttpProxyAuthenticationInfoParameter, HttpProxyAuthenticationInfoParseError,
-  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit,
-  HttpRateLimitLimitItem, HttpRateLimitLimitParseError, HttpRateLimitParseError,
-  HttpRateLimitRemaining, HttpRateLimitRemainingParseError, HttpRateLimitReset,
-  HttpRateLimitResetParseError, HttpReferer, HttpRefererParseError, HttpRequest,
-  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpResponseDate,
-  HttpResponseDateParseError, HttpResponseExpires, HttpResponseLastModified,
-  HttpResponseLastModifiedParseError, HttpRetryAfter, HttpRetryAfterParseError, HttpRtt,
-  HttpRttParseError, HttpSameSite, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag,
-  HttpSecChUa, HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaFormFactors,
-  HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersionList,
-  HttpSecChUaFullVersionListParseError, HttpSecChUaModel, HttpSecChUaModelParseError,
-  HttpSecChUaParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
-  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPermissionsPolicyReportOnly,
+  HttpPermissionsPolicyReportOnlyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
+  HttpPreferenceKind, HttpPrefersColorScheme, HttpPrefersColorSchemeParseError,
+  HttpPrefersContrast, HttpPrefersContrastParseError, HttpPrefersReducedData,
+  HttpPrefersReducedDataParseError, HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError,
+  HttpPrefersReducedTransparency, HttpPrefersReducedTransparencyParseError, HttpProxyAuthenticate,
+  HttpProxyAuthenticateChallenge, HttpProxyAuthenticateParameter, HttpProxyAuthenticateParseError,
+  HttpProxyAuthenticationInfo, HttpProxyAuthenticationInfoParameter,
+  HttpProxyAuthenticationInfoParseError, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
+  HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
+  HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
+  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
+  HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
+  HttpSaveDataParseError, HttpScheduleTag, HttpSecChUa, HttpSecChUaBitness,
+  HttpSecChUaBitnessParseError, HttpSecChUaFormFactors, HttpSecChUaFormFactorsParseError,
+  HttpSecChUaFullVersionList, HttpSecChUaFullVersionListParseError, HttpSecChUaModel,
+  HttpSecChUaModelParseError, HttpSecChUaParseError, HttpSecChUaPlatformVersion,
+  HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc,
+  HttpSecGpcParseError, HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
   HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
@@ -548,14 +547,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Permissions-Policy should be accepted");
   let permissions_policy_report_only: HttpPermissionsPolicyReportOnly =
     HttpPermissionsPolicyReportOnly::parse(
-      r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+      r#"geolocation=(self "https://maps.example.test");report-to="rp", camera=()"#,
     )
     .expect("Permissions-Policy-Report-Only should parse");
   let _: HttpPermissionsPolicyReportOnlyParseError =
     HttpPermissionsPolicyReportOnly::parse("geolocation=src").expect_err("src should be rejected");
   let permissions_policy_report_only_response = HttpResponse::ok("")
     .with_permissions_policy_report_only(
-      r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+      r#"geolocation=(self "https://maps.example.test");report-to="rp", camera=()"#,
     )
     .expect("Permissions-Policy-Report-Only should be accepted");
   let document_policy: HttpDocumentPolicy =
@@ -906,10 +905,17 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(
     permissions_policy_report_only.header_value(),
-    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+    r#"geolocation=(self "https://maps.example.test");report-to="rp", camera=()"#
   );
   assert_eq!(
-    r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    Some("rp"),
+    permissions_policy_report_only
+      .directive("geolocation")
+      .unwrap()
+      .report_to()
+  );
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test");report-to="rp", camera=()"#,
     permissions_policy_report_only_response
       .permissions_policy_report_only()
       .expect("Permissions-Policy-Report-Only should parse")

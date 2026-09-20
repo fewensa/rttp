@@ -1205,7 +1205,10 @@ fn permissions_policy_report_only_metadata_rejects_invalid_values_without_hiding
 
 #[test]
 fn permissions_policy_report_only_metadata_rejects_oversized_values_and_absent_headers() {
-  let oversized = format!("geolocation=(\"{}\")", "https://example.test/".repeat(64 * 1024));
+  let oversized = format!(
+    "geolocation=(\"{}\")",
+    "https://example.test/".repeat(64 * 1024)
+  );
   let response = Response::new(
     RoUrl::with("https://example.test"),
     format!(

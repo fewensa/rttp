@@ -31,11 +31,9 @@ fn permissions_policy_report_only_parses_dictionary_with_permissions_policy_mode
 
 #[test]
 fn permissions_policy_report_only_combines_fields_in_wire_order() {
-  let policy = PermissionsPolicyReportOnly::parse_values([
-    "geolocation=(self)",
-    "camera=(), fullscreen=*",
-  ])
-  .expect("combined Permissions-Policy-Report-Only fields should parse");
+  let policy =
+    PermissionsPolicyReportOnly::parse_values(["geolocation=(self)", "camera=(), fullscreen=*"])
+      .expect("combined Permissions-Policy-Report-Only fields should parse");
 
   assert_eq!(policy.len(), 3);
   assert_eq!(policy.directives()[0].feature(), "geolocation");
@@ -91,8 +89,7 @@ fn permissions_policy_report_only_enforces_shared_size_and_member_bounds() {
     .map(|index| format!("feature{index}=self"))
     .collect::<Vec<_>>()
     .join(", ");
-  let parsed =
-    PermissionsPolicyReportOnly::parse(&at_limit).expect("256 directives should parse");
+  let parsed = PermissionsPolicyReportOnly::parse(&at_limit).expect("256 directives should parse");
   assert_eq!(parsed.len(), MAX_PERMISSIONS_POLICY_DIRECTIVES);
 
   let too_many = (0..=MAX_PERMISSIONS_POLICY_DIRECTIVES)

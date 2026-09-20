@@ -2734,7 +2734,7 @@ fn permissions_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
     .expect("raw Permissions-Policy should parse")
     .expect("Permissions-Policy should be present");
   assert_eq!(
-    r#"geolocation=(self "https://maps.example.test")"#,
+    r#"geolocation=(self "https://maps.example.test");report-to="rp""#,
     policy.header_value()
   );
   assert_eq!(
@@ -2826,7 +2826,7 @@ fn permissions_policy_report_only_helpers_preserve_raw_metadata_and_report_parse
     .expect("raw Permissions-Policy-Report-Only should parse")
     .expect("Permissions-Policy-Report-Only should be present");
   assert_eq!(
-    r#"geolocation=(self "https://maps.example.test")"#,
+    r#"geolocation=(self "https://maps.example.test");report-to="rp""#,
     policy.header_value()
   );
   assert_eq!(

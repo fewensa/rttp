@@ -12,9 +12,9 @@
 //! disables the feature; mixing `*` with other members is rejected. The
 //! HTML-attribute tokens `src` and `'none'` are not part of the HTTP
 //! structured-header value set and are rejected. A well-formed `report-to`
-//! string parameter is accepted as syntax and dropped; other parameters are
-//! rejected. Unparsable input is an error; this parser never fails open to an
-//! empty policy.
+//! string parameter is accepted and retained on the directive; other
+//! parameters are rejected. Unparsable input is an error; this parser never
+//! fails open to an empty policy.
 
 use std::collections::HashSet;
 use std::error::Error;
@@ -38,6 +38,7 @@ pub struct PermissionsPolicy {
 pub struct PermissionsPolicyDirective {
   feature: String,
   allowlist: PermissionsPolicyAllowlist,
+  report_to: Option<String>,
 }
 
 /// The allowlist declared for one feature.
@@ -179,8 +180,17 @@ impl PermissionsPolicyDirective {
     &self.allowlist
   }
 
+  /// Returns the retained `report-to` endpoint name, if declared.
+  pub fn report_to(&self) -> Option<&str> {
+    self.report_to.as_deref()
+  }
+
   fn header_value(&self) -> String {
-    format!("{}={}", self.feature, self.allowlist.header_value())
+    let mut value = format!("{}={}", self.feature, self.allowlist.header_value());
+    if let Some(report_to) = &self.report_to {
+      value.push_str(&format!(";report-to=\"{}\"", escape_sf_string(report_to)));
+    }
+    value
   }
 }
 
@@ -275,8 +285,12 @@ fn parse_field(
         "too many {header_name} directives"
       )));
     }
-    let allowlist = parse_allowlist(header_name, member)?;
-    directives.push(PermissionsPolicyDirective { feature, allowlist });
+    let (allowlist, report_to) = parse_allowlist(header_name, member)?;
+    directives.push(PermissionsPolicyDirective {
+      feature,
+      allowlist,
+      report_to,
+    });
   }
   Ok(())
 }
@@ -284,11 +298,11 @@ fn parse_field(
 fn parse_allowlist(
   header_name: &'static str,
   member: ListEntry,
-) -> Result<PermissionsPolicyAllowlist, PermissionsPolicyCoreParseError> {
+) -> Result<(PermissionsPolicyAllowlist, Option<String>), PermissionsPolicyCoreParseError> {
   match member {
     ListEntry::Item(item) => {
-      validate_parameters(header_name, &item.params)?;
-      match item.bare_item {
+      let report_to = parse_report_to(header_name, &item.params)?;
+      let allowlist = match item.bare_item {
         BareItem::Token(token) => match token.as_str() {
           "*" => Ok(PermissionsPolicyAllowlist::AllOrigins),
           "self" => Ok(PermissionsPolicyAllowlist::Members(vec![
@@ -306,10 +320,11 @@ fn parse_allowlist(
           ]))
         }
         _ => Err(invalid_member(header_name)),
-      }
+      }?;
+      Ok((allowlist, report_to))
     }
     ListEntry::InnerList(inner_list) => {
-      validate_parameters(header_name, &inner_list.params)?;
+      let report_to = parse_report_to(header_name, &inner_list.params)?;
       if inner_list.items.len() > MAX_PERMISSIONS_POLICY_ALLOWLIST_MEMBERS {
         return Err(PermissionsPolicyCoreParseError::new(format!(
           "too many {header_name} allowlist members"
@@ -339,7 +354,7 @@ fn parse_allowlist(
         }
         members.push(member);
       }
-      Ok(PermissionsPolicyAllowlist::Members(members))
+      Ok((PermissionsPolicyAllowlist::Members(members), report_to))
     }
   }
 }
@@ -355,15 +370,24 @@ fn validate_parameters(
   header_name: &'static str,
   params: &sfv::Parameters,
 ) -> Result<(), PermissionsPolicyCoreParseError> {
+  parse_report_to(header_name, params).map(|_| ())
+}
+
+fn parse_report_to(
+  header_name: &'static str,
+  params: &sfv::Parameters,
+) -> Result<Option<String>, PermissionsPolicyCoreParseError> {
+  let mut report_to = None;
   for (name, value) in params {
     if name.as_str() != "report-to" {
       return Err(invalid_member(header_name));
     }
-    if !matches!(value, BareItem::String(_)) {
-      return Err(invalid_member(header_name));
-    }
+    report_to = Some(match value {
+      BareItem::String(string) => string.as_str().to_owned(),
+      _ => return Err(invalid_member(header_name)),
+    });
   }
-  Ok(())
+  Ok(report_to)
 }
 
 fn parse_serialized_origin(
@@ -410,8 +434,20 @@ fn top_level_member_count(value: &str) -> usize {
   count
 }
 
+fn escape_sf_string(value: &str) -> String {
+  let mut escaped = String::new();
+  for byte in value.bytes() {
+    match byte {
+      b'\\' | b'"' => {
+        escaped.push('\\');
+        escaped.push(byte as char);
+      }
+      _ => escaped.push(byte as char),
+    }
+  }
+  escaped
+}
+
 fn invalid_member(header_name: &'static str) -> PermissionsPolicyCoreParseError {
-  PermissionsPolicyCoreParseError::new(format!(
-    "invalid {header_name} dictionary member"
-  ))
+  PermissionsPolicyCoreParseError::new(format!("invalid {header_name} dictionary member"))
 }

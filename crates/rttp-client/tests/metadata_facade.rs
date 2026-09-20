@@ -18,7 +18,8 @@ use rttp_client::response::{
   Location, LocationParseError, LockToken, LockTokenParseError, MementoDatetime,
   MementoDatetimeParseError, Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
   OriginTrialParseError, OriginTrials, PermissionsPolicy, PermissionsPolicyParseError,
-  PermissionsPolicyReportOnly, PermissionsPolicyReportOnlyParseError, Pragma, PragmaParseError, PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateChallenge,
+  PermissionsPolicyReportOnly, PermissionsPolicyReportOnlyParseError, Pragma, PragmaParseError,
+  PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateChallenge,
   ProxyAuthenticateParameter, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParameter, ProxyAuthenticationInfoParseError, ProxyStatus,
   ProxyStatusParseError, RateLimitLimit, RateLimitLimitItem, RateLimitLimitParseError,
@@ -1062,7 +1063,7 @@ fn response_facade_parses_permissions_policy_metadata() {
   assert!(policy.directive("camera").unwrap().allowlist().is_empty());
   assert_eq!(
     policy.header_value(),
-    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+    r#"geolocation=(self "https://maps.example.test");report-to="rp", camera=()"#
   );
   assert_eq!(
     response.header_values("Permissions-Policy"),
@@ -1145,7 +1146,7 @@ fn response_facade_parses_permissions_policy_report_only_metadata() {
   assert!(policy.directive("camera").unwrap().allowlist().is_empty());
   assert_eq!(
     policy.header_value(),
-    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+    r#"geolocation=(self "https://maps.example.test");report-to="rp", camera=()"#
   );
   assert_eq!(
     response.header_values("Permissions-Policy-Report-Only"),

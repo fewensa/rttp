@@ -10,8 +10,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::permissions_policy::{
-  format_permissions_policy_directives, parse_permissions_policy_values,
-  PermissionsPolicyDirective,
+  format_permissions_policy_directives, parse_permissions_policy_values, PermissionsPolicyDirective,
 };
 pub use crate::permissions_policy::{
   PermissionsPolicyAllowlist as PermissionsPolicyReportOnlyAllowlist,
