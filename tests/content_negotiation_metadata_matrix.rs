@@ -188,6 +188,9 @@ fn write_raw_request(addr: std::net::SocketAddr, request: &[u8]) {
   stream
     .write_all(request)
     .expect("write raw content-negotiation request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("finish raw content-negotiation request");
   let mut response = Vec::new();
   let _ = stream.read_to_end(&mut response);
 }
