@@ -332,9 +332,6 @@ fn parse_field(
     else {
       return Err(invalid_member());
     };
-    if inner_list.items.is_empty() {
-      return Err(invalid_member());
-    }
     if inner_list.items.len() > MAX_ACCEPT_SIGNATURE_ENTRY_COMPONENTS {
       return Err(AcceptSignatureParseError::new(
         "too many Accept-Signature entry components",
@@ -638,7 +635,8 @@ impl Cursor<'_> {
     self.expect(b'(')?;
     self.skip_sp();
     if self.peek() == Some(b')') {
-      return Err(invalid_member());
+      self.position += 1;
+      return Ok(Vec::new());
     }
 
     let mut components = Vec::new();

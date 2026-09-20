@@ -91,11 +91,25 @@ fn validates_registered_parameter_forms() {
 }
 
 #[test]
+fn accepts_empty_component_lists() {
+  let parsed = AcceptSignature::parse("sig1=();created")
+    .expect("empty Accept-Signature component lists should parse");
+  let entry = parsed.entry("sig1").expect("sig1 should exist");
+
+  assert!(entry.components().is_empty());
+  assert!(entry.created());
+  assert_eq!(parsed.header_value(), "sig1=();created");
+
+  let bare = AcceptSignature::parse("sig1=()").expect("bare empty inner list should parse");
+  assert!(bare.entry("sig1").unwrap().components().is_empty());
+  assert_eq!(bare.header_value(), "sig1=()");
+}
+
+#[test]
 fn rejects_empty_non_ascii_control_and_non_inner_list_members() {
   for value in [
     "",
     "   ",
-    "sig1=()",
     "sig1=\"@method\"",
     "sig1=(\"@method\u{00e9}\")",
     "sig1=(\"@method\u{0000}\")",

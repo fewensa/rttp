@@ -1165,8 +1165,9 @@ field-value set are bounded to 64 KiB; the collection accepts at most 256
 entries, each entry accepts at most 256 covered components and 256 request
 parameters, each component accepts at most 256 parameters, and each parameter
 value is bounded to 64 KiB. Duplicate labels or parameters, non-ASCII and
-control input, malformed members, non-inner-list values, empty component
-lists, and bound violations are rejected. Component identifiers and component
+control input, malformed members, non-inner-list values, and bound violations
+are rejected. Empty covered-component lists are accepted so requesters can
+leave component selection to the signer. Component identifiers and component
 parameters reuse the `Signature-Input` representation where their semantics
 are shared.
 
