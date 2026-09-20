@@ -3,7 +3,7 @@ use rttp_test_support as support;
 use std::collections::HashMap;
 use std::error::Error as _;
 use std::io::{self, Cursor, Read, Write};
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener};
 use std::thread;
 use std::time::Duration;
 
@@ -120,6 +120,131 @@ fn spawn_head_metadata_server() -> (std::net::SocketAddr, thread::JoinHandle<Vec
     request
   });
   (addr, handle)
+}
+
+fn read_socks5_connect_request(stream: &mut std::net::TcpStream) {
+  let mut header = [0u8; 4];
+  stream
+    .read_exact(&mut header)
+    .expect("read SOCKS5 connect header");
+  assert_eq!([5, 1, 0], header[..3]);
+  let address_len = match header[3] {
+    1 => 4,
+    4 => 16,
+    3 => {
+      let mut len = [0u8; 1];
+      stream
+        .read_exact(&mut len)
+        .expect("read SOCKS5 connect domain length");
+      usize::from(len[0])
+    }
+    address_type => panic!("unexpected SOCKS5 address type {address_type}"),
+  };
+  let mut address_and_port = vec![0u8; address_len + 2];
+  stream
+    .read_exact(&mut address_and_port)
+    .expect("read SOCKS5 connect address");
+}
+
+fn spawn_socks5_reply_http_server(
+  connect_reply: Vec<u8>,
+  shutdown_after_reply: bool,
+) -> (std::net::SocketAddr, thread::JoinHandle<bool>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind SOCKS5 reply server");
+  let addr = listener.local_addr().expect("SOCKS5 reply server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept SOCKS5 connection");
+    let mut greeting = [0u8; 3];
+    stream
+      .read_exact(&mut greeting)
+      .expect("read SOCKS5 greeting");
+    assert_eq!([5, 1, 0], greeting);
+    stream
+      .write_all(&[5, 0])
+      .expect("write SOCKS5 greeting response");
+
+    read_socks5_connect_request(&mut stream);
+    stream
+      .write_all(&connect_reply)
+      .expect("write SOCKS5 connect response");
+    if shutdown_after_reply {
+      stream
+        .shutdown(Shutdown::Write)
+        .expect("shutdown SOCKS5 reply write half");
+    }
+
+    stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set HTTP observation timeout");
+    let request = support::read_http_request(&mut stream);
+    if request.is_empty() {
+      return false;
+    }
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+      .expect("write SOCKS5 HTTP response");
+    true
+  });
+  (addr, handle)
+}
+
+fn spawn_socks4_reply_http_server(
+  connect_reply: Vec<u8>,
+  shutdown_after_reply: bool,
+) -> (std::net::SocketAddr, thread::JoinHandle<bool>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind SOCKS4 reply server");
+  let addr = listener.local_addr().expect("SOCKS4 reply server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept SOCKS4 connection");
+    let mut request = [0u8; 9];
+    stream
+      .read_exact(&mut request)
+      .expect("read SOCKS4 connect request");
+    assert_eq!([4, 1], request[..2]);
+    assert_eq!([127, 0, 0, 1], request[4..8]);
+    assert_eq!(0, request[8]);
+    stream
+      .write_all(&connect_reply)
+      .expect("write SOCKS4 connect response");
+    if shutdown_after_reply {
+      stream
+        .shutdown(Shutdown::Write)
+        .expect("shutdown SOCKS4 reply write half");
+    }
+
+    stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set HTTP observation timeout");
+    let request = support::read_http_request(&mut stream);
+    if request.is_empty() {
+      return false;
+    }
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+      .expect("write SOCKS4 HTTP response");
+    true
+  });
+  (addr, handle)
+}
+
+fn assert_malformed_socks_reply(
+  error: rttp_client::error::Error,
+  expected_kind: io::ErrorKind,
+  expected_message: &str,
+) {
+  assert!(
+    error.to_string().starts_with("error sending request"),
+    "unexpected error: {error}"
+  );
+  assert!(!error.is_timeout(), "malformed reply timed out: {error}");
+  let source = error
+    .source()
+    .expect("malformed reply should preserve its source error");
+  let source = source
+    .downcast_ref::<io::Error>()
+    .expect("malformed reply source should be an io::Error");
+  assert_eq!(expected_kind, source.kind(), "unexpected source: {source}");
+  assert_eq!(expected_message, source.to_string());
 }
 
 struct FailingReader {
@@ -1526,6 +1651,206 @@ fn test_with_proxy_socks5_auth() {
   assert!(response.is_ok());
   let response = response.unwrap();
   assert_eq!("127.0.0.1", response.host());
+}
+
+#[test]
+fn test_with_proxy_socks4() {
+  let (proxy_addr, proxy_handle) =
+    spawn_socks4_reply_http_server(vec![0, 90, 0, 0, 127, 0, 0, 1], false);
+  let response = client()
+    .get()
+    .url("http://127.0.0.1:80/socks4")
+    .proxy(Proxy::socks4("127.0.0.1", proxy_addr.port().into()))
+    .emit()
+    .expect("SOCKS4 response");
+  assert_eq!("OK", response.body().string().unwrap());
+  assert!(
+    proxy_handle.join().expect("SOCKS4 server thread"),
+    "successful SOCKS4 reply should allow the HTTP request"
+  );
+}
+
+#[test]
+fn test_with_proxy_socks5_accepts_non_empty_domain_reply() {
+  let (proxy_addr, proxy_handle) =
+    spawn_socks5_reply_http_server(vec![5, 0, 0, 3, 1, b'a', 0, 80], false);
+  let response = client()
+    .get()
+    .url("http://127.0.0.1/socks5-domain")
+    .proxy(Proxy::socks5("127.0.0.1", proxy_addr.port().into()))
+    .emit()
+    .expect("non-empty SOCKS5 domain reply");
+  assert_eq!("OK", response.body().string().unwrap());
+  assert!(
+    proxy_handle.join().expect("SOCKS5 reply server thread"),
+    "non-empty domain reply should allow the HTTP request"
+  );
+}
+
+#[test]
+fn test_with_proxy_socks5_rejects_zero_length_domain_reply() {
+  let (proxy_addr, proxy_handle) =
+    spawn_socks5_reply_http_server(vec![5, 0, 0, 3, 0, 0, 80], false);
+  let error = client()
+    .get()
+    .url("http://127.0.0.1/socks5-empty-domain")
+    .proxy(Proxy::socks5("127.0.0.1", proxy_addr.port().into()))
+    .emit()
+    .expect_err("zero-length SOCKS5 domain reply should be rejected");
+
+  assert_malformed_socks_reply(error, io::ErrorKind::InvalidData, "invalid domain address");
+  assert!(
+    !proxy_handle.join().expect("SOCKS5 reply server thread"),
+    "malformed SOCKS5 reply should fail before the HTTP request"
+  );
+}
+
+#[test]
+fn test_with_proxy_socks5_rejects_malformed_connect_replies() {
+  let mut truncated_ipv6 = vec![5, 0, 0, 4];
+  truncated_ipv6.extend_from_slice(&[0; 16]);
+  truncated_ipv6.push(0);
+
+  let cases = vec![
+    (
+      "invalid-version",
+      vec![4, 0, 0, 1],
+      false,
+      io::ErrorKind::InvalidData,
+      "invalid response version",
+    ),
+    (
+      "invalid-reserved-byte",
+      vec![5, 0, 1, 1],
+      false,
+      io::ErrorKind::InvalidData,
+      "invalid reserved byte",
+    ),
+    (
+      "general-failure",
+      vec![5, 1, 0, 1],
+      false,
+      io::ErrorKind::Other,
+      "general SOCKS server failure",
+    ),
+    (
+      "unsupported-address-type",
+      vec![5, 0, 0, 2],
+      false,
+      io::ErrorKind::Other,
+      "unsupported address type",
+    ),
+    (
+      "truncated-ipv4",
+      vec![5, 0, 0, 1, 127, 0, 0, 1, 0],
+      true,
+      io::ErrorKind::UnexpectedEof,
+      "failed to fill whole buffer",
+    ),
+    (
+      "truncated-ipv6",
+      truncated_ipv6,
+      true,
+      io::ErrorKind::UnexpectedEof,
+      "failed to fill whole buffer",
+    ),
+    (
+      "truncated-domain",
+      vec![5, 0, 0, 3, 3, b'a', b'b', b'c', 0],
+      true,
+      io::ErrorKind::UnexpectedEof,
+      "failed to fill whole buffer",
+    ),
+    (
+      "empty-domain",
+      vec![5, 0, 0, 3, 0, 0, 80],
+      false,
+      io::ErrorKind::InvalidData,
+      "invalid domain address",
+    ),
+  ];
+
+  for (case, connect_reply, shutdown_after_reply, expected_kind, expected_message) in cases {
+    let (proxy_addr, proxy_handle) =
+      spawn_socks5_reply_http_server(connect_reply, shutdown_after_reply);
+    let error = client()
+      .get()
+      .url(format!("http://127.0.0.1/socks5-{case}"))
+      .proxy(Proxy::socks5("127.0.0.1", proxy_addr.port().into()))
+      .emit()
+      .expect_err("malformed SOCKS5 CONNECT reply should be rejected");
+
+    assert_malformed_socks_reply(error, expected_kind, expected_message);
+    assert!(
+      !proxy_handle.join().expect("SOCKS5 reply server thread"),
+      "malformed SOCKS5 reply sent an HTTP request for {case}"
+    );
+  }
+}
+
+#[test]
+fn test_with_proxy_socks4_rejects_malformed_connect_replies() {
+  let cases = vec![
+    (
+      "invalid-version",
+      vec![4, 90, 0, 0, 127, 0, 0, 1],
+      false,
+      io::ErrorKind::InvalidData,
+      "invalid response version",
+    ),
+    (
+      "request-rejected",
+      vec![0, 91, 0, 0, 127, 0, 0, 1],
+      false,
+      io::ErrorKind::Other,
+      "request rejected or failed",
+    ),
+    (
+      "identd-unreachable",
+      vec![0, 92, 0, 0, 127, 0, 0, 1],
+      false,
+      io::ErrorKind::PermissionDenied,
+      "request rejected because SOCKS server cannot connect to idnetd on the client",
+    ),
+    (
+      "identd-mismatch",
+      vec![0, 93, 0, 0, 127, 0, 0, 1],
+      false,
+      io::ErrorKind::PermissionDenied,
+      "request rejected because the client program and identd report different user-ids",
+    ),
+    (
+      "unknown-reply-code",
+      vec![0, 94, 0, 0, 127, 0, 0, 1],
+      false,
+      io::ErrorKind::InvalidData,
+      "invalid response code",
+    ),
+    (
+      "truncated-reply",
+      vec![0, 90, 0, 0, 127, 0, 0],
+      true,
+      io::ErrorKind::UnexpectedEof,
+      "failed to fill whole buffer",
+    ),
+  ];
+
+  for (case, connect_reply, shutdown_after_reply, expected_kind, expected_message) in cases {
+    let (proxy_addr, proxy_handle) =
+      spawn_socks4_reply_http_server(connect_reply, shutdown_after_reply);
+    let error = client()
+      .get()
+      .url(format!("http://127.0.0.1:80/socks4-{case}"))
+      .proxy(Proxy::socks4("127.0.0.1", proxy_addr.port().into()))
+      .emit()
+      .expect_err("malformed SOCKS4 CONNECT reply should be rejected");
+
+    assert_malformed_socks_reply(error, expected_kind, expected_message);
+    assert!(
+      !proxy_handle.join().expect("SOCKS4 reply server thread"),
+      "malformed SOCKS4 reply sent an HTTP request for {case}"
+    );
+  }
 }
 
 #[test]
