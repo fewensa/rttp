@@ -1754,9 +1754,9 @@ whole allowlist and `()` disables the feature; mixing `*` with other members
 is rejected. Duplicate feature keys, including across fields, and duplicate
 allowlist members are errors. The HTML-attribute tokens `src` and `'none'`
 are rejected, and a well-formed `report-to` string parameter is accepted and
-dropped. The parser reports declared metadata only: it does not compare
-origins, resolve `self`, grant or deny browser permissions, or enforce origin
-policy.
+retained on the directive. The parser reports declared metadata only: it does
+not compare origins, resolve `self`, grant or deny browser permissions, or
+enforce origin policy.
 
 `permissions_policy_report_only` parses `Permissions-Policy-Report-Only` with
 the same directive model, parser, formatter, and bounds while exposing

@@ -1778,7 +1778,7 @@ The helper is bounded and validation-oriented. Each field value is limited to
 allowlist is limited to 256 members. Feature names are opaque tokens; the
 HTML-attribute tokens `src` and `'none'` are rejected, duplicate feature keys
 and duplicate allowlist members are errors, and a well-formed `report-to`
-parameter is accepted and dropped. Unparsable input makes
+parameter is accepted and retained on the directive. Unparsable input makes
 `Response::permissions_policy()` return an error while leaving the original
 response headers and body available through the ordinary response APIs.
 
