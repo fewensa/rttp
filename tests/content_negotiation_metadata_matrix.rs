@@ -533,6 +533,29 @@ fn sec_ch_ua_arch_parses_valid_duplicate_and_malformed_http11_headers() {
     .is_err());
   handle.join().expect("malformed arch server thread");
 
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_arch()
+          .map(|arch| arch.map(|arch| arch.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Arch").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("non-ascii"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /arch HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Arch: \"\x80\"\r\nConnection: close\r\n\r\n",
+  );
+  let observed = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe non-ASCII Sec-CH-UA-Arch");
+  assert!(observed.0.is_err());
+  assert_eq!(Some("\"\u{0080}\"".to_owned()), observed.1);
+  handle.join().expect("non-ASCII arch server thread");
+
   assert!(rttp::SecChUaArch::parse("x86").is_err());
   assert!(rttp::SecChUaArch::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
   assert!(rttp::SecChUaArch::parse("\"x86\0\"").is_err());
