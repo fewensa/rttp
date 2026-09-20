@@ -1,4 +1,5 @@
 use mime::Mime;
+use rttp_protocol::http1::is_token;
 
 use crate::error;
 use crate::request::{RawRequest, Request};
@@ -39,6 +40,7 @@ impl<'a> RawBuilder<'a> {
 
 impl<'a> RawBuilder<'a> {
   pub fn raw_request_block(mut self) -> error::Result<RawRequest<'a>> {
+    self.validate_outbound_method()?;
     self.validate_outbound_headers()?;
     let mut rourl = self.request.url().clone().ok_or(error::none_url())?;
     if rourl.traditional_get().is_none() {
@@ -59,6 +61,7 @@ impl<'a> RawBuilder<'a> {
 
   #[cfg(feature = "async")]
   pub async fn raw_request_async(mut self) -> error::Result<RawRequest<'a>> {
+    self.validate_outbound_method()?;
     self.validate_outbound_headers()?;
     let mut rourl = self.request.url().clone().ok_or(error::none_url())?;
     if rourl.traditional_get().is_none() {
@@ -75,6 +78,13 @@ impl<'a> RawBuilder<'a> {
       header,
       body,
     })
+  }
+
+  fn validate_outbound_method(&self) -> error::Result<()> {
+    if is_token(self.request.method()) {
+      return Ok(());
+    }
+    Err(error::builder_with_message("invalid outbound HTTP method"))
   }
 
   fn validate_outbound_headers(&self) -> error::Result<()> {
