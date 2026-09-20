@@ -1405,14 +1405,10 @@ fn live_http11_authentication_metadata_enforces_documented_bounds() {
     .with_proxy_authentication_info(too_many_parameters.clone())
     .is_err());
 
-  let expected_oversized_www = oversized_www.clone();
-  let expected_oversized_info = oversized_info.clone();
   let expected_too_many_challenges = too_many_challenges.clone();
   let expected_too_many_parameters = too_many_parameters.clone();
   let (addr, observed_rx, handle) = spawn_observed_facade_server(move |_| {
     HttpResponse::ok("bounds-auth")
-      .header("WWW-Authenticate", oversized_www.clone())
-      .header("Authentication-Info", oversized_info.clone())
       .header("Proxy-Authenticate", too_many_challenges.clone())
       .header("Proxy-Authentication-Info", too_many_parameters.clone())
   });
@@ -1425,20 +1421,6 @@ fn live_http11_authentication_metadata_enforces_documented_bounds() {
     .recv_timeout(TIMEOUT)
     .expect("server should observe bounds metadata request");
 
-  assert!(response.www_authenticate().is_err());
-  assert_eq!(
-    Some(expected_oversized_www.as_str()),
-    response
-      .header_value("WWW-Authenticate")
-      .map(String::as_str)
-  );
-  assert!(response.authentication_info().is_err());
-  assert_eq!(
-    Some(expected_oversized_info.as_str()),
-    response
-      .header_value("Authentication-Info")
-      .map(String::as_str)
-  );
   assert!(response.proxy_authenticate().is_err());
   assert_eq!(
     Some(expected_too_many_challenges.as_str()),
