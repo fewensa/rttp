@@ -800,6 +800,22 @@ rejected. These helpers only expose metadata: RTTP does not infer a
 preference, adapt content, negotiate `Accept-CH`, retry, or apply browser
 policy.
 
+## Bounded Sec-CH-Prefers-Reduced-Transparency request Client Hint metadata
+
+With the client feature, `HttpClient::prefers_reduced_transparency(value)`
+validates and emits one singleton `Sec-CH-Prefers-Reduced-Transparency`
+request field through `rttp::PrefersReducedTransparency`, replacing any
+existing case-insensitive field. The `no-preference` and `reduce` tokens are
+parsed case-insensitively after surrounding SP or HTAB trimming and
+`header_value()` emits lowercase canonical text. On the server facade,
+`Request::prefers_reduced_transparency()` and
+`HttpRequest::prefers_reduced_transparency()` parse received fields into
+`HttpPrefersReducedTransparency`; parse errors leave the raw header
+available. Empty, unknown, comma-list, duplicate, control-byte, non-ASCII,
+and oversized values are rejected. These helpers only expose metadata: RTTP
+does not infer a preference, adapt content, negotiate `Accept-CH`, retry, or
+apply browser policy.
+
 ## Bounded Sec-CH-Prefers-Contrast request Client Hint metadata
 
 With the client feature, `HttpClient::prefers_contrast(value)` validates and

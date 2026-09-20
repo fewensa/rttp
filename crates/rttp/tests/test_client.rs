@@ -164,6 +164,14 @@ fn compatibility_facade_reexports_client_hints_response_metadata() {
   let _: rttp::PrefersReducedMotionParseError = rttp::PrefersReducedMotion::parse("auto")
     .expect_err("unknown Prefers-Reduced-Motion should fail");
 
+  let prefers_reduced_transparency: rttp::PrefersReducedTransparency =
+    rttp::PrefersReducedTransparency::parse("ReDuCe")
+      .expect("Prefers-Reduced-Transparency should parse");
+  assert_eq!("reduce", prefers_reduced_transparency.header_value());
+  let _: rttp::PrefersReducedTransparencyParseError =
+    rttp::PrefersReducedTransparency::parse("auto")
+      .expect_err("unknown Prefers-Reduced-Transparency should fail");
+
   let width: rttp::Width = rttp::Width::parse("1440").expect("Width should parse");
   assert_eq!(1440, width.value());
   let _: rttp::WidthParseError =

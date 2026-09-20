@@ -766,6 +766,18 @@ forbidden control-byte, and oversized values are errors. This parser reports
 request metadata only; it does not infer a preference, adapt content,
 negotiate `Accept-CH`, retry, or apply browser policy.
 
+## Sec-CH-Prefers-Reduced-Transparency
+
+`client_hints::PrefersReducedTransparency` parses a singleton HTTP
+`Sec-CH-Prefers-Reduced-Transparency` request Client Hint as the
+`no-preference` or `reduce` token. The field value is bounded to 64 KiB,
+optional outer SP and HTAB are trimmed, tokens are matched
+case-insensitively, and `header_value()` emits lowercase canonical text.
+Empty, unknown, comma-list, duplicate, forbidden control-byte, non-ASCII,
+and oversized values are errors. This parser reports request metadata only;
+it does not infer a preference, adapt content, negotiate `Accept-CH`, retry,
+or apply browser policy.
+
 ## Sec-CH-Prefers-Contrast
 
 `client_hints::PrefersContrast` parses a singleton HTTP

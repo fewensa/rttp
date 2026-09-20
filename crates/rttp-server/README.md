@@ -628,6 +628,17 @@ while the raw field remains available. This is metadata-only: the server does
 not infer a preference, adapt content, negotiate `Accept-CH`, retry, or apply
 browser policy.
 
+`Request::prefers_reduced_transparency()` and
+`HttpRequest::prefers_reduced_transparency()` parse a singleton
+`Sec-CH-Prefers-Reduced-Transparency` request Client Hint into
+`HttpPrefersReducedTransparency`, accepting `no-preference` and `reduce`
+case-insensitively after optional SP or HTAB trimming and exposing lowercase
+canonical text through `header_value()`. Empty, unknown, comma-list,
+duplicate, control-byte, non-ASCII, or oversized fields return
+`HttpPrefersReducedTransparencyParseError` while the raw field remains
+available. This is metadata-only: the server does not infer a preference,
+adapt content, negotiate `Accept-CH`, retry, or apply browser policy.
+
 `Request::prefers_contrast()` and `HttpRequest::prefers_contrast()` parse a
 bounded (64 KiB) singleton `Sec-CH-Prefers-Contrast` request Client Hint into
 `HttpPrefersContrast`, accepting `no-preference`, `more`, `less`, and `custom`

@@ -23,8 +23,9 @@ use rttp::server::{
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpPrefersColorScheme,
   HttpPrefersColorSchemeParseError, HttpPrefersContrast, HttpPrefersContrastParseError,
-  HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
+  HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError, HttpPrefersReducedTransparency,
+  HttpPrefersReducedTransparencyParseError, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
@@ -588,6 +589,54 @@ fn compatibility_facade_exports_prefers_reduced_motion_request_metadata() {
   assert_eq!(
     Some("no-preference"),
     duplicate.header("Sec-CH-Prefers-Reduced-Motion")
+  );
+}
+
+#[test]
+fn compatibility_facade_exports_prefers_reduced_transparency_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Transparency: \tReDuCe \t\r\n\r\n",
+  )
+  .expect("Prefers-Reduced-Transparency request should parse");
+  let transparency: HttpPrefersReducedTransparency = request
+    .prefers_reduced_transparency()
+    .expect("Prefers-Reduced-Transparency should parse")
+    .expect("Prefers-Reduced-Transparency should be present");
+  assert_eq!("reduce", transparency.header_value());
+  assert_eq!(
+    Some("ReDuCe"),
+    request.header("Sec-CH-Prefers-Reduced-Transparency")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Prefers-Reduced-Transparency should parse");
+  assert_eq!(
+    None,
+    absent
+      .prefers_reduced_transparency()
+      .expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Transparency: auto\r\n\r\n",
+  )
+  .expect("malformed Prefers-Reduced-Transparency should remain available");
+  let _: HttpPrefersReducedTransparencyParseError = malformed
+    .prefers_reduced_transparency()
+    .expect_err("unknown Prefers-Reduced-Transparency should fail");
+  assert_eq!(
+    Some("auto"),
+    malformed.header("Sec-CH-Prefers-Reduced-Transparency")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Transparency: no-preference\r\nsec-ch-prefers-reduced-transparency: reduce\r\n\r\n",
+  )
+  .expect("duplicate Prefers-Reduced-Transparency fields should remain parseable");
+  assert!(duplicate.prefers_reduced_transparency().is_err());
+  assert_eq!(
+    Some("no-preference"),
+    duplicate.header("Sec-CH-Prefers-Reduced-Transparency")
   );
 }
 

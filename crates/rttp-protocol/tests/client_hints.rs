@@ -1,18 +1,19 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
-  PrefersReducedMotion, Rtt, SecChUaArch, SecChUaBitness, SecChUaFormFactors,
-  SecChUaFullVersionList, SecChUaMobile, SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion,
-  SecChUaWow64, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
-  MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
-  MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
-  MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_SEC_CH_UA_ARCH_VALUE_BYTES,
-  MAX_SEC_CH_UA_BITNESS_VALUE_BYTES, MAX_SEC_CH_UA_FORM_FACTORS_ITEMS,
-  MAX_SEC_CH_UA_FORM_FACTORS_TOTAL_BYTES, MAX_SEC_CH_UA_FORM_FACTORS_VALUE_BYTES,
-  MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES, MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES,
-  MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES, MAX_SEC_CH_UA_MOBILE_VALUE_BYTES,
-  MAX_SEC_CH_UA_MODEL_VALUE_BYTES, MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES,
-  MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES, MAX_SEC_CH_UA_WOW64_VALUE_BYTES,
-  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChUaArch, SecChUaBitness,
+  SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile, SecChUaModel, SecChUaPlatform,
+  SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
+  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES,
+  MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES,
+  MAX_PREFERS_CONTRAST_VALUE_BYTES, MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES,
+  MAX_PREFERS_REDUCED_TRANSPARENCY_VALUE_BYTES, MAX_RTT_VALUE_BYTES,
+  MAX_SEC_CH_UA_ARCH_VALUE_BYTES, MAX_SEC_CH_UA_BITNESS_VALUE_BYTES,
+  MAX_SEC_CH_UA_FORM_FACTORS_ITEMS, MAX_SEC_CH_UA_FORM_FACTORS_TOTAL_BYTES,
+  MAX_SEC_CH_UA_FORM_FACTORS_VALUE_BYTES, MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES,
+  MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES, MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES,
+  MAX_SEC_CH_UA_MOBILE_VALUE_BYTES, MAX_SEC_CH_UA_MODEL_VALUE_BYTES,
+  MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES, MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES,
+  MAX_SEC_CH_UA_WOW64_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -851,6 +852,59 @@ fn prefers_reduced_motion_rejects_invalid_duplicate_oversized_and_control_values
   let oversized = "a".repeat(MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES + 1);
   assert!(PrefersReducedMotion::parse(&oversized).is_err());
   assert!(PrefersReducedMotion::parse_values(["reduce", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn prefers_reduced_transparency_accepts_case_insensitive_tokens_and_canonicalizes_them() {
+  assert_eq!(
+    "no-preference",
+    PrefersReducedTransparency::NoPreference.header_value()
+  );
+  assert_eq!("reduce", PrefersReducedTransparency::Reduce.header_value());
+
+  for (value, expected, canonical) in [
+    (
+      "No-Preference",
+      PrefersReducedTransparency::NoPreference,
+      "no-preference",
+    ),
+    ("REDUCE", PrefersReducedTransparency::Reduce, "reduce"),
+  ] {
+    let transparency = PrefersReducedTransparency::parse(format!("\t{value} \t"))
+      .expect("valid prefers-reduced-transparency value");
+    assert_eq!(expected, transparency);
+    assert_eq!(canonical, transparency.header_value());
+    assert_eq!(
+      transparency,
+      PrefersReducedTransparency::parse(transparency.header_value()).expect("roundtrip")
+    );
+  }
+}
+
+#[test]
+fn prefers_reduced_transparency_rejects_invalid_duplicate_oversized_and_control_values() {
+  assert!(PrefersReducedTransparency::parse_values(["no-preference", "reduce"]).is_err());
+  assert!(PrefersReducedTransparency::parse_values([]).is_err());
+
+  for value in [
+    "",
+    " ",
+    "auto",
+    "reduce, no-preference",
+    "reduce\0",
+    "reduce\r\nInjected: yes",
+    "reduce{7f}",
+    "reduce\u{0080}",
+  ] {
+    assert!(
+      PrefersReducedTransparency::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let oversized = "a".repeat(MAX_PREFERS_REDUCED_TRANSPARENCY_VALUE_BYTES + 1);
+  assert!(PrefersReducedTransparency::parse(&oversized).is_err());
+  assert!(PrefersReducedTransparency::parse_values(["reduce", oversized.as_str()]).is_err());
 }
 
 #[test]
