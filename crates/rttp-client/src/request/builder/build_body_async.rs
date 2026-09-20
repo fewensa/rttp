@@ -54,7 +54,7 @@ impl<'a> RawBuilder<'a> {
           &field_name,
           &file_name,
           guess.first_or_octet_stream(),
-        );
+        )?;
         buffer.extend_from_slice(item.as_bytes());
         let file_content = std::fs::read(&file).map_err(error::builder)?;
         buffer.extend(file_content);

@@ -126,7 +126,7 @@ impl<'a> RawBuilder<'a> {
           &field_name,
           &file_name,
           guess.first_or_octet_stream(),
-        );
+        )?;
         buffer.extend_from_slice(item.as_bytes());
         let file_content = std::fs::read(&file).map_err(error::builder)?;
         buffer.extend(file_content);
@@ -162,7 +162,7 @@ impl<'a> RawBuilder<'a> {
         } else {
           Default::default()
         };
-        let item = format!("{}{}", disposition.create_with_name(&field_name), value);
+        let item = format!("{}{}", disposition.create_with_name(&field_name)?, value);
         buffer.extend_from_slice(item.as_bytes());
         buffer.extend_from_slice(DISPOSITION_END.as_bytes());
       }
@@ -182,15 +182,18 @@ impl<'a> RawBuilder<'a> {
           } else {
             Default::default()
           };
-          let item = format!("{}{}", disposition.create_with_name(&field_name), value);
+          let item = format!("{}{}", disposition.create_with_name(&field_name)?, value);
           buffer.extend_from_slice(item.as_bytes());
         }
         FormDataType::BINARY => {
           let file_name = formdata.filename().clone().unwrap_or_default();
           let octe_stream = Mime::from_str(&mime::APPLICATION_OCTET_STREAM.to_string()[..])
             .map_err(error::builder)?;
-          let item =
-            disposition.create_with_filename_and_content_type(&field_name, &file_name, octe_stream);
+          let item = disposition.create_with_filename_and_content_type(
+            &field_name,
+            &file_name,
+            octe_stream,
+          )?;
           buffer.extend_from_slice(item.as_bytes());
           buffer.extend(formdata.binary());
         }
