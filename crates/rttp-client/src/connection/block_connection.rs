@@ -1,8 +1,8 @@
 use std::collections::HashSet;
-use std::io::Write;
+use std::io::{self, Write};
 use std::net::TcpStream;
 
-use socks::{Socks4Stream, Socks5Stream};
+use socks::{Socks4Stream, Socks5Stream, TargetAddr};
 use url::Url;
 
 use crate::connection::connection::{
@@ -263,6 +263,12 @@ impl<'a> BlockConnection<'a> {
       Socks5Stream::connect(&addr_proxy[..], &addr_target[..])
     }
     .map_err(error::request)?;
+    if matches!(stream.proxy_addr(), TargetAddr::Domain(host, _) if host.is_empty()) {
+      return Err(error::request(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "invalid domain address",
+      )));
+    }
     self.conn.block_send_with_stream_parts(url, &mut stream)
   }
 }
