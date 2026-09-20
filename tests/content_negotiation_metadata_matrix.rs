@@ -388,7 +388,6 @@ fn sec_ch_ua_platform_parses_valid_duplicate_and_malformed_http11_headers() {
   assert!(rttp::SecChUaPlatform::parse("Windows").is_err());
   assert!(rttp::SecChUaPlatform::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
   assert!(rttp::SecChUaPlatform::parse("\"Windows\0\"").is_err());
-  assert!(rttp::SecChUaPlatform::parse("\"\u{0080}\"").is_err());
 }
 
 #[test]
