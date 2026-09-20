@@ -7214,9 +7214,53 @@ fn sync_client_rejects_shared_oversized_informational_head() {
   assert!(
     error
       .to_string()
-      .contains("HTTP informational response head is too large"),
+      .contains("HTTP response head is too large"),
     "unexpected error: {error}"
   );
+
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_rejects_shared_oversized_unterminated_final_response_head() {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    fixtures::response::oversized_unterminated_final_response_head(),
+  );
+
+  let error = client()
+    .get()
+    .url(format!("http://{}/matrix/final-head-oversized", addr))
+    .emit()
+    .expect_err("oversized unterminated final response head should be rejected");
+
+  assert!(
+    error
+      .to_string()
+      .contains("HTTP response head is too large"),
+    "unexpected error: {error}"
+  );
+
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_parses_shared_final_response_head_exactly_at_max_bytes() {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    fixtures::response::valid_final_response_head_exactly_max_bytes(),
+  );
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/final-head-exact", addr))
+    .emit()
+    .expect("final response head ending exactly at the limit should parse");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  let fill = response
+    .header_value("X-Fill")
+    .expect("exact-limit fill header should be present");
+  assert!(!fill.is_empty());
 
   handle.join().expect("raw response server thread");
 }
@@ -9837,9 +9881,61 @@ fn async_client_rejects_shared_oversized_informational_head() {
     assert!(
       error
         .to_string()
-        .contains("HTTP informational response head is too large"),
+        .contains("HTTP response head is too large"),
       "unexpected error: {error}"
     );
+  });
+
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_client_rejects_shared_oversized_unterminated_final_response_head() {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    fixtures::response::oversized_unterminated_final_response_head(),
+  );
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/matrix/final-head-oversized", addr))
+      .rasync()
+      .await
+      .expect_err("oversized unterminated final response head should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("HTTP response head is too large"),
+      "unexpected error: {error}"
+    );
+  });
+
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_client_parses_shared_final_response_head_exactly_at_max_bytes() {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    fixtures::response::valid_final_response_head_exactly_max_bytes(),
+  );
+
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/final-head-exact", addr))
+      .rasync()
+      .await
+      .expect("final response head ending exactly at the limit should parse");
+
+    assert_eq!(200, response.code());
+    assert_eq!("OK", response.body().string().unwrap());
+    let fill = response
+      .header_value("X-Fill")
+      .expect("exact-limit fill header should be present");
+    assert!(!fill.is_empty());
   });
 
   handle.join().expect("raw response server thread");

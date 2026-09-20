@@ -483,6 +483,25 @@ pub mod response {
     .into_bytes()
   }
 
+  pub fn oversized_unterminated_final_response_head() -> Vec<u8> {
+    format!("HTTP/1.1 200 OK\r\nX-Fill: {}", "a".repeat(MAX_HEAD_BYTES)).into_bytes()
+  }
+
+  pub fn valid_final_response_head_exactly_max_bytes() -> Vec<u8> {
+    let prefix = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nX-Fill: ";
+    let suffix = "\r\n\r\n";
+    let fill_len = MAX_HEAD_BYTES
+      .checked_sub(prefix.len() + suffix.len())
+      .expect("status line, Content-Length, and delimiter must fit in MAX_HEAD_BYTES");
+    let mut raw = Vec::with_capacity(MAX_HEAD_BYTES + 2);
+    raw.extend_from_slice(prefix.as_bytes());
+    raw.resize(prefix.len() + fill_len, b'a');
+    raw.extend_from_slice(suffix.as_bytes());
+    assert_eq!(MAX_HEAD_BYTES, raw.len());
+    raw.extend_from_slice(b"OK");
+    raw
+  }
+
   pub const CHUNKED_WITH_EXTENSIONS_AND_TRAILERS: &[u8] = concat!(
     "HTTP/1.1 200 OK\r\n",
     "Transfer-Encoding: chunked\r\n",

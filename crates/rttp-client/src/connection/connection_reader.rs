@@ -502,6 +502,9 @@ where
   let mut byte = [0u8; 1];
 
   loop {
+    if header.len() == MAX_RESPONSE_HEAD_BYTES {
+      return Err(error::bad_response("HTTP response head is too large"));
+    }
     let read = reader.read(&mut byte).map_err(error::request)?;
     if read == 0 {
       if header.is_empty() {
@@ -1267,9 +1270,48 @@ mod tests {
     assert!(
       error
         .to_string()
-        .contains("HTTP informational response head is too large"),
+        .contains("HTTP response head is too large"),
       "unexpected error: {error}"
     );
+  }
+
+  #[test]
+  fn oversized_unterminated_final_response_head_is_rejected() {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nX-Fill: {}",
+      "a".repeat(MAX_RESPONSE_HEAD_BYTES)
+    );
+    let mut reader = Cursor::new(raw.as_bytes());
+
+    let error = super::read_response_header(&mut reader)
+      .expect_err("oversized unterminated response head should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("HTTP response head is too large"),
+      "unexpected error: {error}"
+    );
+    assert_eq!(MAX_RESPONSE_HEAD_BYTES as u64, reader.position());
+  }
+
+  #[test]
+  fn final_response_head_delimiter_exactly_at_limit_is_accepted() {
+    let prefix = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Fill: ";
+    let suffix = b"\r\n\r\n";
+    let fill_len = MAX_RESPONSE_HEAD_BYTES - prefix.len() - suffix.len();
+    let mut raw = Vec::with_capacity(MAX_RESPONSE_HEAD_BYTES);
+    raw.extend_from_slice(prefix);
+    raw.resize(prefix.len() + fill_len, b'a');
+    raw.extend_from_slice(suffix);
+    assert_eq!(MAX_RESPONSE_HEAD_BYTES, raw.len());
+    let mut reader = Cursor::new(raw.as_slice());
+
+    let header = super::read_response_header(&mut reader)
+      .expect("response head ending exactly at the limit should parse");
+
+    assert_eq!(MAX_RESPONSE_HEAD_BYTES, header.len());
+    assert_eq!(MAX_RESPONSE_HEAD_BYTES as u64, reader.position());
   }
 
   #[test]

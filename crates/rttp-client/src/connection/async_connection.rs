@@ -708,6 +708,9 @@ where
   let mut byte = [0u8; 1];
 
   loop {
+    if header.len() == MAX_RESPONSE_HEAD_BYTES {
+      return Err(error::bad_response("HTTP response head is too large"));
+    }
     let read = stream.read(&mut byte).await.map_err(error::request)?;
     if read == 0 {
       if header.is_empty() {
