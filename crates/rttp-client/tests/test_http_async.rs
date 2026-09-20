@@ -262,9 +262,12 @@ fn spawn_socks5_reply_http_server(
 }
 
 #[cfg(feature = "async")]
-fn spawn_socks4_http_server() -> (std::net::SocketAddr, thread::JoinHandle<()>) {
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind SOCKS4 server");
-  let addr = listener.local_addr().expect("SOCKS4 server addr");
+fn spawn_socks4_reply_http_server(
+  connect_reply: Vec<u8>,
+  shutdown_after_reply: bool,
+) -> (std::net::SocketAddr, thread::JoinHandle<bool>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind SOCKS4 reply server");
+  let addr = listener.local_addr().expect("SOCKS4 reply server addr");
   let handle = thread::spawn(move || {
     let (mut stream, _) = listener.accept().expect("accept SOCKS4 connection");
     let mut request = [0u8; 9];
@@ -275,13 +278,25 @@ fn spawn_socks4_http_server() -> (std::net::SocketAddr, thread::JoinHandle<()>) 
     assert_eq!([127, 0, 0, 1], request[4..8]);
     assert_eq!(0, request[8]);
     stream
-      .write_all(&[0, 90, 0, 0, 127, 0, 0, 1])
+      .write_all(&connect_reply)
       .expect("write SOCKS4 connect response");
+    if shutdown_after_reply {
+      stream
+        .shutdown(Shutdown::Write)
+        .expect("shutdown SOCKS4 reply write half");
+    }
 
-    support::read_http_request(&mut stream);
+    stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set HTTP observation timeout");
+    let request = support::read_http_request(&mut stream);
+    if request.is_empty() {
+      return false;
+    }
     stream
       .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
       .expect("write SOCKS4 HTTP response");
+    true
   });
   (addr, handle)
 }
@@ -2800,7 +2815,8 @@ fn test_async_proxy_socks5_accepts_non_empty_domain_reply() {
 #[test]
 #[cfg(feature = "async")]
 fn test_async_proxy_socks4() {
-  let (proxy_addr, proxy_handle) = spawn_socks4_http_server();
+  let (proxy_addr, proxy_handle) =
+    spawn_socks4_reply_http_server(vec![0, 90, 0, 0, 127, 0, 0, 1], false);
   block_on(async {
     let response = client()
       .get()
@@ -2811,7 +2827,91 @@ fn test_async_proxy_socks4() {
       .expect("async SOCKS4 response");
     assert_eq!("OK", response.body().string().unwrap());
   });
-  proxy_handle.join().expect("SOCKS4 server thread");
+  assert!(
+    proxy_handle.join().expect("SOCKS4 server thread"),
+    "successful SOCKS4 reply should allow the HTTP request"
+  );
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_proxy_socks4_rejects_malformed_connect_replies() {
+  let cases = vec![
+    (
+      "invalid-version",
+      vec![4, 90, 0, 0, 127, 0, 0, 1],
+      false,
+      io::ErrorKind::InvalidData,
+      "invalid response version",
+    ),
+    (
+      "request-rejected",
+      vec![0, 91, 0, 0, 127, 0, 0, 1],
+      false,
+      io::ErrorKind::Other,
+      "request rejected or failed",
+    ),
+    (
+      "identd-unreachable",
+      vec![0, 92, 0, 0, 127, 0, 0, 1],
+      false,
+      io::ErrorKind::PermissionDenied,
+      "request rejected because SOCKS server cannot connect to identd on the client",
+    ),
+    (
+      "identd-mismatch",
+      vec![0, 93, 0, 0, 127, 0, 0, 1],
+      false,
+      io::ErrorKind::PermissionDenied,
+      "request rejected because the client program and identd report different user-ids",
+    ),
+    (
+      "unknown-reply-code",
+      vec![0, 94, 0, 0, 127, 0, 0, 1],
+      false,
+      io::ErrorKind::InvalidData,
+      "invalid response code",
+    ),
+    (
+      "truncated-reply",
+      vec![0, 90, 0, 0, 127, 0, 0],
+      true,
+      io::ErrorKind::UnexpectedEof,
+      "unexpected end of file",
+    ),
+  ];
+
+  for (case, connect_reply, shutdown_after_reply, expected_kind, expected_message) in cases {
+    let (proxy_addr, proxy_handle) =
+      spawn_socks4_reply_http_server(connect_reply, shutdown_after_reply);
+    let error = block_on(async {
+      client()
+        .get()
+        .url(format!("http://127.0.0.1:80/socks4-{case}"))
+        .proxy(Proxy::socks4("127.0.0.1", proxy_addr.port().into()))
+        .rasync()
+        .await
+    })
+    .expect_err("malformed SOCKS4 CONNECT reply should be rejected");
+
+    assert!(
+      error.to_string().starts_with("error sending request"),
+      "unexpected error: {error}"
+    );
+    assert!(!error.is_timeout(), "malformed reply timed out: {error}");
+    let source = error
+      .source()
+      .expect("malformed reply should preserve its source error");
+    let source = source
+      .downcast_ref::<io::Error>()
+      .expect("malformed reply source should be an io::Error");
+    assert_eq!(expected_kind, source.kind(), "unexpected source: {source}");
+    assert_eq!(expected_message, source.to_string());
+    assert!(
+      !proxy_handle.join().expect("SOCKS4 reply server thread"),
+      "malformed SOCKS4 reply sent an HTTP request for {case}"
+    );
+  }
 }
 
 #[test]
