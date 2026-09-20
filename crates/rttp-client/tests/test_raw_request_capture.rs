@@ -7572,6 +7572,149 @@ fn raw_prefers_reduced_transparency_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn prefers_reduced_data_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-prefers-reduced-data", "legacy"))
+      .prefers_reduced_data("\tReDuCe \t")
+      .expect("Sec-CH-Prefers-Reduced-Data should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("reduce"),
+    header_value(&request, "Sec-CH-Prefers-Reduced-Data")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| {
+        line
+          .to_ascii_lowercase()
+          .starts_with("sec-ch-prefers-reduced-data:")
+      })
+      .count(),
+    "typed Sec-CH-Prefers-Reduced-Data should replace an existing same-name field"
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_prefers_reduced_data_helper_matches_blocking_contract() {
+  let request = capture_request(|base_url| {
+    block_on(
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .header(("SEC-CH-PREFERS-REDUCED-DATA", "legacy"))
+        .prefers_reduced_data("\tReDuCe \t")
+        .expect("Sec-CH-Prefers-Reduced-Data should be accepted")
+        .rasync(),
+    )
+    .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("reduce"),
+    header_value(&request, "Sec-CH-Prefers-Reduced-Data")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| {
+        line
+          .to_ascii_lowercase()
+          .starts_with("sec-ch-prefers-reduced-data:")
+      })
+      .count(),
+    "typed Sec-CH-Prefers-Reduced-Data should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn prefers_reduced_data_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    " ",
+    "auto",
+    "reduce, no-preference",
+    "reduce\0",
+    "reduce\r\nInjected: yes",
+    "reduce\u{0080}",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .prefers_reduced_data(value)
+        .expect_err("invalid Sec-CH-Prefers-Reduced-Data input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-Prefers-Reduced-Data input must not open a socket"
+    );
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_prefers_reduced_data_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    " ",
+    "auto",
+    "reduce, no-preference",
+    "reduce\0",
+    "reduce\r\nInjected: yes",
+    "reduce\u{0080}",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = block_on(async {
+        let mut http_client = client();
+        let request = http_client.get().url(format!("{}/asset", base_url));
+        request.prefers_reduced_data(value)?.rasync().await
+      })
+      .expect_err("invalid Sec-CH-Prefers-Reduced-Data input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-Prefers-Reduced-Data input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_prefers_reduced_data_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-Prefers-Reduced-Data", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request, "Sec-CH-Prefers-Reduced-Data")
+  );
+}
+
+#[test]
 fn prefers_contrast_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()

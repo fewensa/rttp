@@ -54,6 +54,8 @@ pub use rttp_protocol::client_hints::{
   PrefersColorSchemeParseError as HttpPrefersColorSchemeParseError,
   PrefersContrast as HttpPrefersContrast,
   PrefersContrastParseError as HttpPrefersContrastParseError,
+  PrefersReducedData as HttpPrefersReducedData,
+  PrefersReducedDataParseError as HttpPrefersReducedDataParseError,
   PrefersReducedMotion as HttpPrefersReducedMotion,
   PrefersReducedMotionParseError as HttpPrefersReducedMotionParseError,
   PrefersReducedTransparency as HttpPrefersReducedTransparency,
@@ -699,6 +701,19 @@ impl Request {
       return Ok(None);
     }
     HttpPrefersReducedTransparency::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Prefers-Reduced-Data` request Client
+  /// Hint metadata without inferring preferences, adapting content,
+  /// negotiating content, or emitting Client Hints.
+  pub fn prefers_reduced_data(
+    &self,
+  ) -> Result<Option<HttpPrefersReducedData>, HttpPrefersReducedDataParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-Prefers-Reduced-Data").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPrefersReducedData::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Contrast` request Client Hint
@@ -3333,6 +3348,28 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpPrefersReducedTransparency::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Prefers-Reduced-Data` request Client
+  /// Hint metadata without inferring preferences, adapting content,
+  /// negotiating content, or emitting Client Hints.
+  pub fn prefers_reduced_data(
+    &self,
+  ) -> Result<Option<HttpPrefersReducedData>, HttpPrefersReducedDataParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Sec-CH-Prefers-Reduced-Data")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPrefersReducedData::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Contrast` request Client Hint

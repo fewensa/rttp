@@ -23,7 +23,8 @@ use rttp::server::{
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpPrefersColorScheme,
   HttpPrefersColorSchemeParseError, HttpPrefersContrast, HttpPrefersContrastParseError,
-  HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError, HttpPrefersReducedTransparency,
+  HttpPrefersReducedData, HttpPrefersReducedDataParseError, HttpPrefersReducedMotion,
+  HttpPrefersReducedMotionParseError, HttpPrefersReducedTransparency,
   HttpPrefersReducedTransparencyParseError, HttpProxyAuthorization, HttpProxyStatus,
   HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
@@ -637,6 +638,54 @@ fn compatibility_facade_exports_prefers_reduced_transparency_request_metadata() 
   assert_eq!(
     Some("no-preference"),
     duplicate.header("Sec-CH-Prefers-Reduced-Transparency")
+  );
+}
+
+#[test]
+fn compatibility_facade_exports_prefers_reduced_data_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Data: \tReDuCe \t\r\n\r\n",
+  )
+  .expect("Prefers-Reduced-Data request should parse");
+  let data: HttpPrefersReducedData = request
+    .prefers_reduced_data()
+    .expect("Prefers-Reduced-Data should parse")
+    .expect("Prefers-Reduced-Data should be present");
+  assert_eq!("reduce", data.header_value());
+  assert_eq!(
+    Some("ReDuCe"),
+    request.header("Sec-CH-Prefers-Reduced-Data")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Prefers-Reduced-Data should parse");
+  assert_eq!(
+    None,
+    absent
+      .prefers_reduced_data()
+      .expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Data: auto\r\n\r\n",
+  )
+  .expect("malformed Prefers-Reduced-Data should remain available");
+  let _: HttpPrefersReducedDataParseError = malformed
+    .prefers_reduced_data()
+    .expect_err("unknown Prefers-Reduced-Data should fail");
+  assert_eq!(
+    Some("auto"),
+    malformed.header("Sec-CH-Prefers-Reduced-Data")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Data: no-preference\r\nsec-ch-prefers-reduced-data: reduce\r\n\r\n",
+  )
+  .expect("duplicate Prefers-Reduced-Data fields should remain parseable");
+  assert!(duplicate.prefers_reduced_data().is_err());
+  assert_eq!(
+    Some("no-preference"),
+    duplicate.header("Sec-CH-Prefers-Reduced-Data")
   );
 }
 
