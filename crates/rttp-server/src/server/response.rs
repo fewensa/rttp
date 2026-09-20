@@ -196,6 +196,10 @@ pub use rttp_protocol::permissions_policy_report_only::{
   PermissionsPolicyReportOnlyParseError as HttpPermissionsPolicyReportOnlyParseError,
 };
 pub use rttp_protocol::pragma::{Pragma as HttpPragma, PragmaParseError as HttpPragmaParseError};
+pub use rttp_protocol::prefer::{
+  PreferenceApplied as HttpPreferenceApplied,
+  PreferenceAppliedParseError as HttpPreferenceAppliedParseError,
+};
 pub use rttp_protocol::priority::{
   Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
   PriorityParseError as HttpPriorityParseError,
@@ -2187,6 +2191,23 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Preference-Applied` response metadata without
+  /// applying preference semantics.
+  pub fn with_preference_applied(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpPreferenceAppliedParseError> {
+    let preference_applied = HttpPreferenceApplied::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Preference-Applied"));
+    self.headers.push(HttpHeader::new(
+      "Preference-Applied",
+      preference_applied.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Surrogate-Control` response metadata without
   /// applying CDN cache policy or translating directives into `Cache-Control`.
   pub fn with_surrogate_control(
@@ -2774,6 +2795,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpPragma::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Preference-Applied` response metadata without applying
+  /// preference semantics.
+  pub fn preference_applied(
+    &self,
+  ) -> Result<Option<HttpPreferenceApplied>, HttpPreferenceAppliedParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Preference-Applied"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPreferenceApplied::parse_values(values).map(Some)
   }
 
   /// Parses `Link` response metadata without enabling preload, redirects,

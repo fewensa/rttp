@@ -66,6 +66,22 @@ values return `HttpRetryAfterParseError`. Raw response headers remain
 available after typed parse failures. RTTP does not sleep, retry, replay,
 apply backoff, integrate with a scheduler, calculate cache freshness, or
 decide status-code retry policy from `Retry-After`.
+
+## Response Preference-Applied metadata
+
+`HttpResponse::with_preference_applied(value)` validates and replaces
+`Preference-Applied` response metadata through the shared protocol
+`HttpPreferenceApplied` type. `HttpResponse::preference_applied()` parses all
+case-insensitive attached fields in wire order and returns `Ok(None)` when the
+field is absent. The server facade also exposes
+`HttpPreferenceAppliedParseError` for typed error handling.
+
+Malformed values and duplicate preferences return the typed parse error while
+leaving raw response fields available through ordinary header serialization.
+Invalid typed declarations are rejected before replacement. These helpers only
+declare and inspect metadata; they do not apply `Prefer` semantics or choose
+response status, representation, or processing policy.
+
 ## Response HTTP-date metadata
 
 `HttpResponse::with_date(time)`, `with_expires(time)`, and
