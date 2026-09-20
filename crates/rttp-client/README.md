@@ -1571,6 +1571,20 @@ generate Client Hints automatically, retry, or apply browser policy. Raw
 values remain available through
 `header(("Sec-CH-Prefers-Reduced-Transparency", "..."))`.
 
+## Bounded Sec-CH-Prefers-Reduced-Data request Client Hint metadata
+
+`HttpClient::prefers_reduced_data(value)` validates and emits one bounded
+`Sec-CH-Prefers-Reduced-Data` request field through the shared
+`PrefersReducedData` type, replacing any existing case-insensitive field.
+`PrefersReducedData::parse()` accepts `no-preference` and `reduce`
+case-insensitively with optional surrounding SP or HTAB, while
+`header_value()` emits lowercase canonical text. Empty, unknown, comma-list,
+duplicate, control-byte, non-ASCII, and oversized values are rejected before
+connecting. This helper declares metadata only; it does not infer a
+preference, adapt content, negotiate `Accept-CH`, generate Client Hints
+automatically, retry, or apply browser policy. Raw values remain available
+through `header(("Sec-CH-Prefers-Reduced-Data", "..."))`.
+
 ## Bounded Sec-CH-Prefers-Contrast request Client Hint metadata
 
 `HttpClient::prefers_contrast(value)` validates and emits one bounded (64 KiB)

@@ -40,7 +40,8 @@ use rttp_server::server::{
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpPrefersColorScheme,
   HttpPrefersColorSchemeParseError, HttpPrefersContrast, HttpPrefersContrastParseError,
-  HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError, HttpPrefersReducedTransparency,
+  HttpPrefersReducedData, HttpPrefersReducedDataParseError, HttpPrefersReducedMotion,
+  HttpPrefersReducedMotionParseError, HttpPrefersReducedTransparency,
   HttpPrefersReducedTransparencyParseError, HttpProxyAuthenticate, HttpProxyAuthenticateChallenge,
   HttpProxyAuthenticateParameter, HttpProxyAuthenticateParseError, HttpProxyAuthenticationInfo,
   HttpProxyAuthenticationInfoParameter, HttpProxyAuthenticationInfoParseError,
@@ -2091,6 +2092,71 @@ fn request_facade_parses_prefers_reduced_transparency_metadata_without_negotiati
     HttpPrefersReducedTransparency::parse("reduce\0").expect_err("control byte should fail");
   assert!(
     HttpPrefersReducedTransparency::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized value should fail"
+  );
+}
+
+#[test]
+fn request_facade_parses_prefers_reduced_data_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nsec-ch-prefers-reduced-data: \tReDuCe \t\r\n\r\n",
+  )
+  .expect("Prefers-Reduced-Data request should parse");
+  let data: HttpPrefersReducedData = request
+    .prefers_reduced_data()
+    .expect("Prefers-Reduced-Data should parse")
+    .expect("Prefers-Reduced-Data should be present");
+  assert_eq!("reduce", data.header_value());
+  assert_eq!(
+    Some("ReDuCe"),
+    request.header("Sec-CH-Prefers-Reduced-Data")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Prefers-Reduced-Data should parse");
+  assert_eq!(
+    None,
+    absent
+      .prefers_reduced_data()
+      .expect("missing Prefers-Reduced-Data should be valid")
+  );
+
+  for value in ["", "auto", "reduce, no-preference"] {
+    let raw = format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Data: {value}\r\n\r\n"
+    );
+    let malformed = HttpRequest::parse(raw.as_bytes())
+      .expect("malformed Prefers-Reduced-Data should remain available");
+    let _: HttpPrefersReducedDataParseError = malformed
+      .prefers_reduced_data()
+      .expect_err("malformed Prefers-Reduced-Data should fail");
+    assert_eq!(Some(value), malformed.header("Sec-CH-Prefers-Reduced-Data"));
+  }
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Data: no-preference\r\nsec-ch-prefers-reduced-data: reduce\r\n\r\n",
+  )
+  .expect("duplicate Prefers-Reduced-Data request should retain raw metadata");
+  assert!(duplicate.prefers_reduced_data().is_err());
+  assert_eq!(
+    Some("no-preference"),
+    duplicate.header("Sec-CH-Prefers-Reduced-Data")
+  );
+
+  let non_ascii = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Data: \x80\r\n\r\n",
+  )
+  .expect("non-ASCII Prefers-Reduced-Data should remain available");
+  assert!(non_ascii.prefers_reduced_data().is_err());
+  assert_eq!(
+    Some("\u{0080}"),
+    non_ascii.header("Sec-CH-Prefers-Reduced-Data")
+  );
+
+  let _: HttpPrefersReducedDataParseError =
+    HttpPrefersReducedData::parse("reduce\0").expect_err("control byte should fail");
+  assert!(
+    HttpPrefersReducedData::parse("a".repeat(64 * 1024 + 1)).is_err(),
     "oversized value should fail"
   );
 }

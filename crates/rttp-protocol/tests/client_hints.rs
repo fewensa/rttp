@@ -1,11 +1,12 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
-  PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChUaArch, SecChUaBitness,
-  SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile, SecChUaModel, SecChUaPlatform,
-  SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES,
-  MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES,
-  MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES,
-  MAX_PREFERS_CONTRAST_VALUE_BYTES, MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES,
+  PrefersReducedData, PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChUaArch,
+  SecChUaBitness, SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile, SecChUaModel,
+  SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width,
+  MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
+  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
+  MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
+  MAX_PREFERS_REDUCED_DATA_VALUE_BYTES, MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES,
   MAX_PREFERS_REDUCED_TRANSPARENCY_VALUE_BYTES, MAX_RTT_VALUE_BYTES,
   MAX_SEC_CH_UA_ARCH_VALUE_BYTES, MAX_SEC_CH_UA_BITNESS_VALUE_BYTES,
   MAX_SEC_CH_UA_FORM_FACTORS_ITEMS, MAX_SEC_CH_UA_FORM_FACTORS_TOTAL_BYTES,
@@ -905,6 +906,59 @@ fn prefers_reduced_transparency_rejects_invalid_duplicate_oversized_and_control_
   let oversized = "a".repeat(MAX_PREFERS_REDUCED_TRANSPARENCY_VALUE_BYTES + 1);
   assert!(PrefersReducedTransparency::parse(&oversized).is_err());
   assert!(PrefersReducedTransparency::parse_values(["reduce", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn prefers_reduced_data_accepts_case_insensitive_tokens_and_canonicalizes_them() {
+  assert_eq!(
+    "no-preference",
+    PrefersReducedData::NoPreference.header_value()
+  );
+  assert_eq!("reduce", PrefersReducedData::Reduce.header_value());
+
+  for (value, expected, canonical) in [
+    (
+      "No-Preference",
+      PrefersReducedData::NoPreference,
+      "no-preference",
+    ),
+    ("REDUCE", PrefersReducedData::Reduce, "reduce"),
+  ] {
+    let data =
+      PrefersReducedData::parse(format!("\t{value} \t")).expect("valid prefers-reduced-data value");
+    assert_eq!(expected, data);
+    assert_eq!(canonical, data.header_value());
+    assert_eq!(
+      data,
+      PrefersReducedData::parse(data.header_value()).expect("roundtrip")
+    );
+  }
+}
+
+#[test]
+fn prefers_reduced_data_rejects_invalid_duplicate_oversized_and_control_values() {
+  assert!(PrefersReducedData::parse_values(["no-preference", "reduce"]).is_err());
+  assert!(PrefersReducedData::parse_values([]).is_err());
+
+  for value in [
+    "",
+    " ",
+    "auto",
+    "reduce, no-preference",
+    "reduce\0",
+    "reduce\r\nInjected: yes",
+    "reduce{7f}",
+    "reduce\u{0080}",
+  ] {
+    assert!(
+      PrefersReducedData::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let oversized = "a".repeat(MAX_PREFERS_REDUCED_DATA_VALUE_BYTES + 1);
+  assert!(PrefersReducedData::parse(&oversized).is_err());
+  assert!(PrefersReducedData::parse_values(["reduce", oversized.as_str()]).is_err());
 }
 
 #[test]

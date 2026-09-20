@@ -1916,6 +1916,7 @@ gain additional HTTP/2 header-block handling.
 | Sec-CH-UA-Form-Factors request Client Hint | `HttpClient::sec_ch_ua_form_factors` emits bounded RFC 8941 string-list `Sec-CH-UA-Form-Factors` metadata through `SecChUaFormFactors`; server `Request::sec_ch_ua_form_factors()` and `HttpRequest::sec_ch_ua_form_factors()` parse the ordered list, combining repeated field lines in order, and preserve raw values on errors | No device-class inference, UA brands family, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-Prefers-Reduced-Motion request Client Hint | `HttpClient::prefers_reduced_motion` emits bounded singleton `Sec-CH-Prefers-Reduced-Motion` metadata through `PrefersReducedMotion`; server `Request::prefers_reduced_motion()` and `HttpRequest::prefers_reduced_motion()` parse case-insensitive `no-preference`/`reduce` tokens and preserve raw values on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-Prefers-Reduced-Transparency request Client Hint | `HttpClient::prefers_reduced_transparency` emits bounded singleton `Sec-CH-Prefers-Reduced-Transparency` metadata through `PrefersReducedTransparency`; server `Request::prefers_reduced_transparency()` and `HttpRequest::prefers_reduced_transparency()` parse case-insensitive `no-preference`/`reduce` tokens and preserve raw values on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
+| Sec-CH-Prefers-Reduced-Data request Client Hint | `HttpClient::prefers_reduced_data` emits bounded singleton `Sec-CH-Prefers-Reduced-Data` metadata through `PrefersReducedData`; server `Request::prefers_reduced_data()` and `HttpRequest::prefers_reduced_data()` parse case-insensitive `no-preference`/`reduce` tokens and preserve raw values on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | Sec-CH-Prefers-Contrast request Client Hint | `HttpClient::prefers_contrast` emits a bounded (64 KiB) singleton `Sec-CH-Prefers-Contrast` metadata field through `PrefersContrast`; server `Request::prefers_contrast()` and `HttpRequest::prefers_contrast()` parse case-insensitive `no-preference`/`more`/`less`/`custom` tokens and preserve raw values on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
 | ECT request Client Hint | `HttpClient::ect` emits bounded singleton `ECT` request metadata through `Ect` using tokens `slow-2g`, `2g`, `3g`, and `4g`; server `Request::ect()` and `HttpRequest::ect()` parse received fields as `HttpEct` while preserving raw values on errors | No network-condition inference, `Accept-CH` emission, Client Hints policy persistence, automatic Client Hints generation, retry, or transport changes |
 | Width request Client Hint | `HttpClient::width` emits bounded singleton `Width` request metadata through `Width`; server `Request::width()` and `HttpRequest::width()` parse received fields as `HttpWidth` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or content adaptation |
@@ -2960,6 +2961,24 @@ These helpers are metadata-only. RTTP does not infer a user preference, adapt
 content, negotiate `Accept-CH`, generate Client Hints automatically, retry,
 replay, redirect, or apply browser policy from
 `Sec-CH-Prefers-Reduced-Transparency`.
+
+### Bounded Sec-CH-Prefers-Reduced-Data request Client Hint metadata
+
+`HttpClient::prefers_reduced_data(value)` validates and emits one singleton
+`Sec-CH-Prefers-Reduced-Data` request Client Hint through the shared
+`PrefersReducedData` type. `Request::prefers_reduced_data()` and
+`HttpRequest::prefers_reduced_data()` parse received fields into
+`HttpPrefersReducedData`, accepting `no-preference` and `reduce`
+case-insensitively after trimming optional SP or HTAB and exposing lowercase
+canonical text through `header_value()`. Empty, unknown, comma-list,
+duplicate, control-byte, non-ASCII, and oversized values return parser errors
+while raw headers remain available;
+`header(("Sec-CH-Prefers-Reduced-Data", "..."))` remains an escape hatch.
+
+These helpers are metadata-only. RTTP does not infer a user preference, adapt
+content, negotiate `Accept-CH`, generate Client Hints automatically, retry,
+replay, redirect, or apply browser policy from
+`Sec-CH-Prefers-Reduced-Data`.
 
 ### Bounded Sec-CH-Prefers-Contrast request Client Hint metadata
 

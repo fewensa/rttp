@@ -438,6 +438,228 @@ fn facade_server_rejects_oversized_prefers_reduced_transparency_request_head() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_canonical_prefers_reduced_data_metadata() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Prefers-Reduced-Data server");
+  let addr = server
+    .local_addr()
+    .expect("Prefers-Reduced-Data server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .header("Sec-CH-Prefers-Reduced-Data")
+            .map(str::to_string),
+          request
+            .prefers_reduced_data()
+            .map(|data| data.map(|data| data.header_value().to_string()))
+            .map_err(|error| error.to_string()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Prefers-Reduced-Data metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Prefers-Reduced-Data metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .prefers_reduced_data("\tReDuCe ")
+    .expect("Prefers-Reduced-Data should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (Some("reduce".to_string()), Ok(Some("reduce".to_string()))),
+    observed_rx
+      .recv()
+      .expect("server should observe Prefers-Reduced-Data metadata")
+  );
+  handle.join().expect("Prefers-Reduced-Data server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_prefers_reduced_data_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind malformed Prefers-Reduced-Data server");
+  let addr = server
+    .local_addr()
+    .expect("malformed Prefers-Reduced-Data server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request
+              .header("Sec-CH-Prefers-Reduced-Data")
+              .map(str::to_string),
+            request.prefers_reduced_data().is_err(),
+          ))
+          .expect("send observed malformed Prefers-Reduced-Data");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve malformed Prefers-Reduced-Data request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Prefers-Reduced-Data");
+  stream
+    .write_all(
+      b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Data: auto\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Prefers-Reduced-Data request");
+
+  assert_eq!(
+    (Some("auto".to_string()), true),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed Prefers-Reduced-Data")
+  );
+  handle
+    .join()
+    .expect("malformed Prefers-Reduced-Data server thread");
+}
+
+#[test]
+fn facade_server_rejects_duplicate_prefers_reduced_data_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind duplicate Prefers-Reduced-Data server");
+  let addr = server
+    .local_addr()
+    .expect("duplicate Prefers-Reduced-Data server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request
+              .header("Sec-CH-Prefers-Reduced-Data")
+              .map(str::to_string),
+            request.prefers_reduced_data().is_err(),
+          ))
+          .expect("send observed duplicate Prefers-Reduced-Data");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve duplicate Prefers-Reduced-Data request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect duplicate Prefers-Reduced-Data");
+  stream
+    .write_all(
+      b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Data: no-preference\r\nsec-ch-prefers-reduced-data: reduce\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write duplicate Prefers-Reduced-Data request");
+
+  assert_eq!(
+    (Some("no-preference".to_string()), true),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe duplicate Prefers-Reduced-Data")
+  );
+  handle
+    .join()
+    .expect("duplicate Prefers-Reduced-Data server thread");
+}
+
+#[test]
+fn facade_server_rejects_non_ascii_prefers_reduced_data_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind non-ASCII Prefers-Reduced-Data server");
+  let addr = server
+    .local_addr()
+    .expect("non-ASCII Prefers-Reduced-Data server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request
+              .header("Sec-CH-Prefers-Reduced-Data")
+              .map(str::to_string),
+            request.prefers_reduced_data().is_err(),
+          ))
+          .expect("send observed non-ASCII Prefers-Reduced-Data");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve non-ASCII Prefers-Reduced-Data request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect non-ASCII Prefers-Reduced-Data");
+  stream
+    .write_all(
+      b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Data: \x80\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write non-ASCII Prefers-Reduced-Data request");
+
+  assert_eq!(
+    (Some("\u{0080}".to_string()), true),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe non-ASCII Prefers-Reduced-Data")
+  );
+  handle
+    .join()
+    .expect("non-ASCII Prefers-Reduced-Data server thread");
+}
+
+#[test]
+fn facade_server_rejects_oversized_prefers_reduced_data_request_head() {
+  // HTTP/1.1 rejects this request before handler dispatch because the shared
+  // request-head bound is smaller than the metadata value plus framing.
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind oversized Prefers-Reduced-Data server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("oversized Prefers-Reduced-Data server addr");
+  let (observed_tx, observed_rx) = mpsc::channel::<()>();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| {
+        observed_tx
+          .send(())
+          .expect("handler must not observe oversized request head");
+        HttpResponse::ok("unreachable")
+      })
+      .expect("oversized request head should be answered as 400");
+  });
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let request = format!(
+    "GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Data: {oversized}\r\nConnection: close\r\n\r\n"
+  );
+  let mut stream = TcpStream::connect(addr).expect("connect oversized Prefers-Reduced-Data");
+  stream
+    .write_all(request.as_bytes())
+    .expect("write oversized Prefers-Reduced-Data request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read oversized request-head response");
+  let response = String::from_utf8(response).expect("response should be utf-8");
+
+  assert!(
+    response.starts_with("HTTP/1.1 400 "),
+    "oversized request head should be rejected before handler dispatch: {response}"
+  );
+  assert!(
+    observed_rx.try_recv().is_err(),
+    "oversized Prefers-Reduced-Data must not reach the handler"
+  );
+  handle
+    .join()
+    .expect("oversized Prefers-Reduced-Data server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_canonical_prefers_contrast_metadata() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Prefers-Contrast server");

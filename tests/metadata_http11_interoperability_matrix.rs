@@ -21,6 +21,7 @@ const ECT_CANONICAL: &str = "4g";
 const PREFERS_COLOR_SCHEME_CANONICAL: &str = "dark";
 const PREFERS_REDUCED_MOTION_CANONICAL: &str = "reduce";
 const PREFERS_REDUCED_TRANSPARENCY_CANONICAL: &str = "reduce";
+const PREFERS_REDUCED_DATA_CANONICAL: &str = "reduce";
 const PREFERS_CONTRAST_CANONICAL: &str = "custom";
 const RTT_CANONICAL: &str = "150";
 const ORIGIN_AGENT_CLUSTER_CANONICAL: &str = "?1";
@@ -69,6 +70,8 @@ struct ObservedRequestMetadata {
   raw_prefers_reduced_motion: Option<String>,
   prefers_reduced_transparency: Result<Option<String>, String>,
   raw_prefers_reduced_transparency: Option<String>,
+  prefers_reduced_data: Result<Option<String>, String>,
+  raw_prefers_reduced_data: Option<String>,
   prefers_contrast: Result<Option<String>, String>,
   raw_prefers_contrast: Option<String>,
   rtt: Result<Option<String>, String>,
@@ -146,6 +149,13 @@ fn observe_request(request: &Request) -> ObservedRequestMetadata {
       .map_err(|error| error.to_string()),
     raw_prefers_reduced_transparency: request
       .header("Sec-CH-Prefers-Reduced-Transparency")
+      .map(str::to_string),
+    prefers_reduced_data: request
+      .prefers_reduced_data()
+      .map(|data| data.map(|data| data.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_prefers_reduced_data: request
+      .header("Sec-CH-Prefers-Reduced-Data")
       .map(str::to_string),
     prefers_contrast: request
       .prefers_contrast()
@@ -230,6 +240,8 @@ fn attach_valid_client_metadata(client: &mut HttpClient) -> &mut HttpClient {
     .expect("mixed-case Prefers-Reduced-Motion should be accepted")
     .prefers_reduced_transparency("\tREDUCE\t")
     .expect("mixed-case Prefers-Reduced-Transparency should be accepted")
+    .prefers_reduced_data("\tREDUCE\t")
+    .expect("mixed-case Prefers-Reduced-Data should be accepted")
     .prefers_contrast("\tCuStOm\t")
     .expect("mixed-case Prefers-Contrast should be accepted")
     .rtt("\t150\t")
@@ -275,6 +287,14 @@ fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
   assert_eq!(
     Some(PREFERS_REDUCED_TRANSPARENCY_CANONICAL.to_string()),
     observed.raw_prefers_reduced_transparency
+  );
+  assert_eq!(
+    Ok(Some(PREFERS_REDUCED_DATA_CANONICAL.to_string())),
+    observed.prefers_reduced_data
+  );
+  assert_eq!(
+    Some(PREFERS_REDUCED_DATA_CANONICAL.to_string()),
+    observed.raw_prefers_reduced_data
   );
   assert_eq!(
     Ok(Some(PREFERS_CONTRAST_CANONICAL.to_string())),
@@ -572,6 +592,40 @@ fn http11_facade_roundtrip_exchanges_all_metadata_families() {
   handle.join().expect("HTTP/1.1 metadata server thread");
 }
 
+#[test]
+fn http11_prefers_reduced_data_metadata_roundtrip() {
+  let (addr, observed_rx, handle) =
+    spawn_observed_facade_server(|_| HttpResponse::ok("reduced-data"));
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .prefers_reduced_data("\tReDuCe\t")
+    .expect("Prefers-Reduced-Data should be accepted")
+    .emit()
+    .expect("Prefers-Reduced-Data response should parse");
+
+  let observed = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("server should observe Prefers-Reduced-Data");
+  assert_eq!(
+    Ok(Some(PREFERS_REDUCED_DATA_CANONICAL.to_string())),
+    observed.prefers_reduced_data
+  );
+  assert_eq!(
+    Some(PREFERS_REDUCED_DATA_CANONICAL.to_string()),
+    observed.raw_prefers_reduced_data
+  );
+  assert_eq!(
+    "reduced-data",
+    response
+      .body()
+      .string()
+      .expect("response body should parse")
+  );
+  handle.join().expect("Prefers-Reduced-Data server thread");
+}
+
 #[cfg(feature = "async")]
 #[test]
 fn async_http11_facade_roundtrip_exchanges_all_metadata_families() {
@@ -626,6 +680,8 @@ fn http11_absent_metadata_returns_ok_none() {
   assert_eq!(None, observed.raw_prefers_reduced_motion);
   assert_eq!(Ok(None), observed.prefers_reduced_transparency);
   assert_eq!(None, observed.raw_prefers_reduced_transparency);
+  assert_eq!(Ok(None), observed.prefers_reduced_data);
+  assert_eq!(None, observed.raw_prefers_reduced_data);
   assert_eq!(Ok(None), observed.prefers_contrast);
   assert_eq!(None, observed.raw_prefers_contrast);
   assert_eq!(Ok(None), observed.rtt);
@@ -766,6 +822,21 @@ fn typed_request_helpers_reject_malformed_values_before_connect() {
   reject_before_connect("oversized Prefers-Reduced-Transparency", |client| {
     client.prefers_reduced_transparency("a".repeat(64 * 1024 + 1))
   });
+  reject_before_connect("unknown Prefers-Reduced-Data", |client| {
+    client.prefers_reduced_data("auto")
+  });
+  reject_before_connect("duplicate Prefers-Reduced-Data", |client| {
+    client.prefers_reduced_data("reduce, no-preference")
+  });
+  reject_before_connect("Prefers-Reduced-Data with control byte", |client| {
+    client.prefers_reduced_data("reduce\0")
+  });
+  reject_before_connect("Prefers-Reduced-Data with non-ASCII", |client| {
+    client.prefers_reduced_data("reduce\u{0080}")
+  });
+  reject_before_connect("oversized Prefers-Reduced-Data", |client| {
+    client.prefers_reduced_data("a".repeat(64 * 1024 + 1))
+  });
   reject_before_connect("unknown Prefers-Contrast", |client| {
     client.prefers_contrast("auto")
   });
@@ -852,6 +923,7 @@ DPR: 1e1\r\n\
 Downlink: 1e1\r\n\
 ECT: 5g\r\n\
 Sec-CH-Prefers-Reduced-Transparency: auto\r\n\
+Sec-CH-Prefers-Reduced-Data: auto\r\n\
 Sec-CH-Prefers-Contrast: auto\r\n\
 Connection: close\r\n\
 \r\n",
@@ -884,6 +956,8 @@ Connection: close\r\n\
     Some("auto".to_string()),
     observed.raw_prefers_reduced_transparency
   );
+  assert!(observed.prefers_reduced_data.is_err());
+  assert_eq!(Some("auto".to_string()), observed.raw_prefers_reduced_data);
   assert!(observed.prefers_contrast.is_err());
   assert_eq!(Some("auto".to_string()), observed.raw_prefers_contrast);
   assert!(
@@ -919,6 +993,8 @@ ECT: 3g\r\n\
 ect: 4g\r\n\
 Sec-CH-Prefers-Reduced-Transparency: no-preference\r\n\
 sec-ch-prefers-reduced-transparency: reduce\r\n\
+Sec-CH-Prefers-Reduced-Data: no-preference\r\n\
+sec-ch-prefers-reduced-data: reduce\r\n\
 Sec-CH-Prefers-Contrast: more\r\n\
 sec-ch-prefers-contrast: less\r\n\
 Connection: close\r\n\
@@ -946,6 +1022,11 @@ Connection: close\r\n\
   assert_eq!(
     Some("no-preference".to_string()),
     observed.raw_prefers_reduced_transparency
+  );
+  assert!(observed.prefers_reduced_data.is_err());
+  assert_eq!(
+    Some("no-preference".to_string()),
+    observed.raw_prefers_reduced_data
   );
   assert!(observed.prefers_contrast.is_err());
   assert_eq!(Some("more".to_string()), observed.raw_prefers_contrast);
