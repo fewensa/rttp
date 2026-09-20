@@ -450,6 +450,27 @@ fn raw_http11_response(headers: &[(&str, &str)], body: &str) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn assert_oversized_final_response_head_rejected(label: &str, raw_response: Vec<u8>) {
+  assert!(
+    raw_response.len() > fixtures::response::MAX_HEAD_BYTES,
+    "{label} fixture should exceed the response head limit"
+  );
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+  let error = client()
+    .get()
+    .url(format!("http://{addr}/matrix/oversized-response-head"))
+    .emit()
+    .expect_err("oversized final response head should be rejected");
+
+  assert!(
+    error
+      .to_string()
+      .contains("HTTP response head is too large"),
+    "{label}: unexpected error: {error}"
+  );
+  handle.join().expect("oversized raw response server thread");
+}
+
 fn assert_sync_rejected(
   label: &str,
   headers: &[(&str, &str)],
@@ -545,12 +566,12 @@ fn sync_http11_cache_metadata_bounds_preserve_raw_fields_and_body() {
     |response| response.cache_control().is_err(),
   );
   let oversized_cache_control = fixtures::cache_control::oversized_value();
-  assert_sync_rejected(
+  assert_oversized_final_response_head_rejected(
     "Cache-Control oversized",
-    &[("Cache-Control", oversized_cache_control.as_str())],
-    "Cache-Control",
-    &[oversized_cache_control.as_str()],
-    |response| response.cache_control().is_err(),
+    raw_http11_response(
+      &[("Cache-Control", oversized_cache_control.as_str())],
+      "malformed",
+    ),
   );
 
   let too_many_cdn = fixtures::cache_control::too_many_directives_value();
@@ -562,12 +583,12 @@ fn sync_http11_cache_metadata_bounds_preserve_raw_fields_and_body() {
     |response| response.cdn_cache_control().is_err(),
   );
   let oversized_cdn = fixtures::cache_control::oversized_value();
-  assert_sync_rejected(
+  assert_oversized_final_response_head_rejected(
     "CDN-Cache-Control oversized",
-    &[("CDN-Cache-Control", oversized_cdn.as_str())],
-    "CDN-Cache-Control",
-    &[oversized_cdn.as_str()],
-    |response| response.cdn_cache_control().is_err(),
+    raw_http11_response(
+      &[("CDN-Cache-Control", oversized_cdn.as_str())],
+      "malformed",
+    ),
   );
 
   let too_many_members = fixtures::cache_status::too_many_members_value();
@@ -587,12 +608,9 @@ fn sync_http11_cache_metadata_bounds_preserve_raw_fields_and_body() {
     |response| response.cache_status().is_err(),
   );
   let oversized_status = fixtures::cache_status::oversized_value();
-  assert_sync_rejected(
+  assert_oversized_final_response_head_rejected(
     "Cache-Status oversized",
-    &[("Cache-Status", oversized_status.as_str())],
-    "Cache-Status",
-    &[oversized_status.as_str()],
-    |response| response.cache_status().is_err(),
+    raw_http11_response(&[("Cache-Status", oversized_status.as_str())], "malformed"),
   );
 
   let too_many_warnings = fixtures::warning::too_many_items_value();
@@ -604,21 +622,15 @@ fn sync_http11_cache_metadata_bounds_preserve_raw_fields_and_body() {
     |response| response.warning().is_err(),
   );
   let oversized_warning = fixtures::warning::oversized_value();
-  assert_sync_rejected(
+  assert_oversized_final_response_head_rejected(
     "Warning oversized",
-    &[("Warning", oversized_warning.as_str())],
-    "Warning",
-    &[oversized_warning.as_str()],
-    |response| response.warning().is_err(),
+    raw_http11_response(&[("Warning", oversized_warning.as_str())], "malformed"),
   );
 
   let oversized_age = format!("1{}", "0".repeat(64 * 1024));
-  assert_sync_rejected(
+  assert_oversized_final_response_head_rejected(
     "Age oversized",
-    &[("Age", oversized_age.as_str())],
-    "Age",
-    &[oversized_age.as_str()],
-    |response| response.age().is_err(),
+    raw_http11_response(&[("Age", oversized_age.as_str())], "malformed"),
   );
 
   let server_over_count = HttpResponse::ok(BODY)

@@ -6680,6 +6680,28 @@ fn assert_informational_response(
   }
 }
 
+fn assert_oversized_final_response_head_rejected(name: &str, raw_response: Vec<u8>) {
+  assert!(
+    raw_response.len() > fixtures::response::MAX_HEAD_BYTES,
+    "{name} fixture should exceed the response head limit"
+  );
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let error = client()
+    .get()
+    .url(format!("http://{addr}/matrix/oversized-response-head"))
+    .emit()
+    .expect_err("oversized final response head should be rejected");
+
+  assert!(
+    error
+      .to_string()
+      .contains("HTTP response head is too large"),
+    "{name}: unexpected error: {error}"
+  );
+  handle.join().expect("oversized raw response server thread");
+}
+
 fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
   let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
 
@@ -7394,10 +7416,9 @@ fn sync_client_service_worker_allowed_helper_rejects_malformed_duplicate_and_ove
   );
 
   let oversized = format!("/{}", "a".repeat(64 * 1024));
-  assert_service_worker_allowed_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Service-Worker-Allowed value",
     service_worker_allowed_response(&[&oversized]),
-    &[&oversized],
   );
 }
 
@@ -8415,22 +8436,7 @@ fn sync_client_http_date_helpers_reject_duplicate_and_oversized_shared_matrix() 
     "HTTP/1.1 200 OK\r\nDate: {oversized}\r\nExpires: {oversized}\r\nLast-Modified: {oversized}\r\nContent-Length: 2\r\n\r\nOK"
   )
   .into_bytes();
-  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
-
-  let response = client()
-    .get()
-    .url(format!("http://{addr}/matrix/http-date-oversized"))
-    .emit()
-    .expect("oversized HTTP-date response remains parseable");
-
-  assert!(response.date().is_err());
-  assert!(response.expires().is_err());
-  assert!(response.last_modified_date().is_err());
-  assert_eq!(Some(&oversized), response.header_value("Date"));
-  assert_eq!(Some(&oversized), response.header_value("Expires"));
-  assert_eq!(Some(&oversized), response.header_value("Last-Modified"));
-  assert_eq!("OK", response.body().string().unwrap());
-  handle.join().expect("raw response server thread");
+  assert_oversized_final_response_head_rejected("oversized HTTP-date response", raw_response);
 }
 
 #[test]
@@ -8504,7 +8510,7 @@ fn sync_client_cache_control_helper_enforces_shared_bounds() {
     "too many response Cache-Control directives",
     cache_control_response(&[&fixtures::cache_control::too_many_directives_value()]),
   );
-  assert_cache_control_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized response Cache-Control value",
     cache_control_response(&[&fixtures::cache_control::oversized_value()]),
   );
@@ -8516,7 +8522,7 @@ fn sync_client_retry_after_helper_rejects_duplicate_singleton_and_oversized_valu
     "duplicate Retry-After header fields",
     retry_after_response(&["60", "120"], false),
   );
-  assert_retry_after_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Retry-After value",
     retry_after_response(&[&fixtures::retry_after::oversized_value()], false),
   );
@@ -8530,10 +8536,9 @@ fn sync_client_content_location_helper_rejects_duplicate_singleton_and_oversized
     "/one",
   );
   let oversized = fixtures::content_location::oversized_value();
-  assert_content_location_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Content-Location value",
     content_location_response(&[&oversized], false),
-    &oversized,
   );
 }
 
@@ -8551,10 +8556,9 @@ fn sync_client_content_disposition_helper_rejects_duplicates_and_enforces_shared
   );
 
   let oversized = fixtures::content_disposition::oversized_value();
-  assert_content_disposition_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Content-Disposition value",
     content_disposition_response(&[&oversized]),
-    &[&oversized],
   );
 
   let too_many = fixtures::content_disposition::too_many_parameters_value();
@@ -8582,10 +8586,9 @@ fn sync_client_content_type_helper_rejects_duplicates_and_enforces_shared_bounds
   );
 
   let oversized = fixtures::content_type::oversized_value();
-  assert_content_type_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Content-Type value",
     content_type_response(&[&oversized], false),
-    &[&oversized],
   );
 
   let too_many = fixtures::content_type::too_many_client_parameters_value();
@@ -8612,10 +8615,9 @@ fn sync_client_content_encoding_helper_rejects_duplicates_and_enforces_shared_bo
   );
 
   let oversized = fixtures::content_encoding::oversized_value();
-  assert_content_encoding_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Content-Encoding value",
     content_encoding_response(&[&oversized], false),
-    &[&oversized],
   );
 }
 
@@ -8629,7 +8631,7 @@ fn sync_client_allow_helper_rejects_duplicate_methods_and_enforces_shared_bounds
     "too many Allow methods",
     allow_response(&[&fixtures::allow::too_many_methods_value()]),
   );
-  assert_allow_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Allow value",
     allow_response(&[&fixtures::allow::oversized_value()]),
   );
@@ -8648,7 +8650,7 @@ fn sync_client_accept_ranges_helper_rejects_duplicates_and_enforces_shared_bound
       false,
     ),
   );
-  assert_accept_ranges_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Accept-Ranges value",
     accept_ranges_response(&[&fixtures::accept_ranges::oversized_value()], false),
   );
@@ -8669,10 +8671,9 @@ fn sync_client_content_language_helper_rejects_duplicates_and_enforces_client_bo
     ),
     "OK",
   );
-  assert_content_language_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Content-Language value",
     content_language_response(&[&fixtures::content_language::oversized_value()], false),
-    "OK",
   );
 }
 
@@ -8682,7 +8683,7 @@ fn sync_client_vary_helper_enforces_shared_bounds() {
     "too many Vary field names",
     vary_response(&[&fixtures::vary::too_many_field_names_value()]),
   );
-  assert_vary_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Vary value",
     vary_response(&[&fixtures::vary::oversized_value()]),
   );
@@ -8755,7 +8756,6 @@ fn sync_client_parses_cache_status_response_metadata_without_policy() {
 
 #[test]
 fn sync_client_cache_status_helper_rejects_invalid_and_bounded_metadata() {
-  let oversized = "x".repeat(64 * 1024 + 1);
   assert_cache_status_helper_rejects_but_preserves_response(
     "invalid Cache-Status boolean",
     cache_status_response(&["OriginCache; hit=yes"]),
@@ -8764,7 +8764,8 @@ fn sync_client_cache_status_helper_rejects_invalid_and_bounded_metadata() {
     "trailing Cache-Status member",
     cache_status_response(&["OriginCache,"]),
   );
-  assert_cache_status_helper_rejects_but_preserves_response(
+  let oversized = "x".repeat(64 * 1024 + 1);
+  assert_oversized_final_response_head_rejected(
     "oversized Cache-Status value",
     cache_status_response(&[oversized.as_str()]),
   );
@@ -8813,7 +8814,7 @@ fn sync_client_cdn_cache_control_helper_rejects_invalid_and_bounded_metadata() {
     "too many CDN-Cache-Control directives",
     cdn_cache_control_response(&[&fixtures::cache_control::too_many_directives_value()]),
   );
-  assert_cdn_cache_control_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized CDN-Cache-Control value",
     cdn_cache_control_response(&[&fixtures::cache_control::oversized_value()]),
   );
@@ -8872,14 +8873,14 @@ fn sync_client_surrogate_control_helper_rejects_invalid_duplicate_and_bounded_me
     "too many Surrogate-Control directives",
     surrogate_control_response(&[&fixtures::cache_control::too_many_directives_value()]),
   );
-  assert_surrogate_control_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Surrogate-Control value",
     surrogate_control_response(&[&fixtures::cache_control::oversized_value()]),
   );
 
   let first = format!("a={}", "x".repeat((64 * 1024 / 2) - 2));
   let second = format!("b={}", "x".repeat((64 * 1024 / 2) - 1));
-  assert_surrogate_control_helper_rejects_but_preserves_response(
+  assert_oversized_final_response_head_rejected(
     "oversized Surrogate-Control aggregate",
     surrogate_control_response(&[first.as_str(), second.as_str()]),
   );
