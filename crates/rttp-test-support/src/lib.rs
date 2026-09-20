@@ -204,6 +204,7 @@ pub mod request {
 pub mod response {
   pub const CONTINUE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
   pub const MAX_HEAD_BYTES: usize = 64 * 1024;
+  pub const MAX_INFORMATIONAL_RESPONSES: usize = 16;
 
   pub struct InformationalExpectation {
     pub code: u16,
@@ -473,6 +474,33 @@ pub mod response {
 
   pub fn invalid_early_hints_metadata_cases() -> &'static [InvalidEarlyHintsMetadataCase] {
     INVALID_EARLY_HINTS_METADATA_CASES
+  }
+
+  fn informational_response_sequence(count: usize) -> Vec<u8> {
+    let mut raw = String::new();
+    for index in 0..count {
+      let (code, reason, header) = match index % 3 {
+        0 => (100, "Continue", format!("X-Continue: {index}")),
+        1 => (102, "Processing", format!("X-Progress: {index}")),
+        _ => (
+          103,
+          "Early Hints",
+          format!("Link: </asset-{index}.css>; rel=preload"),
+        ),
+      };
+      raw.push_str(&format!("HTTP/1.1 {code} {reason}\r\n{header}\r\n\r\n"));
+    }
+    raw
+      .push_str("HTTP/1.1 200 OK\r\nX-Final: bounded-informational\r\nContent-Length: 2\r\n\r\nOK");
+    raw.into_bytes()
+  }
+
+  pub fn bounded_informational_response_sequence() -> Vec<u8> {
+    informational_response_sequence(MAX_INFORMATIONAL_RESPONSES)
+  }
+
+  pub fn excessive_informational_response_sequence() -> Vec<u8> {
+    informational_response_sequence(MAX_INFORMATIONAL_RESPONSES + 1)
   }
 
   pub fn oversized_informational_response() -> Vec<u8> {

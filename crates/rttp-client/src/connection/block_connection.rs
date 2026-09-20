@@ -6,8 +6,7 @@ use socks::{Socks4Stream, Socks5Stream, TargetAddr};
 use url::Url;
 
 use crate::connection::connection::{
-  prepend_informational_responses, Connection, ExpectContinueResult, HandoffConnection,
-  HandoffKind, StreamingRequestBody,
+  Connection, ExpectContinueResult, HandoffConnection, HandoffKind, StreamingRequestBody,
 };
 use crate::connection::connection_reader::ResponseParts;
 use crate::error;
@@ -204,10 +203,11 @@ impl<'a> BlockConnection<'a> {
         stream.flush().map_err(error::request)?;
       }
       ExpectContinueResult::BodySent(informational_responses) => {
-        return self
-          .conn
-          .block_read_stream_parts(url, &mut stream)
-          .map(|parts| prepend_informational_responses(parts, informational_responses));
+        return self.conn.block_read_stream_parts_with_informational(
+          url,
+          &mut stream,
+          informational_responses,
+        );
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }

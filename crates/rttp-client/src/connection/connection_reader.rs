@@ -17,6 +17,7 @@ const HEADER_END: &[u8] = b"\r\n\r\n";
 const CRLF: &[u8] = b"\r\n";
 pub(crate) const MAX_CHUNKED_RESPONSE_LINE_BYTES: usize = 8 * 1024;
 pub(crate) const MAX_RESPONSE_HEAD_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_INFORMATIONAL_RESPONSES: usize = 16;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ResponseBodyKind {
@@ -303,7 +304,25 @@ pub(crate) fn read_response_parts_with_informational_and_limit<R>(
 where
   R: Read + ?Sized,
 {
-  let (binary, informational_responses) = read_response_head_with_informational(reader)?;
+  read_response_parts_with_existing_informational_and_limit(
+    reader,
+    expect_no_body,
+    max_body_bytes,
+    Vec::new(),
+  )
+}
+
+pub(crate) fn read_response_parts_with_existing_informational_and_limit<R>(
+  reader: &mut R,
+  expect_no_body: bool,
+  max_body_bytes: usize,
+  informational_responses: Vec<InformationalResponse>,
+) -> error::Result<ResponseParts>
+where
+  R: Read + ?Sized,
+{
+  let (binary, informational_responses) =
+    read_response_head_with_existing_informational(reader, informational_responses)?;
   read_response_parts_after_header_with_informational_and_limit(
     reader,
     expect_no_body,
@@ -317,28 +336,33 @@ pub(crate) fn read_response_head<R>(reader: &mut R) -> error::Result<Vec<u8>>
 where
   R: Read + ?Sized,
 {
+  let mut informational_responses = 0;
   loop {
     let header = read_response_header(reader)?;
     let status_code = response_status_code(&header)?;
     if is_skippable_informational_status(status_code) {
+      if informational_responses == MAX_INFORMATIONAL_RESPONSES {
+        return Err(error::bad_response("Too many informational responses"));
+      }
+      informational_responses += 1;
       continue;
     }
     return Ok(header);
   }
 }
 
-pub(crate) fn read_response_head_with_informational<R>(
+pub(crate) fn read_response_head_with_existing_informational<R>(
   reader: &mut R,
+  mut informational_responses: Vec<InformationalResponse>,
 ) -> error::Result<(Vec<u8>, Vec<InformationalResponse>)>
 where
   R: Read + ?Sized,
 {
-  let mut informational_responses = Vec::new();
   loop {
     let header = read_response_header(reader)?;
     let status_code = response_status_code(&header)?;
     if is_skippable_informational_status(status_code) {
-      informational_responses.push(parse_informational_response(&header)?);
+      append_informational_response(&mut informational_responses, &header)?;
       continue;
     }
     return Ok((header, informational_responses));
@@ -522,6 +546,17 @@ where
 
 pub(crate) fn is_skippable_informational_status(status_code: u16) -> bool {
   status_code == 100 || (102..200).contains(&status_code)
+}
+
+pub(crate) fn append_informational_response(
+  informational_responses: &mut Vec<InformationalResponse>,
+  header: &[u8],
+) -> error::Result<()> {
+  if informational_responses.len() >= MAX_INFORMATIONAL_RESPONSES {
+    return Err(error::bad_response("Too many informational responses"));
+  }
+  informational_responses.push(parse_informational_response(header)?);
+  Ok(())
 }
 
 pub(crate) fn response_status_code(header: &[u8]) -> error::Result<u16> {
@@ -895,7 +930,9 @@ mod tests {
   use std::error::Error as StdError;
   use std::io::{self, Cursor, Read};
 
-  use super::{ConnectionReader, ResponseBodyKind, MAX_RESPONSE_HEAD_BYTES};
+  use super::{
+    ConnectionReader, ResponseBodyKind, MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
+  };
 
   #[test]
   fn test_chunked_binary_is_decoded() {
@@ -1524,6 +1561,49 @@ mod tests {
         .to_string()
         .contains("Transfer-Encoding conflicts with Content-Length"),
       "unexpected error: {error}"
+    );
+  }
+
+  #[test]
+  fn existing_informational_history_rejects_the_next_head_before_the_final_response() {
+    let existing = vec![
+      super::parse_informational_response(b"HTTP/1.1 100 Continue\r\n\r\n")
+        .unwrap();
+      MAX_INFORMATIONAL_RESPONSES
+    ];
+    let raw = concat!(
+      "HTTP/1.1 103 Early Hints\r\n",
+      "Link: </style.css>; rel=preload\r\n",
+      "\r\n",
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 2\r\n",
+      "\r\n",
+      "OK"
+    );
+    let mut cursor = Cursor::new(raw.as_bytes());
+
+    let error = match super::read_response_parts_with_existing_informational_and_limit(
+      &mut cursor,
+      false,
+      crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+      existing,
+    ) {
+      Ok(_) => {
+        panic!("combined informational history should be rejected on the next skippable head")
+      }
+      Err(error) => error,
+    };
+
+    assert!(
+      error
+        .to_string()
+        .contains("Too many informational responses"),
+      "unexpected error: {error}"
+    );
+    assert_eq!(
+      b"HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\n".len() as u64,
+      cursor.position(),
+      "the extra informational head should be rejected before the final response is read"
     );
   }
 }

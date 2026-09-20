@@ -7115,6 +7115,69 @@ fn sync_client_preserves_shared_informational_response_matrix() {
 }
 
 #[test]
+fn sync_client_preserves_the_bounded_mixed_informational_sequence() {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    fixtures::response::bounded_informational_response_sequence(),
+  );
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/informational-bounded"))
+    .emit()
+    .expect("maximum bounded informational response sequence should parse");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"bounded-informational".to_string()),
+    response.header_value("X-Final")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    fixtures::response::MAX_INFORMATIONAL_RESPONSES,
+    response.informational_responses().len()
+  );
+  let expected_codes: Vec<u16> = (0..fixtures::response::MAX_INFORMATIONAL_RESPONSES)
+    .map(|index| match index % 3 {
+      0 => 100,
+      1 => 102,
+      _ => 103,
+    })
+    .collect();
+  assert_eq!(
+    expected_codes,
+    response
+      .informational_responses()
+      .iter()
+      .map(|response| response.code())
+      .collect::<Vec<_>>()
+  );
+
+  handle.join().expect("bounded raw response server thread");
+}
+
+#[test]
+fn sync_client_rejects_one_more_than_the_informational_response_bound() {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    fixtures::response::excessive_informational_response_sequence(),
+  );
+
+  let error = client()
+    .get()
+    .url(format!("http://{addr}/matrix/informational-too-many"))
+    .emit()
+    .expect_err("seventeenth informational response should be rejected");
+
+  assert!(
+    error
+      .to_string()
+      .contains("Too many informational responses"),
+    "unexpected error: {error}"
+  );
+
+  handle.join().expect("excessive raw response server thread");
+}
+
+#[test]
 fn sync_client_filters_early_hints_from_mixed_informational_responses() {
   let raw = concat!(
     "HTTP/1.1 100 Continue\r\n",
@@ -9837,6 +9900,77 @@ fn async_client_preserves_shared_informational_response_matrix() {
 
     handle.join().expect("raw response server thread");
   }
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_client_preserves_the_bounded_mixed_informational_sequence() {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    fixtures::response::bounded_informational_response_sequence(),
+  );
+
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{addr}/matrix/informational-bounded"))
+      .rasync()
+      .await
+      .expect("maximum bounded informational response sequence should parse");
+
+    assert_eq!(200, response.code());
+    assert_eq!(
+      Some(&"bounded-informational".to_string()),
+      response.header_value("X-Final")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+    assert_eq!(
+      fixtures::response::MAX_INFORMATIONAL_RESPONSES,
+      response.informational_responses().len()
+    );
+    let expected_codes: Vec<u16> = (0..fixtures::response::MAX_INFORMATIONAL_RESPONSES)
+      .map(|index| match index % 3 {
+        0 => 100,
+        1 => 102,
+        _ => 103,
+      })
+      .collect();
+    assert_eq!(
+      expected_codes,
+      response
+        .informational_responses()
+        .iter()
+        .map(|response| response.code())
+        .collect::<Vec<_>>()
+    );
+  });
+
+  handle.join().expect("bounded raw response server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_client_rejects_one_more_than_the_informational_response_bound() {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    fixtures::response::excessive_informational_response_sequence(),
+  );
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{addr}/matrix/informational-too-many"))
+      .rasync()
+      .await
+      .expect_err("seventeenth informational response should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("Too many informational responses"),
+      "unexpected error: {error}"
+    );
+  });
+
+  handle.join().expect("excessive raw response server thread");
 }
 
 #[test]

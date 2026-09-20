@@ -11,10 +11,11 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::connection::connection_reader::{
-  is_skippable_informational_status, parse_informational_response, read_response_head,
+  append_informational_response, is_skippable_informational_status, read_response_head,
   read_response_header, read_response_parts_after_header,
-  read_response_parts_after_header_with_informational_and_limit, response_status_code,
-  ConnectionReader, ResponseParts, MAX_RESPONSE_HEAD_BYTES,
+  read_response_parts_after_header_with_informational_and_limit,
+  read_response_parts_with_existing_informational_and_limit, response_status_code, ResponseParts,
+  MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::request::{RawRequest, RequestBody};
 use crate::response::{InformationalResponse, Response};
@@ -538,16 +539,24 @@ pub(crate) enum ExpectContinueResult {
   Final(ResponseParts),
 }
 
+#[cfg(test)]
 pub(crate) fn prepend_informational_responses(
   mut parts: ResponseParts,
   mut informational_responses: Vec<InformationalResponse>,
-) -> ResponseParts {
+) -> error::Result<ResponseParts> {
+  if informational_responses
+    .len()
+    .saturating_add(parts.informational_responses.len())
+    > MAX_INFORMATIONAL_RESPONSES
+  {
+    return Err(error::bad_response("Too many informational responses"));
+  }
   if informational_responses.is_empty() {
-    return parts;
+    return Ok(parts);
   }
   informational_responses.extend(parts.informational_responses);
   parts.informational_responses = informational_responses;
-  parts
+  Ok(parts)
 }
 
 pub(crate) enum HandoffKind {
@@ -614,7 +623,7 @@ where
     if header.ends_with(b"\r\n\r\n") {
       let status_code = proxy_connect_response_status_code(&header)?;
       if is_skippable_informational_status(status_code) {
-        if informational_responses == MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES {
+        if informational_responses == MAX_INFORMATIONAL_RESPONSES {
           return Err(error::bad_proxy("Too many informational proxy responses"));
         }
         informational_responses += 1;
@@ -625,8 +634,6 @@ where
     }
   }
 }
-
-pub(crate) const MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES: usize = 16;
 
 fn proxy_connect_response_status_code(header: &[u8]) -> error::Result<u16> {
   let header = String::from_utf8(header.to_vec())
@@ -781,13 +788,24 @@ impl<'a> Connection<'a> {
   where
     S: io::Read,
   {
-    let mut reader = ConnectionReader::new_with_limit(
-      url,
+    self.block_read_stream_parts_with_informational(url, stream, Vec::new())
+  }
+
+  pub(crate) fn block_read_stream_parts_with_informational<S>(
+    &self,
+    _url: &Url,
+    stream: &mut S,
+    informational_responses: Vec<InformationalResponse>,
+  ) -> error::Result<ResponseParts>
+  where
+    S: io::Read,
+  {
+    read_response_parts_with_existing_informational_and_limit(
       stream,
       self.expect_no_response_body(),
       self.config().max_buffered_response_body_bytes(),
-    );
-    reader.response_parts()
+      informational_responses,
+    )
   }
 
   pub(crate) fn block_send_expect_continue_parts<S>(
@@ -818,12 +836,12 @@ impl<'a> Connection<'a> {
       let header = read_response_header(stream)?;
       let status_code = response_status_code(&header)?;
       if status_code == 100 {
-        informational_responses.push(parse_informational_response(&header)?);
+        append_informational_response(&mut informational_responses, &header)?;
         self.block_write_request_body(stream)?;
         return Ok(ExpectContinueResult::BodySent(informational_responses));
       }
       if is_skippable_informational_status(status_code) {
-        informational_responses.push(parse_informational_response(&header)?);
+        append_informational_response(&mut informational_responses, &header)?;
         continue;
       }
       return read_response_parts_after_header_with_informational_and_limit(
@@ -941,9 +959,11 @@ impl<'a> Connection<'a> {
     match self.block_send_expect_continue_parts(stream)? {
       ExpectContinueResult::NotUsed => self.block_write_stream(stream)?,
       ExpectContinueResult::BodySent(informational_responses) => {
-        return self
-          .block_read_stream_parts(url, stream)
-          .map(|parts| prepend_informational_responses(parts, informational_responses));
+        return self.block_read_stream_parts_with_informational(
+          url,
+          stream,
+          informational_responses,
+        );
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -1048,9 +1068,11 @@ impl<'a> Connection<'a> {
     match self.block_send_expect_continue_parts(&mut ssl_stream)? {
       ExpectContinueResult::NotUsed => self.block_write_stream(&mut ssl_stream)?,
       ExpectContinueResult::BodySent(informational_responses) => {
-        return self
-          .block_read_stream_parts(url, &mut ssl_stream)
-          .map(|parts| prepend_informational_responses(parts, informational_responses));
+        return self.block_read_stream_parts_with_informational(
+          url,
+          &mut ssl_stream,
+          informational_responses,
+        );
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -1129,9 +1151,11 @@ impl<'a> Connection<'a> {
     match self.block_send_expect_continue_parts(&mut tls)? {
       ExpectContinueResult::NotUsed => self.block_write_stream(&mut tls)?,
       ExpectContinueResult::BodySent(informational_responses) => {
-        return self
-          .block_read_stream_parts(url, &mut tls)
-          .map(|parts| prepend_informational_responses(parts, informational_responses));
+        return self.block_read_stream_parts_with_informational(
+          url,
+          &mut tls,
+          informational_responses,
+        );
       }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
@@ -1271,9 +1295,9 @@ mod tests {
   use url::Url;
 
   use super::{
-    connect_tcp_stream, parse_proxy_connect_response, proxy_authorization_value,
-    read_proxy_connect_response, strip_userinfo_for_cross_origin_redirect, write_http_request,
-    MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES,
+    connect_tcp_stream, parse_proxy_connect_response, prepend_informational_responses,
+    proxy_authorization_value, read_proxy_connect_response,
+    strip_userinfo_for_cross_origin_redirect, write_http_request, MAX_INFORMATIONAL_RESPONSES,
   };
   use crate::connection::connection_reader::MAX_RESPONSE_HEAD_BYTES;
 
@@ -1380,8 +1404,7 @@ mod tests {
 
   #[test]
   fn test_read_proxy_connect_response_rejects_excessive_informational_sequence() {
-    let raw =
-      "HTTP/1.1 103 Early Hints\r\n\r\n".repeat(MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES + 1);
+    let raw = "HTTP/1.1 103 Early Hints\r\n\r\n".repeat(MAX_INFORMATIONAL_RESPONSES + 1);
     let mut reader = Cursor::new(raw.as_bytes());
 
     let error = read_proxy_connect_response(&mut reader)
@@ -1390,6 +1413,32 @@ mod tests {
     assert!(error
       .to_string()
       .contains("Too many informational proxy responses"));
+  }
+
+  #[test]
+  fn test_expect_continue_history_rejects_excessive_merged_informational_responses() {
+    let head = crate::connection::connection_reader::parse_informational_response(
+      b"HTTP/1.1 103 Early Hints\r\n\r\n",
+    )
+    .unwrap();
+    let parts = crate::connection::connection_reader::ResponseParts {
+      binary: Vec::new(),
+      trailers: Vec::new(),
+      informational_responses: vec![head.clone()],
+      content_length: None,
+      connection_reusable: true,
+      close_connection: false,
+    };
+
+    let error =
+      match prepend_informational_responses(parts, vec![head; MAX_INFORMATIONAL_RESPONSES]) {
+        Ok(_) => panic!("merged informational response history should be bounded"),
+        Err(error) => error,
+      };
+
+    assert!(error
+      .to_string()
+      .contains("Too many informational responses"));
   }
 
   #[test]
