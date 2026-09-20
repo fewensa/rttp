@@ -23,7 +23,7 @@ use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::client_hints::{
   DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast, PrefersReducedData,
-  PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChUaArch, SecChUaBitness,
+  PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChUa, SecChUaArch, SecChUaBitness,
   SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile, SecChUaModel, SecChUaPlatform,
   SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width,
 };
@@ -681,6 +681,19 @@ impl HttpClient {
       "Sec-CH-UA-Platform-Version",
       sec_ch_ua_platform_version.header_value(),
     )))
+  }
+
+  /// Set bounded `Sec-CH-UA` request Client Hint metadata.
+  ///
+  /// Each ordered member must be an RFC 8941 string brand with exactly one
+  /// string `v` parameter. This replaces any existing case-insensitive
+  /// `Sec-CH-UA` field and only declares request metadata; RTTP does not
+  /// infer browser identity, negotiate the UA brands family, emit `Accept-CH`,
+  /// or apply browser policy.
+  pub fn sec_ch_ua<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_ch_ua = SecChUa::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Sec-CH-UA", sec_ch_ua.header_value())))
   }
 
   /// Set bounded `Sec-CH-UA-Full-Version-List` request Client Hint metadata.

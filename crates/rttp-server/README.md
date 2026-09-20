@@ -590,6 +590,18 @@ This is metadata-only: the server does not infer a platform version or
 capabilities, negotiate the UA brands family, emit `Accept-CH`, retry, or apply
 browser policy.
 
+`Request::sec_ch_ua()` and `HttpRequest::sec_ch_ua()` parse a bounded
+`Sec-CH-UA` request Client Hint into `HttpSecChUa`. Each ordered member must
+be an RFC 8941 string brand with exactly one string `v` parameter;
+`entries()` exposes `brand()` and `version()`/`v()` without reordering or
+interpreting the values. The parser permits 256 entries and 64 KiB per field
+and in aggregate, canonicalizes valid quoting, and rejects malformed,
+non-ASCII/control, missing/extra/duplicate-parameter, duplicate-field,
+excessive-entry, and oversized input. `Ok(None)` is returned when the field is
+absent, and parse errors leave the raw field available through `header()`.
+This is metadata-only: the server does not infer browser identity, negotiate
+Client Hints, emit `Accept-CH`, retry, or apply browser policy.
+
 `Request::sec_ch_ua_full_version_list()` and
 `HttpRequest::sec_ch_ua_full_version_list()` parse a bounded
 `Sec-CH-UA-Full-Version-List` request Client Hint into

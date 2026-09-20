@@ -53,25 +53,25 @@ use rttp_server::server::{
   HttpResponseDateParseError, HttpResponseExpires, HttpResponseLastModified,
   HttpResponseLastModifiedParseError, HttpRetryAfter, HttpRetryAfterParseError, HttpRtt,
   HttpRttParseError, HttpSameSite, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag,
-  HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaFormFactors,
+  HttpSecChUa, HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaFormFactors,
   HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersionList,
   HttpSecChUaFullVersionListParseError, HttpSecChUaModel, HttpSecChUaModelParseError,
-  HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64,
-  HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
-  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
-  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
-  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
-  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpSecChUaParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
+  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
+  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
+  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
   HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
   HttpViaParseError, HttpViewportWidth, HttpViewportWidthParseError, HttpWantContentDigest,
@@ -2205,6 +2205,48 @@ fn request_facade_parses_sec_ch_ua_bitness_metadata_without_negotiation() {
   assert!(
     HttpSecChUaBitness::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err(),
     "oversized value should fail"
+  );
+}
+
+#[test]
+fn request_facade_parses_sec_ch_ua_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA: \t\"Chromium\";v=\"120\", \"Not(A:Brand\";v=\"99.0\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA request should parse");
+  let list: HttpSecChUa = request
+    .sec_ch_ua()
+    .expect("Sec-CH-UA should parse")
+    .expect("Sec-CH-UA should be present");
+  assert_eq!("Chromium", list.entries()[0].brand());
+  assert_eq!("120", list.entries()[0].version());
+  assert_eq!("Not(A:Brand", list.entries()[1].brand());
+  assert_eq!(
+    "\"Chromium\";v=\"120\", \"Not(A:Brand\";v=\"99.0\"",
+    list.header_value()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA should parse");
+  assert_eq!(None, absent.sec_ch_ua().expect("absence should be valid"));
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA: Chromium;v=\"120\"\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA should remain available");
+  let _: HttpSecChUaParseError = malformed
+    .sec_ch_ua()
+    .expect_err("unquoted Sec-CH-UA brand should fail");
+  assert_eq!(Some("Chromium;v=\"120\""), malformed.header("Sec-CH-UA"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA: \"Chromium\";v=\"120\"\r\nsec-ch-ua: \"Firefox\";v=\"121\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA fields should remain parseable");
+  assert!(duplicate.sec_ch_ua().is_err());
+  assert_eq!(
+    Some("\"Chromium\";v=\"120\""),
+    duplicate.header("Sec-CH-UA")
   );
 }
 

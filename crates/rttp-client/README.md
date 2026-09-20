@@ -1526,6 +1526,21 @@ negotiate the UA brands family, emit `Accept-CH`, generate Client Hints
 automatically, retry, or apply browser policy. Raw values remain available
 through `header(("Sec-CH-UA-Platform-Version", "..."))`.
 
+## Bounded Sec-CH-UA request Client Hint metadata
+
+`HttpClient::sec_ch_ua(value)` validates and emits one canonical `Sec-CH-UA`
+request field through the shared `SecChUa` type, replacing any existing
+case-insensitive field. The value is an ordered RFC 8941 list of string brands;
+each member must carry exactly one string `v` parameter. The parser bounds each
+field value and aggregate input to 64 KiB, accepts at most 256 entries, preserves
+order, and canonicalizes valid Structured Fields quoting. Empty or malformed
+lists, non-ASCII or forbidden-control input, missing/extra/duplicate parameters,
+duplicate fields, excessive entries, and oversized values are rejected before
+connecting. This helper declares metadata only; it does not infer browser
+identity, negotiate the UA brands family, emit `Accept-CH`, generate Client
+Hints automatically, retry, or apply browser policy. Raw values remain
+available through `header(("Sec-CH-UA", "..."))`.
+
 ## Bounded Sec-CH-UA-Form-Factors request Client Hint metadata
 
 `HttpClient::sec_ch_ua_form_factors(value)` validates and emits one bounded

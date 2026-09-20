@@ -6,7 +6,8 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
   HttpAcceptRanges, HttpAllowedMethods, HttpContentDisposition, HttpContentLanguages, HttpRequest,
-  HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpRetryAfter, HttpVary,
+  HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpRetryAfter, HttpSecChUa,
+  HttpVary,
 };
 use rttp_test_support as fixtures;
 
@@ -46,6 +47,11 @@ fn cache_control_request(values: &[&str]) -> Vec<u8> {
   }
   request.push_str("\r\n");
   request.into_bytes()
+}
+
+fn sec_ch_ua_request(value: &str) -> Vec<u8> {
+  format!("GET /matrix/sec-ch-ua HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA: {value}\r\n\r\n")
+    .into_bytes()
 }
 
 fn cache_control_response(values: &[&str]) -> HttpResponse {
@@ -295,6 +301,63 @@ fn model_parser_accepts_shared_fixed_length_request_fixture() {
   assert_eq!(fixture.version, request.version());
   assert_eq!(Some(fixture.host), request.header("host"));
   assert_eq!(fixture.body, request.body());
+}
+
+#[test]
+fn model_parser_accepts_sec_ch_ua_request_matrix() {
+  let request = HttpRequest::parse(&sec_ch_ua_request(
+    "\t\"Chromium\";v=\"120\", \"Not(A:Brand\";v=\"99.0\" \t",
+  ))
+  .expect("valid Sec-CH-UA request should parse");
+  let metadata = request
+    .sec_ch_ua()
+    .expect("valid Sec-CH-UA metadata should parse")
+    .expect("valid Sec-CH-UA metadata should be present");
+  assert_eq!(2, metadata.len());
+  assert_eq!("Chromium", metadata.entries()[0].brand());
+  assert_eq!("120", metadata.entries()[0].version());
+  assert_eq!(
+    "\"Chromium\";v=\"120\", \"Not(A:Brand\";v=\"99.0\"",
+    metadata.header_value()
+  );
+
+  for (name, value) in [
+    ("malformed", "Chromium;v=\"120\""),
+    ("missing parameter", "\"Chromium\""),
+    ("extra parameter", "\"Chromium\";v=\"120\";foo=\"bar\""),
+    ("duplicate parameter", "\"Chromium\";v=\"120\";v=\"121\""),
+    ("non-ASCII", "\"Chromé\";v=\"120\""),
+  ] {
+    let request = HttpRequest::parse(&sec_ch_ua_request(value))
+      .unwrap_or_else(|error| panic!("{name} Sec-CH-UA request should remain parseable: {error}"));
+    assert!(
+      request.sec_ch_ua().is_err(),
+      "{name} Sec-CH-UA metadata should fail"
+    );
+    assert_eq!(Some(value), request.header("Sec-CH-UA"), "{name}");
+  }
+
+  let duplicate = HttpRequest::parse(
+    b"GET /matrix/sec-ch-ua HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA: \"Chromium\";v=\"120\"\r\nsec-ch-ua: \"Firefox\";v=\"121\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA request should remain parseable");
+  assert!(duplicate.sec_ch_ua().is_err());
+  assert_eq!(
+    Some("\"Chromium\";v=\"120\""),
+    duplicate.header("Sec-CH-UA")
+  );
+
+  let too_many = std::iter::repeat_n("\"Brand\";v=\"1\"", 257)
+    .collect::<Vec<_>>()
+    .join(",");
+  assert!(
+    HttpSecChUa::parse(&too_many).is_err(),
+    "excessive entries should fail"
+  );
+  assert!(
+    HttpSecChUa::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized input should fail"
+  );
 }
 
 #[test]
