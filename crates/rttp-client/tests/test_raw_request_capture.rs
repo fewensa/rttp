@@ -2,7 +2,7 @@ use rttp_test_support as support;
 
 #[cfg(feature = "async")]
 use futures::executor::block_on;
-use rttp_client::types::{Auth, Header, Proxy};
+use rttp_client::types::{Auth, FormData, Header, Para, Proxy};
 use rttp_client::{ByteRangeSpec, Config, HttpClient, SecPurpose};
 use rttp_protocol::authorization::MAX_AUTHORIZATION_VALUE_BYTES;
 use std::io::{Read, Write};
@@ -8327,4 +8327,243 @@ fn preflight_metadata_helpers_reject_invalid_input_before_connecting() {
     request.is_empty(),
     "excessive preflight field names should not open a socket"
   );
+}
+
+fn invalid_multipart_disposition_values() -> [&'static str; 7] {
+  [
+    "name\r\nInjected: yes",
+    "name\r",
+    "name\n",
+    "name\0value",
+    "name\x01value",
+    "name\x1fvalue",
+    "name\x7fvalue",
+  ]
+}
+
+fn assert_multipart_disposition_rejected(
+  request: impl FnOnce(String) -> rttp_client::error::Error,
+) {
+  let captured = capture_optional_request(|base_url| {
+    let error = request(base_url);
+    assert!(error.is_builder());
+    assert!(
+      error
+        .to_string()
+        .contains("Invalid multipart Content-Disposition parameter"),
+      "unexpected error: {error}"
+    );
+  });
+  assert!(
+    captured.is_empty(),
+    "invalid multipart Content-Disposition must not open a socket"
+  );
+}
+
+#[test]
+fn multipart_form_rejects_injected_field_names_before_connecting() {
+  let path = std::env::temp_dir().join("rttp-multipart-field-name.txt");
+  std::fs::write(&path, b"file-bytes").expect("temp file should be writable");
+
+  for name in invalid_multipart_disposition_values() {
+    assert_multipart_disposition_rejected(|base_url| {
+      client()
+        .post()
+        .url(format!("{}/form", base_url))
+        .form(FormData::with_text(name, "value"))
+        .emit()
+        .expect_err("invalid multipart field name must be rejected")
+    });
+
+    assert_multipart_disposition_rejected(|base_url| {
+      client()
+        .post()
+        .url(format!("{}/form", base_url))
+        .form(FormData::with_text("safe", "value"))
+        .para(Para::with_form(name, "value"))
+        .emit()
+        .expect_err("invalid multipart parameter name must be rejected")
+    });
+
+    assert_multipart_disposition_rejected(|base_url| {
+      client()
+        .post()
+        .url(format!("{}/form", base_url))
+        .form(FormData::with_binary(name, b"bytes".to_vec()))
+        .emit()
+        .expect_err("invalid multipart binary field name must be rejected")
+    });
+
+    assert_multipart_disposition_rejected(|base_url| {
+      client()
+        .post()
+        .url(format!("{}/form", base_url))
+        .form(FormData::with_file_and_name(name, &path, "ok.txt"))
+        .emit()
+        .expect_err("invalid multipart file field name must be rejected")
+    });
+  }
+}
+
+#[test]
+fn multipart_form_rejects_injected_filenames_before_connecting() {
+  let path = std::env::temp_dir().join("rttp-multipart-disposition.txt");
+  std::fs::write(&path, b"file-bytes").expect("temp file should be writable");
+
+  for filename in invalid_multipart_disposition_values() {
+    assert_multipart_disposition_rejected(|base_url| {
+      client()
+        .post()
+        .url(format!("{}/form", base_url))
+        .form(FormData::with_file_and_name("upload", &path, filename))
+        .emit()
+        .expect_err("invalid multipart filename must be rejected")
+    });
+  }
+}
+
+#[test]
+fn multipart_form_escapes_quote_and_backslash_in_disposition_parameters() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/form", base_url))
+      .form(FormData::with_text(r#"na"me\field"#, "value"))
+      .emit()
+      .expect("escaped multipart field name should be accepted");
+  });
+
+  let body = request_text(request_body(&request));
+  assert!(body.contains(r#"name="na\"me\\field""#));
+  assert!(!body.contains("\r\nInjected:"));
+}
+
+#[test]
+fn multipart_form_escapes_quote_and_backslash_in_filenames() {
+  let path = std::env::temp_dir().join("rttp-multipart-quoted.txt");
+  std::fs::write(&path, b"file-bytes").expect("temp file should be writable");
+
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/form", base_url))
+      .form(FormData::with_file_and_name(
+        "upload",
+        &path,
+        r#"fi"le\name.txt"#,
+      ))
+      .emit()
+      .expect("escaped multipart filename should be accepted");
+  });
+
+  let body = request_text(request_body(&request));
+  assert!(body.contains(r#"name="upload"; filename="fi\"le\\name.txt""#));
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_multipart_form_rejects_injected_field_names_before_connecting() {
+  for name in invalid_multipart_disposition_values() {
+    assert_multipart_disposition_rejected(|base_url| {
+      block_on(
+        client()
+          .post()
+          .url(format!("{}/form", base_url))
+          .form(FormData::with_text(name, "value"))
+          .rasync(),
+      )
+      .expect_err("invalid async multipart field name must be rejected")
+    });
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_multipart_form_rejects_injected_filenames_before_connecting() {
+  let path = std::env::temp_dir().join("rttp-multipart-async-disposition.txt");
+  std::fs::write(&path, b"file-bytes").expect("temp file should be writable");
+
+  for filename in invalid_multipart_disposition_values() {
+    assert_multipart_disposition_rejected(|base_url| {
+      block_on(
+        client()
+          .post()
+          .url(format!("{}/form", base_url))
+          .form(FormData::with_file_and_name("upload", &path, filename))
+          .rasync(),
+      )
+      .expect_err("invalid async multipart filename must be rejected")
+    });
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_multipart_form_escapes_quote_and_backslash_in_disposition_parameters() {
+  let request = capture_request(|base_url| {
+    block_on(
+      client()
+        .post()
+        .url(format!("{}/form", base_url))
+        .form(FormData::with_text(r#"na"me\field"#, "value"))
+        .rasync(),
+    )
+    .expect("escaped async multipart field name should be accepted");
+  });
+
+  let body = request_text(request_body(&request));
+  assert!(body.contains(r#"name="na\"me\\field""#));
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_and_blocking_multipart_form_bodies_match() {
+  let path = std::env::temp_dir().join("rttp-multipart-identical.txt");
+  std::fs::write(&path, b"file-bytes").expect("temp file should be writable");
+
+  let blocking = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/form", base_url))
+      .para(Para::with_form(r#"pa"ra\name"#, "para-value"))
+      .form(FormData::with_text(r#"te"xt\name"#, "text-value"))
+      .form(FormData::with_binary(r#"bi"nary\name"#, b"bin".to_vec()))
+      .form(FormData::with_file_and_name(
+        "upload",
+        &path,
+        r#"fi"le\name.txt"#,
+      ))
+      .emit()
+      .expect("blocking multipart request should succeed");
+  });
+  let async_request = capture_request(|base_url| {
+    block_on(
+      client()
+        .post()
+        .url(format!("{}/form", base_url))
+        .para(Para::with_form(r#"pa"ra\name"#, "para-value"))
+        .form(FormData::with_text(r#"te"xt\name"#, "text-value"))
+        .form(FormData::with_binary(r#"bi"nary\name"#, b"bin".to_vec()))
+        .form(FormData::with_file_and_name(
+          "upload",
+          &path,
+          r#"fi"le\name.txt"#,
+        ))
+        .rasync(),
+    )
+    .expect("async multipart request should succeed");
+  });
+
+  let blocking_body = normalize_multipart_body(request_body(&blocking));
+  let async_body = normalize_multipart_body(request_body(&async_request));
+  assert_eq!(blocking_body, async_body);
+}
+
+fn normalize_multipart_body(body: &[u8]) -> String {
+  let text = request_text(body);
+  let boundary_line = text
+    .lines()
+    .next()
+    .expect("multipart body should start with a boundary");
+  text.replace(boundary_line, "--BOUNDARY")
 }
