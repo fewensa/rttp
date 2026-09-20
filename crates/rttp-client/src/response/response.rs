@@ -8,6 +8,7 @@ use url::Url;
 
 use crate::error;
 use crate::response::raw_response::RawResponse;
+use crate::response::AcceptSignature;
 use crate::response::AltSvc;
 use crate::response::AltUsed;
 use crate::response::Alternates;
@@ -1207,6 +1208,18 @@ impl Response {
       return Ok(None);
     }
     Signature::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Accept-Signature` fields as bounded RFC 9421 request
+  /// metadata without changing raw headers or making signature decisions.
+  pub fn accept_signature(&self) -> error::Result<Option<AcceptSignature>> {
+    let values = self.header_values("accept-signature");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AcceptSignature::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

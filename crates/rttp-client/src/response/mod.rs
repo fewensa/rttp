@@ -104,6 +104,12 @@ pub use rttp_protocol::nel::{Nel, NelParseError, NelUnknownMember};
 mod raw_response;
 mod response;
 
+pub use rttp_protocol::accept_signature::{
+  AcceptSignature, AcceptSignatureBareItem, AcceptSignatureComponent,
+  AcceptSignatureComponentParameter, AcceptSignatureCoveredComponent, AcceptSignatureDecimal,
+  AcceptSignatureEntry, AcceptSignatureMember, AcceptSignatureParameter,
+  AcceptSignatureParameterValue, AcceptSignatureParseError,
+};
 pub use rttp_protocol::alt_svc::{AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError};
 pub use rttp_protocol::alt_used::{AltUsed, AltUsedParseError};
 pub use rttp_protocol::alternates::{

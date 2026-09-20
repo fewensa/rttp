@@ -199,6 +199,13 @@ impl SignatureInputEntry {
 }
 
 impl SignatureInputComponent {
+  pub(crate) fn from_parts(identifier: String, parameters: Vec<SignatureInputParameter>) -> Self {
+    Self {
+      identifier,
+      parameters,
+    }
+  }
+
   pub fn identifier(&self) -> &str {
     &self.identifier
   }
@@ -214,7 +221,7 @@ impl SignatureInputComponent {
       .find(|parameter| parameter.name == name.as_ref())
   }
 
-  fn header_value(&self) -> String {
+  pub(crate) fn header_value(&self) -> String {
     let mut value = format!("\"{}\"", escape_sf_string(&self.identifier));
     append_parameters(&mut value, &self.parameters);
     value
@@ -222,6 +229,10 @@ impl SignatureInputComponent {
 }
 
 impl SignatureInputParameter {
+  pub(crate) fn from_parts(name: String, value: SignatureInputBareItem) -> Self {
+    Self { name, value }
+  }
+
   pub fn name(&self) -> &str {
     &self.name
   }
@@ -419,44 +430,43 @@ fn convert_bare_item(value: BareItem) -> Result<SignatureInputBareItem, Signatur
   })
 }
 
-fn append_parameters(output: &mut String, parameters: &[SignatureInputParameter]) {
+pub(crate) fn append_parameters(output: &mut String, parameters: &[SignatureInputParameter]) {
   for parameter in parameters {
     output.push(';');
     output.push_str(&parameter.name);
-    match &parameter.value {
-      SignatureInputBareItem::Boolean(true) => {}
-      SignatureInputBareItem::Boolean(false) => output.push_str("=?0"),
-      SignatureInputBareItem::Integer(value) => {
-        output.push('=');
-        output.push_str(&value.to_string());
-      }
-      SignatureInputBareItem::Decimal(value) => {
-        output.push('=');
-        output.push_str(value);
-      }
-      SignatureInputBareItem::String(value) => {
-        output.push_str("=\"");
-        output.push_str(&escape_sf_string(value));
-        output.push('"');
-      }
-      SignatureInputBareItem::Token(value) => {
-        output.push('=');
-        output.push_str(value);
-      }
-      SignatureInputBareItem::ByteSequence(value) => {
-        output.push_str("=:");
-        output.push_str(&STANDARD.encode(value));
-        output.push(':');
-      }
-      SignatureInputBareItem::Date(value) => {
-        output.push_str("=@");
-        output.push_str(&value.to_string());
-      }
-      SignatureInputBareItem::DisplayString(value) => {
-        output.push_str("=%\"");
-        output.push_str(&escape_display_string(value));
-        output.push('"');
-      }
+    if !matches!(parameter.value, SignatureInputBareItem::Boolean(true)) {
+      output.push('=');
+      append_bare_item(output, &parameter.value);
+    }
+  }
+}
+
+pub(crate) fn append_bare_item(output: &mut String, value: &SignatureInputBareItem) {
+  match value {
+    SignatureInputBareItem::Boolean(value) => {
+      output.push_str(if *value { "?1" } else { "?0" });
+    }
+    SignatureInputBareItem::Integer(value) => output.push_str(&value.to_string()),
+    SignatureInputBareItem::Decimal(value) => output.push_str(value),
+    SignatureInputBareItem::String(value) => {
+      output.push('"');
+      output.push_str(&escape_sf_string(value));
+      output.push('"');
+    }
+    SignatureInputBareItem::Token(value) => output.push_str(value),
+    SignatureInputBareItem::ByteSequence(value) => {
+      output.push(':');
+      output.push_str(&STANDARD.encode(value));
+      output.push(':');
+    }
+    SignatureInputBareItem::Date(value) => {
+      output.push('@');
+      output.push_str(&value.to_string());
+    }
+    SignatureInputBareItem::DisplayString(value) => {
+      output.push_str("%\"");
+      output.push_str(&escape_display_string(value));
+      output.push('"');
     }
   }
 }

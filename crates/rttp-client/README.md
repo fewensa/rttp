@@ -1145,6 +1145,15 @@ when a field set is absent and leaving raw headers in place on parse errors.
 These helpers declare and parse metadata only. They do not sign, verify, look
 up keys, canonicalize covered components, or apply cryptographic policy.
 
+`HttpClient::accept_signature()` validates and replaces one bounded RFC 9421
+`Accept-Signature` request field. `Response::accept_signature()` parses
+received fields in wire order, including repeated field lines, and returns
+`Ok(None)` when absent. Malformed metadata leaves the original raw fields
+available through the ordinary header accessors.
+
+These helpers declare and parse metadata only. They do not sign, verify, look
+up keys, canonicalize covered components, or apply cryptographic policy.
+
 ## Bounded Accept request metadata
 
 `HttpClient::accept()` appends one validated media range, and
@@ -2168,7 +2177,7 @@ header-block model.
 | Set-Cookie | `Response::set_cookies()` parses bounded protocol `Set-Cookie` response metadata, preserves multiple field lines and raw headers, and redacts cookie values from typed debug and errors; the typed accessor rejects duplicate attributes, valued flag attributes such as `Secure=true`, non-standard `SameSite` values, signed, empty, or overflowing `Max-Age`, malformed quoted values such as backslash escapes, field-count and size bounds, and other invalid protocol metadata while raw header access remains available; `Response::cookies()`/`cookie()` remain a legacy compatibility view that only exposes fields accepted by the protocol parser, strips surrounding cookie-value quotes, maps legacy `hostOnly`/`host_only` extension attributes to `host_only`, silently omits invalid `Set-Cookie` fields, and redacts `Cookie` `Display`; legacy callers that need a wire header value should call `Cookie::string()` explicitly | No cookie jar, persistence, domain/path matching, expiry enforcement, SameSite or partitioning policy, or automatic request `Cookie` emission |
 | Variant-Vary | `Response::variant_vary()` parses bounded RFC 2295 `Variant-Vary` response metadata through the shared `rttp-protocol` type while preserving raw headers on parse errors | No cache-key construction, variant selection, `Alternates`/`TCN`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Accept-Encoding | `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
-| HTTP message signatures | `signature` and `signature_input` emit bounded RFC 9421 request metadata; `Response::signature()` and `signature_input()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
+| HTTP message signatures | `signature`, `signature_input`, and `accept_signature` emit bounded RFC 9421 request metadata; `Response::signature()`, `signature_input()`, and `accept_signature()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Byte ranges | `range`, `range_from`, `range_suffix`, `ranges`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 single- and multi-range request metadata; checked `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers, including multipart/byteranges bodies | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, client multipart/byteranges part decoding into structured ranges, or automatic cache validation policy |
