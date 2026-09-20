@@ -26,7 +26,7 @@ use std::error::Error as _;
 #[cfg(feature = "async")]
 use std::io::{self, Cursor, Read, Write};
 #[cfg(feature = "async")]
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener};
 #[cfg(feature = "async")]
 use std::sync::mpsc;
 #[cfg(feature = "async")]
@@ -221,6 +221,7 @@ fn read_socks5_connect_request(stream: &mut std::net::TcpStream) {
 #[cfg(feature = "async")]
 fn spawn_socks5_reply_http_server(
   connect_reply: Vec<u8>,
+  shutdown_after_reply: bool,
 ) -> (std::net::SocketAddr, thread::JoinHandle<bool>) {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind SOCKS5 reply server");
   let addr = listener.local_addr().expect("SOCKS5 reply server addr");
@@ -239,6 +240,11 @@ fn spawn_socks5_reply_http_server(
     stream
       .write_all(&connect_reply)
       .expect("write SOCKS5 connect response");
+    if shutdown_after_reply {
+      stream
+        .shutdown(Shutdown::Write)
+        .expect("shutdown SOCKS5 reply write half");
+    }
 
     stream
       .set_read_timeout(Some(Duration::from_secs(2)))
@@ -2656,7 +2662,7 @@ fn test_async_proxy_socks5() {
 #[test]
 #[cfg(feature = "async")]
 fn test_async_proxy_socks5_rejects_zero_length_domain_reply() {
-  let (proxy_addr, proxy_handle) = spawn_socks5_reply_http_server(vec![5, 0, 0, 3, 0]);
+  let (proxy_addr, proxy_handle) = spawn_socks5_reply_http_server(vec![5, 0, 0, 3, 0], false);
   block_on(async {
     let error = client()
       .get()
@@ -2687,8 +2693,94 @@ fn test_async_proxy_socks5_rejects_zero_length_domain_reply() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_proxy_socks5_rejects_malformed_connect_replies() {
+  let mut truncated_ipv6 = vec![5, 0, 0, 4];
+  truncated_ipv6.extend_from_slice(&[0; 16]);
+  truncated_ipv6.push(0);
+
+  let cases = vec![
+    (
+      "invalid-version",
+      vec![4, 0, 0, 1],
+      false,
+      io::ErrorKind::InvalidData,
+      "invalid response version",
+    ),
+    (
+      "invalid-reserved-byte",
+      vec![5, 0, 1, 1],
+      false,
+      io::ErrorKind::InvalidData,
+      "invalid reserved byte",
+    ),
+    (
+      "unsupported-address-type",
+      vec![5, 0, 0, 2],
+      false,
+      io::ErrorKind::Other,
+      "unsupported address type",
+    ),
+    (
+      "truncated-ipv4",
+      vec![5, 0, 0, 1, 127, 0, 0, 1, 0],
+      true,
+      io::ErrorKind::UnexpectedEof,
+      "unexpected end of file",
+    ),
+    (
+      "truncated-ipv6",
+      truncated_ipv6,
+      true,
+      io::ErrorKind::UnexpectedEof,
+      "unexpected end of file",
+    ),
+    (
+      "truncated-domain",
+      vec![5, 0, 0, 3, 3, b'a', b'b', b'c', 0],
+      true,
+      io::ErrorKind::UnexpectedEof,
+      "unexpected end of file",
+    ),
+  ];
+
+  for (case, connect_reply, shutdown_after_reply, expected_kind, expected_message) in cases {
+    let (proxy_addr, proxy_handle) =
+      spawn_socks5_reply_http_server(connect_reply, shutdown_after_reply);
+    let error = block_on(async {
+      client()
+        .get()
+        .url(format!("http://127.0.0.1/socks5-{case}"))
+        .proxy(Proxy::socks5("127.0.0.1", proxy_addr.port().into()))
+        .rasync()
+        .await
+    })
+    .expect_err("malformed SOCKS5 CONNECT reply should be rejected");
+
+    assert!(
+      error.to_string().starts_with("error sending request"),
+      "unexpected error: {error}"
+    );
+    assert!(!error.is_timeout(), "malformed reply timed out: {error}");
+    let source = error
+      .source()
+      .expect("malformed reply should preserve its source error");
+    let source = source
+      .downcast_ref::<io::Error>()
+      .expect("malformed reply source should be an io::Error");
+    assert_eq!(expected_kind, source.kind(), "unexpected source: {source}");
+    assert_eq!(expected_message, source.to_string());
+    assert!(
+      !proxy_handle.join().expect("SOCKS5 reply server thread"),
+      "malformed SOCKS5 reply sent an HTTP request for {case}"
+    );
+  }
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_proxy_socks5_accepts_non_empty_domain_reply() {
-  let (proxy_addr, proxy_handle) = spawn_socks5_reply_http_server(vec![5, 0, 0, 3, 1, b'a', 0, 80]);
+  let (proxy_addr, proxy_handle) =
+    spawn_socks5_reply_http_server(vec![5, 0, 0, 3, 1, b'a', 0, 80], false);
   block_on(async {
     let response = client()
       .get()
