@@ -74,6 +74,9 @@ use rttp_protocol::origin_agent_cluster::OriginAgentCluster;
 use rttp_protocol::origin_trial::OriginTrials;
 use rttp_protocol::overwrite::{Overwrite, OverwriteParseError};
 use rttp_protocol::permissions_policy::PermissionsPolicy;
+use rttp_protocol::permissions_policy_report_only::{
+  PermissionsPolicyReportOnly, PermissionsPolicyReportOnlyParseError,
+};
 use rttp_protocol::pragma::{Pragma, PragmaParseError};
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
@@ -253,8 +256,14 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let permissions_policy =
     PermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
       .expect("Permissions-Policy should parse");
+  let permissions_policy_report_only = PermissionsPolicyReportOnly::parse(
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+  )
+  .expect("Permissions-Policy-Report-Only should parse");
+  let _: PermissionsPolicyReportOnlyParseError =
+    PermissionsPolicyReportOnly::parse("geolocation=src").expect_err("src should be rejected");
   let supports_loading_mode = SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
-    .expect("Supports-Loading-Mode should parse");
+      .expect("Supports-Loading-Mode should parse");
   let proxy_authentication_info = ProxyAuthenticationInfo::parse(
     "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
   )
@@ -629,6 +638,16 @@ fn protocol_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(permissions_policy.directives().len(), 2);
   assert!(permissions_policy
+    .directive("camera")
+    .unwrap()
+    .allowlist()
+    .is_empty());
+  assert_eq!(
+    permissions_policy_report_only.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(permissions_policy_report_only.directives().len(), 2);
+  assert!(permissions_policy_report_only
     .directive("camera")
     .unwrap()
     .allowlist()

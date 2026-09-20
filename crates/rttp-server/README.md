@@ -1083,6 +1083,14 @@ These helpers only declare and parse metadata. RTTP does not grant or deny
 browser permissions, compare origins, resolve `self`, or enforce origin
 policy, and it does not send reports.
 
+`HttpResponse::with_permissions_policy_report_only(value)` validates and
+canonicalizes `Permissions-Policy-Report-Only` through the same shared
+protocol parser, formatter, directive model, and bounds while
+`HttpResponse::permissions_policy_report_only()` returns distinct
+`HttpPermissionsPolicyReportOnly` metadata. The helpers replace raw duplicate
+report-only fields on declaration, preserve raw fields on parse errors, and
+do not enforce browser permissions or deliver reports.
+
 ## Document-Policy response metadata
 
 `HttpResponse::with_document_policy(value)` validates one WICG Document Policy

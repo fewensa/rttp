@@ -1758,6 +1758,11 @@ dropped. The parser reports declared metadata only: it does not compare
 origins, resolve `self`, grant or deny browser permissions, or enforce origin
 policy.
 
+`permissions_policy_report_only` parses `Permissions-Policy-Report-Only` with
+the same directive model, parser, formatter, and bounds while exposing
+distinct report-only types and parse errors. It is also metadata-only: it does
+not enforce browser permissions or deliver reports.
+
 ## Document-Policy
 
 `document_policy` parses bounded WICG Document Policy response metadata as a

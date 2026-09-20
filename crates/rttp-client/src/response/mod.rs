@@ -148,6 +148,11 @@ pub use rttp_protocol::permissions_policy::{
   PermissionsPolicy, PermissionsPolicyAllowlist, PermissionsPolicyAllowlistMember,
   PermissionsPolicyDirective, PermissionsPolicyParseError,
 };
+pub use rttp_protocol::permissions_policy_report_only::{
+  PermissionsPolicyReportOnly, PermissionsPolicyReportOnlyAllowlist,
+  PermissionsPolicyReportOnlyAllowlistMember, PermissionsPolicyReportOnlyDirective,
+  PermissionsPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::pragma::{Pragma, PragmaDirective, PragmaParseError};
 pub use rttp_protocol::prefer::{
   PreferParseError, Preference, PreferenceApplied, PreferenceAppliedParseError, PreferenceKind,

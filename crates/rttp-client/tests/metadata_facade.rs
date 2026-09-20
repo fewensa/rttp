@@ -17,8 +17,8 @@ use rttp_client::response::{
   HttpSetCookie, HttpSetCookies, Im, ImMember, ImParameter, ImParseError, KeepAlive, LinkValues,
   Location, LocationParseError, LockToken, LockTokenParseError, MementoDatetime,
   MementoDatetimeParseError, Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
-  OriginTrialParseError, OriginTrials, PermissionsPolicy, PermissionsPolicyParseError, Pragma,
-  PragmaParseError, PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateChallenge,
+  OriginTrialParseError, OriginTrials, PermissionsPolicy, PermissionsPolicyParseError,
+  PermissionsPolicyReportOnly, PermissionsPolicyReportOnlyParseError, Pragma, PragmaParseError, PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateChallenge,
   ProxyAuthenticateParameter, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParameter, ProxyAuthenticationInfoParseError, ProxyStatus,
   ProxyStatusParseError, RateLimitLimit, RateLimitLimitItem, RateLimitLimitParseError,
@@ -378,6 +378,12 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Permissions-Policy should parse");
   let _: PermissionsPolicyParseError =
     PermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
+  let permissions_policy_report_only = PermissionsPolicyReportOnly::parse(
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+  )
+  .expect("Permissions-Policy-Report-Only should parse");
+  let _: PermissionsPolicyReportOnlyParseError =
+    PermissionsPolicyReportOnly::parse("geolocation=src").expect_err("src should be rejected");
   let document_policy =
     DocumentPolicy::parse("oversized-images=2.0, unsized-media=?0, *;report-to=default")
       .expect("Document-Policy should parse");
@@ -690,6 +696,16 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(permissions_policy.directives().len(), 2);
   assert!(permissions_policy
+    .directive("camera")
+    .unwrap()
+    .allowlist()
+    .is_empty());
+  assert_eq!(
+    permissions_policy_report_only.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(permissions_policy_report_only.directives().len(), 2);
+  assert!(permissions_policy_report_only
     .directive("camera")
     .unwrap()
     .allowlist()
@@ -1092,6 +1108,50 @@ fn response_facade_parses_document_policy_metadata() {
     [
       &"oversized-images=2.0, unsized-media=?0".to_string(),
       &"*;report-to=default".to_string()
+    ]
+  );
+}
+
+#[test]
+fn response_facade_parses_permissions_policy_report_only_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Permissions-Policy-Report-Only: geolocation=(self \"https://maps.example.test\");report-to=\"rp\"\r\n",
+      "Permissions-Policy-Report-Only: camera=()\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let policy: PermissionsPolicyReportOnly = response
+    .permissions_policy_report_only()
+    .expect("Permissions-Policy-Report-Only should parse")
+    .expect("Permissions-Policy-Report-Only should be present");
+
+  assert_eq!(policy.directives().len(), 2);
+  assert_eq!(
+    policy
+      .directive("geolocation")
+      .unwrap()
+      .allowlist()
+      .members()
+      .len(),
+    2
+  );
+  assert!(policy.directive("camera").unwrap().allowlist().is_empty());
+  assert_eq!(
+    policy.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(
+    response.header_values("Permissions-Policy-Report-Only"),
+    [
+      &"geolocation=(self \"https://maps.example.test\");report-to=\"rp\"".to_string(),
+      &"camera=()".to_string()
     ]
   );
 }

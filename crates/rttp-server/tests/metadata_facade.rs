@@ -37,8 +37,9 @@ use rttp_server::server::{
   HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginTrialParseError,
   HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError, HttpPermissionsPolicy,
   HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
-  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
-  HttpPragmaParseError, HttpPreferenceKind, HttpPrefersColorScheme,
+  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError,
+  HttpPermissionsPolicyReportOnly, HttpPermissionsPolicyReportOnlyParseError, HttpPragma,
+  HttpPragmaDirective, HttpPragmaParseError, HttpPreferenceKind, HttpPrefersColorScheme,
   HttpPrefersColorSchemeParseError, HttpPrefersContrast, HttpPrefersContrastParseError,
   HttpPrefersReducedData, HttpPrefersReducedDataParseError, HttpPrefersReducedMotion,
   HttpPrefersReducedMotionParseError, HttpPrefersReducedTransparency,
@@ -545,6 +546,18 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let permissions_policy_response = HttpResponse::ok("")
     .with_permissions_policy(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
     .expect("Permissions-Policy should be accepted");
+  let permissions_policy_report_only: HttpPermissionsPolicyReportOnly =
+    HttpPermissionsPolicyReportOnly::parse(
+      r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    )
+    .expect("Permissions-Policy-Report-Only should parse");
+  let _: HttpPermissionsPolicyReportOnlyParseError =
+    HttpPermissionsPolicyReportOnly::parse("geolocation=src").expect_err("src should be rejected");
+  let permissions_policy_report_only_response = HttpResponse::ok("")
+    .with_permissions_policy_report_only(
+      r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    )
+    .expect("Permissions-Policy-Report-Only should be accepted");
   let document_policy: HttpDocumentPolicy =
     HttpDocumentPolicy::parse("oversized-images=2.0, unsized-media=?0, *;report-to=default")
       .expect("Document-Policy should parse");
@@ -889,6 +902,18 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .permissions_policy()
       .expect("Permissions-Policy should parse")
       .expect("Permissions-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    permissions_policy_report_only.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    permissions_policy_report_only_response
+      .permissions_policy_report_only()
+      .expect("Permissions-Policy-Report-Only should parse")
+      .expect("Permissions-Policy-Report-Only should be present")
       .header_value()
   );
   assert_eq!(document_policy.directives().len(), 3);
