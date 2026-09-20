@@ -30,6 +30,28 @@ fn timing_allow_origin_parses_wildcard_and_origin_lists_across_fields() {
 }
 
 #[test]
+fn timing_allow_origin_accepts_ows_at_field_and_member_boundaries() {
+  let origins = TimingAllowOrigin::parse_values([
+    "\t https://example.test \t, \thttps://api.example.test\t ",
+    "\thttps://static.example.test \t",
+  ])
+  .expect("OWS at boundaries should parse");
+
+  assert_eq!(
+    origins.origins(),
+    [
+      "https://example.test",
+      "https://api.example.test",
+      "https://static.example.test",
+    ]
+  );
+  assert_eq!(
+    origins.header_value(),
+    "https://example.test, https://api.example.test, https://static.example.test"
+  );
+}
+
+#[test]
 fn timing_allow_origin_rejects_malformed_duplicate_and_mixed_values() {
   for value in [
     "",
@@ -37,6 +59,9 @@ fn timing_allow_origin_rejects_malformed_duplicate_and_mixed_values() {
     ",https://example.test",
     "https://example.test,,https://api.example.test",
     "https://example.test/path",
+    "https://example.\ttest",
+    "https://example. test",
+    "https://example.test\r",
     "https://example.test\u{7f}",
     "https://example.test\n",
     "*, https://example.test",
