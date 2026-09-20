@@ -645,7 +645,14 @@ fn sec_ch_ua_bitness_parses_valid_duplicate_and_malformed_http11_headers() {
   let observed = observed_rx
     .recv_timeout(TIMEOUT)
     .expect("observe non-ASCII Sec-CH-UA-Bitness");
-  assert!(observed.0.is_err());
+  let error = observed
+    .0
+    .as_ref()
+    .expect_err("non-ASCII Sec-CH-UA-Bitness must fail closed");
+  assert!(
+    error.contains("Sec-CH-UA-Bitness"),
+    "non-ASCII Sec-CH-UA-Bitness error should identify the field: {error}"
+  );
   assert_eq!(Some("\"\u{0080}\"".to_owned()), observed.1);
   handle.join().expect("non-ASCII bitness server thread");
 
