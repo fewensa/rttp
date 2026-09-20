@@ -137,13 +137,14 @@ pub use rttp_protocol::client_hints::{
   EctParseError, PrefersColorScheme, PrefersColorSchemeParseError, PrefersContrast,
   PrefersContrastParseError, PrefersReducedData, PrefersReducedDataParseError,
   PrefersReducedMotion, PrefersReducedMotionParseError, PrefersReducedTransparency,
-  PrefersReducedTransparencyParseError, Rtt, RttParseError, SecChUaArch, SecChUaArchParseError,
-  SecChUaBitness, SecChUaBitnessParseError, SecChUaFormFactors, SecChUaFormFactorsParseError,
-  SecChUaFullVersionList, SecChUaFullVersionListEntry, SecChUaFullVersionListParseError,
-  SecChUaMobile, SecChUaMobileParseError, SecChUaModel, SecChUaModelParseError, SecChUaPlatform,
-  SecChUaPlatformParseError, SecChUaPlatformVersion, SecChUaPlatformVersionParseError,
-  SecChUaWow64, SecChUaWow64ParseError, ViewportWidth, ViewportWidthParseError, Width,
-  WidthParseError,
+  PrefersReducedTransparencyParseError, Rtt, RttParseError, SecChUa, SecChUaArch,
+  SecChUaArchParseError, SecChUaBitness, SecChUaBitnessParseError, SecChUaEntry,
+  SecChUaFormFactors, SecChUaFormFactorsParseError, SecChUaFullVersionList,
+  SecChUaFullVersionListEntry, SecChUaFullVersionListParseError, SecChUaMobile,
+  SecChUaMobileParseError, SecChUaModel, SecChUaModelParseError, SecChUaParseError,
+  SecChUaPlatform, SecChUaPlatformParseError, SecChUaPlatformVersion,
+  SecChUaPlatformVersionParseError, SecChUaWow64, SecChUaWow64ParseError, ViewportWidth,
+  ViewportWidthParseError, Width, WidthParseError,
 };
 pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
 pub use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};

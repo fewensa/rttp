@@ -7154,6 +7154,100 @@ fn raw_sec_ch_ua_platform_version_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn sec_ch_ua_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-ua", "legacy"))
+      .sec_ch_ua("\t\"Chromium\";v=\"120\", \"Not(A:Brand\";v=\"99\\\".0\" \t")
+      .expect("Sec-CH-UA should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("\"Chromium\";v=\"120\", \"Not(A:Brand\";v=\"99\\\".0\""),
+    header_value(&request, "Sec-CH-UA")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line.to_ascii_lowercase().starts_with("sec-ch-ua:"))
+      .count(),
+    "typed Sec-CH-UA should replace an existing same-name field"
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_helper_matches_blocking_contract() {
+  let request = capture_request(|base_url| {
+    block_on(
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .header(("SEC-CH-UA", "legacy"))
+        .sec_ch_ua("\t\"Chromium\";v=\"120\" \t")
+        .expect("Sec-CH-UA should be accepted")
+        .rasync(),
+    )
+    .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("\"Chromium\";v=\"120\""),
+    header_value(&request, "Sec-CH-UA")
+  );
+}
+
+#[test]
+fn sec_ch_ua_helper_rejects_malformed_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "\"Chromium\"",
+    "Chromium;v=\"120\"",
+    "\"Chromium\";v=120",
+    "\"Chromium\";v=\"120\";foo=\"bar\"",
+    "\"Chromium\";v=\"120\";v=\"121\"",
+    "\"Chromium\";v=\"120\"\0",
+    "\"Chromium\u{80}\";v=\"120\"",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_ch_ua(value)
+        .expect_err("invalid Sec-CH-UA input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_sec_ch_ua_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-UA", "legacy"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("legacy"), header_value(&request, "Sec-CH-UA"));
+}
+
+#[test]
 fn sec_ch_ua_full_version_list_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()

@@ -740,6 +740,19 @@ invalid escape, and oversized values are errors. This parser reports request
 metadata only; it does not infer a platform version or capabilities, negotiate
 the UA brands family, emit `Accept-CH`, retry, or apply browser policy.
 
+## Sec-CH-UA
+
+`client_hints::SecChUa` parses a bounded HTTP `Sec-CH-UA` request Client Hint
+as an ordered RFC 8941 list of string brands. Each member must carry exactly
+one string `v` parameter; `entries()` exposes the ordered `SecChUaEntry` values,
+including `brand()` and `version()`/`v()`, and `header_value()` emits canonical
+Structured Fields strings. One field value and the aggregate input are each
+bounded to 64 KiB, with at most 256 entries. Empty or malformed lists,
+non-ASCII or forbidden-control input, missing/extra/duplicate parameters,
+duplicate field lines, excessive entries, and oversized input are rejected.
+This parser reports request metadata only; it does not identify a browser,
+negotiate Client Hints, emit `Accept-CH`, retry, or apply browser policy.
+
 ## Sec-CH-UA-Form-Factors
 
 `client_hints::SecChUaFormFactors` parses a bounded HTTP

@@ -16,6 +16,9 @@ pub const MAX_SEC_CH_UA_MODEL_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_ARCH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_BITNESS_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_TOTAL_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_ENTRIES: usize = 256;
 pub const MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES: usize = 256;
@@ -98,6 +101,23 @@ pub struct SecChUaBitness {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SecChUaPlatformVersion {
   value: String,
+}
+
+/// Parsed, bounded `Sec-CH-UA` request Client Hint metadata.
+///
+/// Entries are retained in wire order. This type only represents the syntax of
+/// the declared brand/version list; it does not identify a browser or apply
+/// user-agent policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SecChUa {
+  entries: Vec<SecChUaEntry>,
+}
+
+/// One ordered brand/version entry in a `Sec-CH-UA` value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SecChUaEntry {
+  brand: String,
+  version: String,
 }
 
 /// Parsed, bounded `Sec-CH-UA-Full-Version-List` request Client Hint metadata.
@@ -209,6 +229,7 @@ pub type SecChUaModelParseError = ClientHintsParseError;
 pub type SecChUaArchParseError = ClientHintsParseError;
 pub type SecChUaBitnessParseError = ClientHintsParseError;
 pub type SecChUaPlatformVersionParseError = ClientHintsParseError;
+pub type SecChUaParseError = ClientHintsParseError;
 pub type SecChUaFullVersionListParseError = ClientHintsParseError;
 pub type SecChUaFormFactorsParseError = ClientHintsParseError;
 pub type PrefersReducedMotionParseError = ClientHintsParseError;
@@ -572,6 +593,74 @@ impl SecChUaPlatformVersion {
   }
 }
 
+impl SecChUa {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, SecChUaParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, SecChUaParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let entries = parse_sec_ch_ua_brand_list_values(
+      values,
+      "Sec-CH-UA",
+      MAX_SEC_CH_UA_VALUE_BYTES,
+      MAX_SEC_CH_UA_TOTAL_BYTES,
+      MAX_SEC_CH_UA_ENTRIES,
+    )?;
+    Ok(Self {
+      entries: entries
+        .into_iter()
+        .map(|(brand, version)| SecChUaEntry { brand, version })
+        .collect(),
+    })
+  }
+
+  pub fn entries(&self) -> &[SecChUaEntry] {
+    &self.entries
+  }
+
+  pub fn len(&self) -> usize {
+    self.entries.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.entries.is_empty()
+  }
+
+  pub fn header_value(&self) -> String {
+    self
+      .entries
+      .iter()
+      .map(SecChUaEntry::header_value)
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+}
+
+impl SecChUaEntry {
+  pub fn brand(&self) -> &str {
+    &self.brand
+  }
+
+  pub fn version(&self) -> &str {
+    &self.version
+  }
+
+  pub fn v(&self) -> &str {
+    &self.version
+  }
+
+  pub fn header_value(&self) -> String {
+    format!(
+      "{};v={}",
+      canonical_sec_ch_ua_structured_string(&self.brand),
+      canonical_sec_ch_ua_structured_string(&self.version),
+    )
+  }
+}
+
 impl SecChUaFullVersionList {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, SecChUaFullVersionListParseError> {
     Self::parse_values([value.as_ref()])
@@ -581,28 +670,19 @@ impl SecChUaFullVersionList {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let mut values = values.into_iter();
-    let value = values
-      .next()
-      .ok_or_else(invalid_sec_ch_ua_full_version_list_value)?;
-    let mut total_bytes = 0;
-    validate_bounded_sec_ch_ua_full_version_list_value(value, &mut total_bytes)?;
-
-    let mut entries = Vec::new();
-    parse_sec_ch_ua_full_version_list_field(value, &mut entries)?;
-
-    let mut has_duplicate = false;
-    for value in values {
-      has_duplicate = true;
-      validate_bounded_sec_ch_ua_full_version_list_value(value, &mut total_bytes)?;
-    }
-    if has_duplicate {
-      return Err(ClientHintsParseError::new(
-        "duplicate Sec-CH-UA-Full-Version-List header fields",
-      ));
-    }
-
-    Ok(Self { entries })
+    let entries = parse_sec_ch_ua_brand_list_values(
+      values,
+      "Sec-CH-UA-Full-Version-List",
+      MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES,
+      MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES,
+      MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES,
+    )?;
+    Ok(Self {
+      entries: entries
+        .into_iter()
+        .map(|(brand, version)| SecChUaFullVersionListEntry { brand, version })
+        .collect(),
+    })
   }
 
   pub fn entries(&self) -> &[SecChUaFullVersionListEntry] {
@@ -1620,75 +1700,124 @@ fn parse_sec_ch_ua_platform_version_string(
   Ok(parsed)
 }
 
-fn validate_bounded_sec_ch_ua_full_version_list_value(
+fn parse_sec_ch_ua_brand_list_values<'a, I>(
+  values: I,
+  header_name: &str,
+  value_limit: usize,
+  total_limit: usize,
+  entry_limit: usize,
+) -> Result<Vec<(String, String)>, ClientHintsParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values
+    .next()
+    .ok_or_else(|| invalid_sec_ch_ua_brand_list_value(header_name))?;
+  let mut total_bytes = 0;
+  validate_bounded_sec_ch_ua_brand_list_value(
+    value,
+    header_name,
+    value_limit,
+    total_limit,
+    &mut total_bytes,
+  )?;
+
+  let mut entries = Vec::new();
+  parse_sec_ch_ua_brand_list_field(value, header_name, entry_limit, &mut entries)?;
+
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_sec_ch_ua_brand_list_value(
+      value,
+      header_name,
+      value_limit,
+      total_limit,
+      &mut total_bytes,
+    )?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(format!(
+      "duplicate {header_name} header fields"
+    )));
+  }
+
+  Ok(entries)
+}
+
+fn validate_bounded_sec_ch_ua_brand_list_value(
   value: &str,
+  header_name: &str,
+  value_limit: usize,
+  total_limit: usize,
   total_bytes: &mut usize,
-) -> Result<(), SecChUaFullVersionListParseError> {
-  if value.len() > MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES {
-    return Err(ClientHintsParseError::new(
-      "Sec-CH-UA-Full-Version-List header value is too large",
-    ));
+) -> Result<(), ClientHintsParseError> {
+  if value.len() > value_limit {
+    return Err(ClientHintsParseError::new(format!(
+      "{header_name} header value is too large"
+    )));
   }
   *total_bytes = total_bytes.saturating_add(value.len());
-  if *total_bytes > MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES {
-    return Err(ClientHintsParseError::new(
-      "Sec-CH-UA-Full-Version-List header list is too large",
-    ));
+  if *total_bytes > total_limit {
+    return Err(ClientHintsParseError::new(format!(
+      "{header_name} header list is too large"
+    )));
   }
   if value
     .bytes()
     .any(|byte| byte > 0x7f || (byte.is_ascii_control() && !matches!(byte, b' ' | b'\t')))
   {
-    return Err(ClientHintsParseError::new(
-      "invalid Sec-CH-UA-Full-Version-List control or non-ASCII byte",
-    ));
+    return Err(ClientHintsParseError::new(format!(
+      "invalid {header_name} control or non-ASCII byte"
+    )));
   }
   Ok(())
 }
 
-fn parse_sec_ch_ua_full_version_list_field(
+fn parse_sec_ch_ua_brand_list_field(
   value: &str,
-  entries: &mut Vec<SecChUaFullVersionListEntry>,
-) -> Result<(), SecChUaFullVersionListParseError> {
+  header_name: &str,
+  entry_limit: usize,
+  entries: &mut Vec<(String, String)>,
+) -> Result<(), ClientHintsParseError> {
   let value = value.trim_matches([' ', '\t']);
   let list = Parser::new(value)
     .with_version(Version::Rfc8941)
     .parse::<List>()
-    .map_err(|_| invalid_sec_ch_ua_full_version_list_value())?;
+    .map_err(|_| invalid_sec_ch_ua_brand_list_value(header_name))?;
   if list.is_empty() {
-    return Err(invalid_sec_ch_ua_full_version_list_value());
+    return Err(invalid_sec_ch_ua_brand_list_value(header_name));
   }
-  reject_duplicate_sec_ch_ua_full_version_list_parameters(value)?;
+  reject_duplicate_sec_ch_ua_brand_list_parameters(value, header_name)?;
 
   for entry in list {
-    if entries.len() >= MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES {
-      return Err(ClientHintsParseError::new(
-        "too many Sec-CH-UA-Full-Version-List entries",
-      ));
+    if entries.len() >= entry_limit {
+      return Err(ClientHintsParseError::new(format!(
+        "too many {header_name} entries"
+      )));
     }
     let ListEntry::Item(item) = entry else {
-      return Err(invalid_sec_ch_ua_full_version_list_value());
+      return Err(invalid_sec_ch_ua_brand_list_value(header_name));
     };
     let BareItem::String(brand) = item.bare_item else {
-      return Err(invalid_sec_ch_ua_full_version_list_value());
+      return Err(invalid_sec_ch_ua_brand_list_value(header_name));
     };
     if item.params.len() != 1 {
-      return Err(invalid_sec_ch_ua_full_version_list_value());
+      return Err(invalid_sec_ch_ua_brand_list_value(header_name));
     }
     let Some(BareItem::String(version)) = item.params.get("v") else {
-      return Err(invalid_sec_ch_ua_full_version_list_value());
+      return Err(invalid_sec_ch_ua_brand_list_value(header_name));
     };
-    entries.push(SecChUaFullVersionListEntry {
-      brand: brand.as_str().to_owned(),
-      version: version.as_str().to_owned(),
-    });
+    entries.push((brand.as_str().to_owned(), version.as_str().to_owned()));
   }
   Ok(())
 }
 
-fn reject_duplicate_sec_ch_ua_full_version_list_parameters(
+fn reject_duplicate_sec_ch_ua_brand_list_parameters(
   value: &str,
-) -> Result<(), SecChUaFullVersionListParseError> {
+  header_name: &str,
+) -> Result<(), ClientHintsParseError> {
   let bytes = value.as_bytes();
   let mut in_string = false;
   let mut escaped = false;
@@ -1724,9 +1853,9 @@ fn reject_duplicate_sec_ch_ua_full_version_list_parameters(
         }
         if &bytes[start..index] == b"v" {
           if version_seen {
-            return Err(ClientHintsParseError::new(
-              "duplicate Sec-CH-UA-Full-Version-List v parameter",
-            ));
+            return Err(ClientHintsParseError::new(format!(
+              "duplicate {header_name} v parameter"
+            )));
           }
           version_seen = true;
         }
@@ -2202,8 +2331,8 @@ fn invalid_sec_ch_ua_platform_version_value() -> SecChUaPlatformVersionParseErro
   ClientHintsParseError::new("invalid Sec-CH-UA-Platform-Version header value")
 }
 
-fn invalid_sec_ch_ua_full_version_list_value() -> SecChUaFullVersionListParseError {
-  ClientHintsParseError::new("invalid Sec-CH-UA-Full-Version-List header value")
+fn invalid_sec_ch_ua_brand_list_value(header_name: &str) -> ClientHintsParseError {
+  ClientHintsParseError::new(format!("invalid {header_name} header value"))
 }
 
 fn invalid_sec_ch_ua_form_factors_value() -> SecChUaFormFactorsParseError {

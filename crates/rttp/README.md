@@ -748,6 +748,25 @@ helpers only expose metadata: RTTP does not infer a platform version or
 capabilities, negotiate the UA brands family, emit `Accept-CH`, retry, or apply
 browser policy.
 
+## Bounded Sec-CH-UA request Client Hint metadata
+
+With the client feature, `HttpClient::sec_ch_ua(value)` validates and emits
+one canonical `Sec-CH-UA` field through `rttp::SecChUa`, replacing existing
+same-name fields. The value is an ordered RFC 8941 list of string brands; each
+member must carry exactly one string `v` parameter. `entries()` exposes ordered
+`SecChUaEntry` values with `brand()` and `version()`/`v()`, while
+`header_value()` emits canonical Structured Fields text. The parser bounds each
+field and aggregate input to 64 KiB and accepts at most 256 entries. Malformed,
+non-ASCII/control, missing/extra/duplicate-parameter, duplicate-field,
+excessive-entry, and oversized values are rejected before connecting.
+
+On the server facade, `Request::sec_ch_ua()` and `HttpRequest::sec_ch_ua()`
+parse the same metadata into `HttpSecChUa`, return `Ok(None)` when absent, and
+leave raw headers available on parse errors. These helpers only expose caller-
+supplied metadata: RTTP does not infer browser identity, negotiate Client
+Hints, emit `Accept-CH`, retry, or apply browser policy. Use
+`header(("Sec-CH-UA", "..."))` as the raw-header escape hatch.
+
 ## Bounded Sec-CH-UA-Full-Version-List request Client Hint metadata
 
 With the client feature, `HttpClient::sec_ch_ua_full_version_list(value)`
