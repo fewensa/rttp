@@ -84,7 +84,8 @@ use rttp_server::server::{
 
 use rttp_server::server::{
   HttpAccessControlExposeHeaders, HttpAccessControlExposeHeadersParseError,
-  HttpAccessControlMaxAge, HttpAccessControlMaxAgeParseError,
+  HttpAccessControlMaxAge, HttpAccessControlMaxAgeParseError, HttpPreferenceApplied,
+  HttpPreferenceAppliedParseError,
 };
 
 #[test]
@@ -1428,6 +1429,64 @@ fn request_facade_parses_structured_prefer_metadata() {
 
   assert_eq!(prefer.preferences()[0].kind(), HttpPreferenceKind::Handling);
   assert_eq!(prefer.preferences()[1].parameters()[0].value(), Some("a b"));
+}
+
+#[test]
+fn response_facade_builds_and_parses_preference_applied_metadata() {
+  let response = HttpResponse::ok("")
+    .header("Preference-Applied", "return=minimal")
+    .header("preference-applied", "wait=10")
+    .with_preference_applied("return=representation, vendor=enabled; trace=\"a b\"")
+    .expect("Preference-Applied should be accepted");
+  let metadata: HttpPreferenceApplied = response
+    .preference_applied()
+    .expect("Preference-Applied should parse")
+    .expect("Preference-Applied should be present");
+
+  assert_eq!(
+    "return=representation, vendor=enabled; trace=\"a b\"",
+    metadata.header_value()
+  );
+  let rendered = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(rendered
+    .contains("\r\nPreference-Applied: return=representation, vendor=enabled; trace=\"a b\"\r\n"));
+  assert!(!rendered.contains("return=minimal"));
+  assert!(!rendered.contains("wait=10"));
+
+  assert_eq!(
+    None,
+    HttpResponse::ok("")
+      .preference_applied()
+      .expect("absent Preference-Applied should parse")
+  );
+
+  let malformed = HttpResponse::ok("").header("Preference-Applied", "handling=relaxed");
+  let malformed_rendered =
+    String::from_utf8(malformed.to_bytes()).expect("response should serialize");
+  let _: HttpPreferenceAppliedParseError = malformed
+    .preference_applied()
+    .expect_err("malformed Preference-Applied should fail");
+  assert!(malformed_rendered.contains("\r\nPreference-Applied: handling=relaxed\r\n"));
+
+  let duplicate = HttpResponse::ok("")
+    .header("Preference-Applied", "return=minimal")
+    .header("preference-applied", "return=representation");
+  let duplicate_rendered =
+    String::from_utf8(duplicate.to_bytes()).expect("response should serialize");
+  assert!(duplicate.preference_applied().is_err());
+  assert!(duplicate_rendered.contains("\r\nPreference-Applied: return=minimal\r\n"));
+  assert!(duplicate_rendered.contains("\r\npreference-applied: return=representation\r\n"));
+
+  let unchanged = HttpResponse::ok("").header("Preference-Applied", "return=minimal");
+  let before = unchanged.to_bytes();
+  assert!(unchanged
+    .clone()
+    .with_preference_applied("handling=relaxed")
+    .is_err());
+  assert_eq!(before, unchanged.to_bytes());
+
+  let _: HttpPreferenceAppliedParseError = HttpPreferenceApplied::parse("handling=relaxed")
+    .expect_err("invalid Preference-Applied should fail");
 }
 
 #[test]

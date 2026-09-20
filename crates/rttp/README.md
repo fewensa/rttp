@@ -31,6 +31,18 @@ These are metadata-only helpers. The facade does not grant private-network
 access, decide preflight behavior, or apply CORS or Private Network Access
 policy.
 
+## Bounded Preference-Applied response metadata
+
+The `rttp::server` facade re-exports `HttpPreferenceApplied` and
+`HttpPreferenceAppliedParseError` and exposes
+`HttpResponse::with_preference_applied(value)` plus
+`HttpResponse::preference_applied()`. Valid declarations replace existing
+case-insensitive `Preference-Applied` fields. The accessor combines attached
+fields in wire order, returns `Ok(None)` when absent, and preserves raw fields
+when malformed or duplicate metadata produces a typed error. These helpers
+only declare and inspect response metadata; they do not apply `Prefer`
+semantics.
+
 ## Server
 
 Create a listener with `rttp::Http::server` or call `HttpServer::bind` directly.
@@ -2135,6 +2147,7 @@ scheduling, or async accept loops.
 | Early-Data | `HttpClient::early_data`, `Request::early_data`, and `HttpRequest::early_data` share the bounded RFC 8470 `Early-Data` `1`-signal representation and preserve raw values on errors | No 0-RTT transport enablement, replay-safety decision, retry behavior, or server acceptance policy |
 | Sec-Required-Document-Policy | `HttpClient::sec_required_document_policy`, `Request::sec_required_document_policy`, and `HttpRequest::sec_required_document_policy` share the bounded Document Policy Structured Fields request metadata type, replace existing same-name fields on emission, and preserve raw values on errors | No document-policy enforcement, required-policy comparison against `Document-Policy`, document-load blocking, feature enablement, or report sending |
 | Pragma | `HttpClient::pragma`/`pragma_no_cache`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation across client construction, server access, server response declaration, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
+| Prefer and Preference-Applied | `Request::prefer`/`HttpRequest::prefer` parse bounded `Prefer` request metadata, while `HttpResponse::with_preference_applied`/`preference_applied` and the `HttpPreferenceApplied` facade aliases declare or parse bounded `Preference-Applied` response metadata, replacing valid declarations and preserving raw fields on accessor errors | No preference application, response status or representation selection, retry, replay, or processing-policy behavior |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Service-Worker-Allowed | `HttpResponse::with_service_worker_allowed` declares one bounded singleton `Service-Worker-Allowed` header, and `HttpResponse::service_worker_allowed` plus client `Response::service_worker_allowed` parse attached singleton path metadata while preserving raw headers | No service-worker registration, scope evaluation, script-URL resolution, or application routing policy |
 | Content-DPR | `HttpResponse::with_content_dpr` declares one bounded singleton `Content-DPR` header, and `HttpResponse::content_dpr` plus client `Response::content_dpr` parse attached singleton decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |

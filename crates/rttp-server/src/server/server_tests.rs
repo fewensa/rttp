@@ -1536,6 +1536,78 @@ fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() 
 }
 
 #[test]
+fn preference_applied_response_helpers_validate_replace_and_parse_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .preference_applied()
+      .expect("absent Preference-Applied should parse")
+  );
+
+  let response = HttpResponse::ok([])
+    .header("Preference-Applied", "return=minimal")
+    .header("preference-applied", "wait=10")
+    .with_preference_applied("return=representation, vendor=enabled; trace=\"a b\"")
+    .expect("valid Preference-Applied should replace raw fields");
+  let metadata = response
+    .preference_applied()
+    .expect("Preference-Applied should parse")
+    .expect("Preference-Applied should be present");
+  assert_eq!(
+    "return=representation, vendor=enabled; trace=\"a b\"",
+    metadata.header_value()
+  );
+  assert_eq!(
+    vec![(
+      "Preference-Applied",
+      "return=representation, vendor=enabled; trace=\"a b\""
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let malformed = HttpResponse::ok([]).header("Preference-Applied", "handling=relaxed");
+  assert!(malformed.preference_applied().is_err());
+  assert_eq!(
+    vec![("Preference-Applied", "handling=relaxed")],
+    malformed
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Preference-Applied", "return=minimal")
+    .header("preference-applied", "return=representation");
+  assert!(duplicate.preference_applied().is_err());
+  assert_eq!(
+    vec![
+      ("Preference-Applied", "return=minimal"),
+      ("preference-applied", "return=representation"),
+    ],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+  let serialized = String::from_utf8(duplicate.to_bytes()).expect("response should serialize");
+  assert!(serialized.contains("\r\nPreference-Applied: return=minimal\r\n"));
+  assert!(serialized.contains("\r\npreference-applied: return=representation\r\n"));
+
+  let unchanged = HttpResponse::ok([]).header("Preference-Applied", "return=minimal");
+  let before = unchanged.clone();
+  let _: Result<HttpResponse, HttpPreferenceAppliedParseError> = unchanged
+    .clone()
+    .with_preference_applied("handling=relaxed");
+  assert_eq!(before, unchanged);
+}
+
+#[test]
 fn delta_base_response_helpers_validate_replace_and_parse_singleton_metadata() {
   assert_eq!(
     None,
