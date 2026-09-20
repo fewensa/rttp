@@ -1077,11 +1077,19 @@ HTTP(S) origins, and inner lists including the empty `()`. Field values are
 bounded to 64 KiB, directives to 256 per header set, and allowlist members to
 256 per directive. Duplicate feature keys, duplicate allowlist members, the
 HTML-attribute tokens `src` and `'none'`, and unparsable input are rejected; a
-well-formed `report-to` parameter is accepted and dropped.
+well-formed `report-to` parameter is accepted and retained on the directive.
 
 These helpers only declare and parse metadata. RTTP does not grant or deny
 browser permissions, compare origins, resolve `self`, or enforce origin
 policy, and it does not send reports.
+
+`HttpResponse::with_permissions_policy_report_only(value)` validates and
+canonicalizes `Permissions-Policy-Report-Only` through the same shared
+protocol parser, formatter, directive model, and bounds while
+`HttpResponse::permissions_policy_report_only()` returns distinct
+`HttpPermissionsPolicyReportOnly` metadata. The helpers replace raw duplicate
+report-only fields on declaration, preserve raw fields on parse errors, and
+do not enforce browser permissions or deliver reports.
 
 ## Document-Policy response metadata
 

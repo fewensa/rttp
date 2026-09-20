@@ -21,10 +21,11 @@ use rttp::server::{
   HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective,
   HttpNegotiateParseError, HttpNel, HttpOriginAgentCluster, HttpOriginAgentClusterParseError,
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpPrefersColorScheme,
-  HttpPrefersColorSchemeParseError, HttpPrefersContrast, HttpPrefersContrastParseError,
-  HttpPrefersReducedData, HttpPrefersReducedDataParseError, HttpPrefersReducedMotion,
-  HttpPrefersReducedMotionParseError, HttpPrefersReducedTransparency,
+  HttpPermissionsPolicyParseError, HttpPermissionsPolicyReportOnly,
+  HttpPermissionsPolicyReportOnlyParseError, HttpPragma, HttpPragmaParseError,
+  HttpPrefersColorScheme, HttpPrefersColorSchemeParseError, HttpPrefersContrast,
+  HttpPrefersContrastParseError, HttpPrefersReducedData, HttpPrefersReducedDataParseError,
+  HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError, HttpPrefersReducedTransparency,
   HttpPrefersReducedTransparencyParseError, HttpProxyAuthorization, HttpProxyStatus,
   HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
@@ -1299,6 +1300,14 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::PermissionsPolicyParseError =
     rttp_client::response::PermissionsPolicy::parse("geolocation=src")
       .expect_err("src should be rejected");
+  let permissions_policy_report_only: rttp::PermissionsPolicyReportOnly =
+    rttp_client::response::PermissionsPolicyReportOnly::parse(
+      r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    )
+    .expect("Permissions-Policy-Report-Only should parse");
+  let _: rttp::PermissionsPolicyReportOnlyParseError =
+    rttp_client::response::PermissionsPolicyReportOnly::parse("geolocation=src")
+      .expect_err("src should be rejected");
   let document_policy: rttp::DocumentPolicy =
     rttp_client::response::DocumentPolicy::parse("oversized-images=2.0, unsized-media=?0")
       .expect("Document-Policy should parse");
@@ -1600,6 +1609,16 @@ fn compatibility_facade_exports_client_metadata_types() {
   );
   assert_eq!(permissions_policy.directives().len(), 2);
   assert!(permissions_policy
+    .directive("camera")
+    .unwrap()
+    .allowlist()
+    .is_empty());
+  assert_eq!(
+    permissions_policy_report_only.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(permissions_policy_report_only.directives().len(), 2);
+  assert!(permissions_policy_report_only
     .directive("camera")
     .unwrap()
     .allowlist()
@@ -3119,6 +3138,13 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Permissions-Policy should parse");
   let _: HttpPermissionsPolicyParseError =
     HttpPermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
+  let permissions_policy_report_only: HttpPermissionsPolicyReportOnly =
+    HttpPermissionsPolicyReportOnly::parse(
+      r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    )
+    .expect("Permissions-Policy-Report-Only should parse");
+  let _: HttpPermissionsPolicyReportOnlyParseError =
+    HttpPermissionsPolicyReportOnly::parse("geolocation=src").expect_err("src should be rejected");
   let supports_loading_mode: HttpSupportsLoadingMode =
     HttpSupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
       .expect("Supports-Loading-Mode should parse");
@@ -3316,6 +3342,15 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     r#"geolocation=(self "https://maps.example.test"), camera=()"#
   );
   assert!(permissions_policy
+    .directive("camera")
+    .unwrap()
+    .allowlist()
+    .is_empty());
+  assert_eq!(
+    permissions_policy_report_only.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert!(permissions_policy_report_only
     .directive("camera")
     .unwrap()
     .allowlist()

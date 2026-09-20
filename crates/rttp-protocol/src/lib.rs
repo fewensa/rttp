@@ -97,6 +97,7 @@ pub mod origin_agent_cluster;
 pub mod origin_trial;
 pub mod overwrite;
 pub mod permissions_policy;
+pub mod permissions_policy_report_only;
 pub mod pragma;
 pub mod prefer;
 pub mod priority;

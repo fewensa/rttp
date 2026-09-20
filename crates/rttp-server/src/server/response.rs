@@ -184,6 +184,13 @@ pub use rttp_protocol::permissions_policy::{
   PermissionsPolicyDirective as HttpPermissionsPolicyDirective,
   PermissionsPolicyParseError as HttpPermissionsPolicyParseError,
 };
+pub use rttp_protocol::permissions_policy_report_only::{
+  PermissionsPolicyReportOnly as HttpPermissionsPolicyReportOnly,
+  PermissionsPolicyReportOnlyAllowlist as HttpPermissionsPolicyReportOnlyAllowlist,
+  PermissionsPolicyReportOnlyAllowlistMember as HttpPermissionsPolicyReportOnlyAllowlistMember,
+  PermissionsPolicyReportOnlyDirective as HttpPermissionsPolicyReportOnlyDirective,
+  PermissionsPolicyReportOnlyParseError as HttpPermissionsPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::pragma::{Pragma as HttpPragma, PragmaParseError as HttpPragmaParseError};
 pub use rttp_protocol::priority::{
   Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
@@ -1734,6 +1741,17 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Permissions-Policy-Report-Only` metadata without
+  /// enforcing browser permissions or sending reports.
+  pub fn with_permissions_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpPermissionsPolicyReportOnlyParseError> {
+    let policy = HttpPermissionsPolicyReportOnly::parse(value)?;
+    self.set_browser_policy_header("Permissions-Policy-Report-Only", &policy.header_value());
+    Ok(self)
+  }
+
   /// Validates and replaces `Referrer-Policy` metadata without altering requests.
   pub fn with_referrer_policy(
     mut self,
@@ -3223,6 +3241,28 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpPermissionsPolicy::parse_values(values).map(Some)
+  }
+
+  /// Returns attached `Permissions-Policy-Report-Only` metadata without
+  /// enforcing browser permissions or sending reports.
+  pub fn permissions_policy_report_only(
+    &self,
+  ) -> Result<Option<HttpPermissionsPolicyReportOnly>, HttpPermissionsPolicyReportOnlyParseError>
+  {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Permissions-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPermissionsPolicyReportOnly::parse_values(values).map(Some)
   }
 
   /// Returns attached `Sec-WebSocket-Version` response metadata without

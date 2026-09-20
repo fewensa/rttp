@@ -11,8 +11,8 @@ use rttp::server::{
   HttpDocumentPolicyReportOnly, HttpEntityTag, HttpExpectations, HttpFrom, HttpFromParseError,
   HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
   HttpMementoDatetime, HttpNel, HttpOriginTrials, HttpOverwrite, HttpPartialContentError,
-  HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferer,
-  HttpRefererParseError, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpPermissionsPolicy, HttpPermissionsPolicyReportOnly, HttpProxyStatus, HttpProxyStatusBareItem,
+  HttpReferer, HttpRefererParseError, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
   HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
   HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
   HttpScheduleTag, HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
@@ -625,6 +625,8 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
     .expect("Content-Security-Policy metadata should be accepted")
     .with_permissions_policy("geolocation=(), camera=()")
     .expect("Permissions-Policy metadata should be accepted")
+    .with_permissions_policy_report_only("geolocation=(), camera=()")
+    .expect("Permissions-Policy-Report-Only metadata should be accepted")
     .with_document_policy("oversized-images=2.0, unsized-media=?0, *;report-to=default")
     .expect("Document-Policy metadata should be accepted")
     .with_document_policy_report_only("oversized-images=2.0, unsized-media=?0, *;report-to=default")
@@ -647,6 +649,15 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
       .expect("Permissions-Policy metadata should parse")
       .as_ref()
       .map(HttpPermissionsPolicy::header_value)
+      .as_deref()
+  );
+  assert_eq!(
+    Some("geolocation=(), camera=()"),
+    response
+      .permissions_policy_report_only()
+      .expect("Permissions-Policy-Report-Only metadata should parse")
+      .as_ref()
+      .map(HttpPermissionsPolicyReportOnly::header_value)
       .as_deref()
   );
   assert_eq!(
@@ -681,6 +692,7 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
 
   assert!(HttpContentSecurityPolicy::parse("default-src\r\nblocked").is_err());
   assert!(HttpPermissionsPolicy::parse("").is_err());
+  assert!(HttpPermissionsPolicyReportOnly::parse("").is_err());
   assert!(HttpDocumentPolicy::parse("oversized-images=1.0, oversized-images=2.0").is_err());
   assert!(
     HttpDocumentPolicyReportOnly::parse("oversized-images=1.0, oversized-images=2.0").is_err()

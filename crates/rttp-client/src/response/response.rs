@@ -77,6 +77,7 @@ use rttp_protocol::location::Location;
 use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::permissions_policy::PermissionsPolicy;
+use rttp_protocol::permissions_policy_report_only::PermissionsPolicyReportOnly;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::rate_limit::{RateLimitLimit, RateLimitRemaining, RateLimitReset};
@@ -845,6 +846,20 @@ impl Response {
       return Ok(None);
     }
     PermissionsPolicy::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Permissions-Policy-Report-Only` response metadata without
+  /// enforcing browser permissions or sending reports.
+  pub fn permissions_policy_report_only(
+    &self,
+  ) -> error::Result<Option<PermissionsPolicyReportOnly>> {
+    let values = self.header_values("permissions-policy-report-only");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    PermissionsPolicyReportOnly::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

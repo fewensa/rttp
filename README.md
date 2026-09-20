@@ -1752,6 +1752,13 @@ The helper is metadata-only. RTTP does not grant or deny browser permissions,
 compare origins, resolve `self`, enable or disable APIs, or enforce origin
 policy, and it does not send reports.
 
+`Response::permissions_policy_report_only()` parses
+`Permissions-Policy-Report-Only` response fields through the same shared
+protocol parser, formatter, directive model, and bounds while returning the
+distinct `PermissionsPolicyReportOnly` metadata type. It preserves raw
+response headers on parse errors and does not enforce browser permissions or
+deliver reports.
+
 ### Bounded Document-Policy metadata
 
 `Response::document_policy()` parses one or more `Document-Policy` response
@@ -1982,6 +1989,7 @@ gain additional HTTP/2 header-block handling.
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Permissions-Policy | `Response::permissions_policy` parses bounded W3C Permissions Policy dictionary metadata through the shared protocol type, combining fields in wire order and preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, or report sending |
+| Permissions-Policy-Report-Only | `Response::permissions_policy_report_only` parses bounded W3C Permissions Policy Report-Only dictionary metadata through the same shared protocol parser and formatter, retaining report-only type identity and combining fields in wire order while preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, report delivery, scheduling, retry, or endpoint validation |
 | Document-Policy | `Response::document_policy` parses bounded WICG Document Policy dictionary metadata through the shared protocol type, combining fields in wire order, retaining `*` and `report-to`, and preserving raw headers on parse failures | No configuration-point execution, document-load blocking, required-policy comparison, `Sec-Required-Document-Policy` echoing, feature enablement, or report sending |
 | Document-Policy-Report-Only | `Response::document_policy_report_only` parses bounded WICG Document Policy Report-Only dictionary metadata through the same shared protocol parser and formatter, retaining report-only type identity, `*`, and `report-to`, and preserving raw headers on parse failures | No policy enforcement, document-load blocking, required-policy comparison, `Sec-Required-Document-Policy` echoing, feature enablement, report delivery, scheduling, retry, or endpoint validation |
 | Supports-Loading-Mode | `Response::supports_loading_mode` parses bounded Structured Fields token-list response metadata through the shared protocol type, combining fields in wire order, retaining unknown tokens, and preserving raw headers on parse failures | No prerendering, fenced-frame admission, navigation changes, redirects, retries, or resource-loading behavior |
@@ -3218,6 +3226,14 @@ directives to 256 per header set, and allowlist members to 256 per directive.
 They do not grant or deny browser permissions, compare origins, resolve
 `self`, enable or disable APIs, enforce origin policy, or send reports.
 
+`HttpResponse::with_permissions_policy_report_only(value)` and
+`HttpResponse::permissions_policy_report_only()` expose
+`Permissions-Policy-Report-Only` metadata through the same shared protocol
+parser, formatter, directive model, and bounds while returning distinct
+`HttpPermissionsPolicyReportOnly` metadata. Declaration replaces raw duplicate
+report-only fields with one canonical value. These helpers do not enforce
+browser permissions or deliver reports.
+
 ### Bounded Document-Policy metadata
 
 Server-side `Document-Policy` helpers expose response declaration metadata
@@ -3539,6 +3555,7 @@ TLS or async accept loops.
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `HttpNoVarySearch`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Permissions-Policy | `HttpPermissionsPolicy`, `HttpResponse::with_permissions_policy`, and `HttpResponse::permissions_policy` parse and declare bounded W3C Permissions Policy dictionary response metadata through the shared protocol type, replacing raw duplicates on declaration and preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, or report sending |
+| Permissions-Policy-Report-Only | `HttpPermissionsPolicyReportOnly`, `HttpResponse::with_permissions_policy_report_only`, and `HttpResponse::permissions_policy_report_only` parse and declare bounded W3C Permissions Policy Report-Only dictionary metadata through the same shared protocol parser and formatter, replacing raw duplicates on declaration, retaining report-only type identity, and preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, report delivery, scheduling, retry, or endpoint validation |
 | Document-Policy | `HttpDocumentPolicy`, `HttpResponse::with_document_policy`, and `HttpResponse::document_policy` parse and declare bounded WICG Document Policy dictionary response metadata through the shared protocol type, replacing raw duplicates on declaration, retaining `*` and `report-to`, and preserving raw headers on parse failures | No configuration-point execution, document-load blocking, required-policy comparison, `Sec-Required-Document-Policy` echoing, feature enablement, or report sending |
 | Document-Policy-Report-Only | `HttpDocumentPolicyReportOnly`, `HttpResponse::with_document_policy_report_only`, and `HttpResponse::document_policy_report_only` parse and declare bounded WICG Document Policy Report-Only dictionary metadata through the same shared protocol parser and formatter, replacing raw duplicates on declaration, retaining report-only type identity, `*`, and `report-to`, and preserving raw headers on parse failures | No policy enforcement, document-load blocking, required-policy comparison, `Sec-Required-Document-Policy` echoing, feature enablement, report delivery, scheduling, retry, or endpoint validation |
 | Supports-Loading-Mode | `HttpSupportsLoadingMode`, `HttpResponse::with_supports_loading_mode`, and `HttpResponse::supports_loading_mode` parse and declare bounded Structured Fields token-list response metadata through the shared protocol type, replacing raw duplicates on declaration, retaining unknown tokens, and preserving raw headers on parse failures | No prerendering, fenced-frame admission, navigation changes, redirects, retries, or resource-loading behavior |

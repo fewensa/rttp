@@ -2734,7 +2734,7 @@ fn permissions_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
     .expect("raw Permissions-Policy should parse")
     .expect("Permissions-Policy should be present");
   assert_eq!(
-    r#"geolocation=(self "https://maps.example.test")"#,
+    r#"geolocation=(self "https://maps.example.test");report-to="rp""#,
     policy.header_value()
   );
   assert_eq!(
@@ -2777,6 +2777,110 @@ fn permissions_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
   assert!(duplicate.permissions_policy().is_err());
   assert!(HttpResponse::ok([])
     .with_permissions_policy(
+      format!("geolocation=(\"{}\")", "https://example.test/".repeat(64 * 1024))
+    )
+    .is_err());
+}
+
+#[test]
+fn permissions_policy_report_only_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Permissions-Policy-Report-Only", "geolocation=(self)")
+    .header("permissions-policy-report-only", "camera=()")
+    .with_permissions_policy_report_only(
+      r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    )
+    .expect("Permissions-Policy-Report-Only should be accepted");
+
+  let policy = response
+    .permissions_policy_report_only()
+    .expect("Permissions-Policy-Report-Only should parse")
+    .expect("Permissions-Policy-Report-Only should be present");
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    policy.header_value()
+  );
+  assert_eq!(2, policy.directives().len());
+  assert!(policy.directive("camera").unwrap().allowlist().is_empty());
+  assert_eq!(
+    vec![(
+      "Permissions-Policy-Report-Only",
+      r#"geolocation=(self "https://maps.example.test"), camera=()"#
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn permissions_policy_report_only_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header(
+    "Permissions-Policy-Report-Only",
+    r#"geolocation=(self "https://maps.example.test");report-to="rp""#,
+  );
+  let policy = raw
+    .permissions_policy_report_only()
+    .expect("raw Permissions-Policy-Report-Only should parse")
+    .expect("Permissions-Policy-Report-Only should be present");
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test");report-to="rp""#,
+    policy.header_value()
+  );
+  assert_eq!(
+    Some(r#"geolocation=(self "https://maps.example.test");report-to="rp""#),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Permissions-Policy-Report-Only"))
+      .map(|header| header.value.as_str())
+  );
+
+  for value in [
+    "",
+    "geolocation=src",
+    "geolocation=('none')",
+    "geolocation=*;unknown=1",
+    "geolocation=(* \"https://example.test\")",
+    "geolocation=5",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Permissions-Policy-Report-Only", value);
+    assert!(
+      malformed.permissions_policy_report_only().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(malformed.status_code == 200 && malformed.body.is_empty());
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Permissions-Policy-Report-Only"))
+        .map(|header| header.value.as_str())
+    );
+    assert!(
+      HttpResponse::ok([])
+        .with_permissions_policy_report_only(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .permissions_policy_report_only()
+      .expect("absent Permissions-Policy-Report-Only should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Permissions-Policy-Report-Only", "geolocation=(self)")
+    .header("permissions-policy-report-only", "geolocation=(self)");
+  assert!(duplicate.permissions_policy_report_only().is_err());
+  assert!(HttpResponse::ok([])
+    .with_permissions_policy_report_only(
       format!("geolocation=(\"{}\")", "https://example.test/".repeat(64 * 1024))
     )
     .is_err());

@@ -12,9 +12,9 @@
 //! disables the feature; mixing `*` with other members is rejected. The
 //! HTML-attribute tokens `src` and `'none'` are not part of the HTTP
 //! structured-header value set and are rejected. A well-formed `report-to`
-//! string parameter is accepted as syntax and dropped; other parameters are
-//! rejected. Unparsable input is an error; this parser never fails open to an
-//! empty policy.
+//! string parameter is accepted and retained on the directive; other
+//! parameters are rejected. Unparsable input is an error; this parser never
+//! fails open to an empty policy.
 
 use std::collections::HashSet;
 use std::error::Error;
@@ -38,6 +38,7 @@ pub struct PermissionsPolicy {
 pub struct PermissionsPolicyDirective {
   feature: String,
   allowlist: PermissionsPolicyAllowlist,
+  report_to: Option<String>,
 }
 
 /// The allowlist declared for one feature.
@@ -80,6 +81,23 @@ impl fmt::Display for PermissionsPolicyParseError {
 
 impl Error for PermissionsPolicyParseError {}
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PermissionsPolicyCoreParseError {
+  message: String,
+}
+
+impl PermissionsPolicyCoreParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+
+  pub(crate) fn message(&self) -> &str {
+    &self.message
+  }
+}
+
 impl PermissionsPolicy {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, PermissionsPolicyParseError> {
     Self::parse_values([value.as_ref()])
@@ -89,21 +107,9 @@ impl PermissionsPolicy {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let mut directives = Vec::new();
-    for value in values {
-      if value.len() > MAX_PERMISSIONS_POLICY_VALUE_BYTES {
-        return Err(PermissionsPolicyParseError::new(
-          "Permissions-Policy header value is too large",
-        ));
-      }
-      parse_field(value, &mut directives)?;
-    }
-    if directives.is_empty() {
-      return Err(PermissionsPolicyParseError::new(
-        "Permissions-Policy field must contain a directive",
-      ));
-    }
-    Ok(Self { directives })
+    parse_permissions_policy_values("Permissions-Policy", values)
+      .map(|directives| Self { directives })
+      .map_err(|error| PermissionsPolicyParseError::new(error.message))
   }
 
   pub fn directives(&self) -> &[PermissionsPolicyDirective] {
@@ -126,13 +132,42 @@ impl PermissionsPolicy {
   }
 
   pub fn header_value(&self) -> String {
-    self
-      .directives
-      .iter()
-      .map(PermissionsPolicyDirective::header_value)
-      .collect::<Vec<_>>()
-      .join(", ")
+    format_permissions_policy_directives(&self.directives)
   }
+}
+
+pub(crate) fn parse_permissions_policy_values<'a, I>(
+  header_name: &'static str,
+  values: I,
+) -> Result<Vec<PermissionsPolicyDirective>, PermissionsPolicyCoreParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut directives = Vec::new();
+  for value in values {
+    if value.len() > MAX_PERMISSIONS_POLICY_VALUE_BYTES {
+      return Err(PermissionsPolicyCoreParseError::new(format!(
+        "{header_name} header value is too large"
+      )));
+    }
+    parse_field(header_name, value, &mut directives)?;
+  }
+  if directives.is_empty() {
+    return Err(PermissionsPolicyCoreParseError::new(format!(
+      "{header_name} field must contain a directive"
+    )));
+  }
+  Ok(directives)
+}
+
+pub(crate) fn format_permissions_policy_directives(
+  directives: &[PermissionsPolicyDirective],
+) -> String {
+  directives
+    .iter()
+    .map(PermissionsPolicyDirective::header_value)
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 impl PermissionsPolicyDirective {
@@ -145,8 +180,17 @@ impl PermissionsPolicyDirective {
     &self.allowlist
   }
 
+  /// Returns the retained `report-to` endpoint name, if declared.
+  pub fn report_to(&self) -> Option<&str> {
+    self.report_to.as_deref()
+  }
+
   fn header_value(&self) -> String {
-    format!("{}={}", self.feature, self.allowlist.header_value())
+    let mut value = format!("{}={}", self.feature, self.allowlist.header_value());
+    if let Some(report_to) = &self.report_to {
+      value.push_str(&format!(";report-to=\"{}\"", escape_sf_string(report_to)));
+    }
+    value
   }
 }
 
@@ -208,21 +252,22 @@ impl PermissionsPolicyAllowlistMember {
 }
 
 fn parse_field(
+  header_name: &'static str,
   value: &str,
   directives: &mut Vec<PermissionsPolicyDirective>,
-) -> Result<(), PermissionsPolicyParseError> {
+) -> Result<(), PermissionsPolicyCoreParseError> {
   let dictionary = Parser::new(value)
     .parse::<Dictionary>()
-    .map_err(|_| invalid_member())?;
+    .map_err(|_| invalid_member(header_name))?;
   if dictionary.is_empty() {
-    return Err(PermissionsPolicyParseError::new(
-      "Permissions-Policy field must contain a directive",
-    ));
+    return Err(PermissionsPolicyCoreParseError::new(format!(
+      "{header_name} field must contain a directive"
+    )));
   }
   if top_level_member_count(value) != dictionary.len() {
-    return Err(PermissionsPolicyParseError::new(
-      "duplicate Permissions-Policy feature key",
-    ));
+    return Err(PermissionsPolicyCoreParseError::new(format!(
+      "duplicate {header_name} feature key"
+    )));
   }
 
   for (key, member) in dictionary {
@@ -231,79 +276,85 @@ fn parse_field(
       .iter()
       .any(|directive| directive.feature == feature)
     {
-      return Err(PermissionsPolicyParseError::new(
-        "duplicate Permissions-Policy feature key",
-      ));
+      return Err(PermissionsPolicyCoreParseError::new(format!(
+        "duplicate {header_name} feature key"
+      )));
     }
     if directives.len() >= MAX_PERMISSIONS_POLICY_DIRECTIVES {
-      return Err(PermissionsPolicyParseError::new(
-        "too many Permissions-Policy directives",
-      ));
+      return Err(PermissionsPolicyCoreParseError::new(format!(
+        "too many {header_name} directives"
+      )));
     }
-    let allowlist = parse_allowlist(member)?;
-    directives.push(PermissionsPolicyDirective { feature, allowlist });
+    let (allowlist, report_to) = parse_allowlist(header_name, member)?;
+    directives.push(PermissionsPolicyDirective {
+      feature,
+      allowlist,
+      report_to,
+    });
   }
   Ok(())
 }
 
 fn parse_allowlist(
+  header_name: &'static str,
   member: ListEntry,
-) -> Result<PermissionsPolicyAllowlist, PermissionsPolicyParseError> {
+) -> Result<(PermissionsPolicyAllowlist, Option<String>), PermissionsPolicyCoreParseError> {
   match member {
     ListEntry::Item(item) => {
-      validate_parameters(&item.params)?;
-      match item.bare_item {
+      let report_to = parse_report_to(header_name, &item.params)?;
+      let allowlist = match item.bare_item {
         BareItem::Token(token) => match token.as_str() {
           "*" => Ok(PermissionsPolicyAllowlist::AllOrigins),
           "self" => Ok(PermissionsPolicyAllowlist::Members(vec![
             PermissionsPolicyAllowlistMember::SelfToken,
           ])),
-          _ => Err(invalid_member()),
+          _ => Err(invalid_member(header_name)),
         },
         BareItem::String(string) => {
           if string.as_str() == "'none'" {
-            return Err(invalid_member());
+            return Err(invalid_member(header_name));
           }
-          let origin = parse_serialized_origin(string.as_str())?;
+          let origin = parse_serialized_origin(header_name, string.as_str())?;
           Ok(PermissionsPolicyAllowlist::Members(vec![
             PermissionsPolicyAllowlistMember::Origin(origin),
           ]))
         }
-        _ => Err(invalid_member()),
-      }
+        _ => Err(invalid_member(header_name)),
+      }?;
+      Ok((allowlist, report_to))
     }
     ListEntry::InnerList(inner_list) => {
-      validate_parameters(&inner_list.params)?;
+      let report_to = parse_report_to(header_name, &inner_list.params)?;
       if inner_list.items.len() > MAX_PERMISSIONS_POLICY_ALLOWLIST_MEMBERS {
-        return Err(PermissionsPolicyParseError::new(
-          "too many Permissions-Policy allowlist members",
-        ));
+        return Err(PermissionsPolicyCoreParseError::new(format!(
+          "too many {header_name} allowlist members"
+        )));
       }
       let mut members = Vec::with_capacity(inner_list.items.len());
       let mut seen = HashSet::new();
       for item in inner_list.items {
-        validate_parameters(&item.params)?;
+        validate_parameters(header_name, &item.params)?;
         let member = match item.bare_item {
           BareItem::Token(token) if token.as_str() == "self" => {
             PermissionsPolicyAllowlistMember::SelfToken
           }
           BareItem::String(string) => {
             if string.as_str() == "'none'" {
-              return Err(invalid_member());
+              return Err(invalid_member(header_name));
             }
-            let origin = parse_serialized_origin(string.as_str())?;
+            let origin = parse_serialized_origin(header_name, string.as_str())?;
             PermissionsPolicyAllowlistMember::Origin(origin)
           }
-          _ => return Err(invalid_member()),
+          _ => return Err(invalid_member(header_name)),
         };
         if !seen.insert(member_identity(&member)) {
-          return Err(PermissionsPolicyParseError::new(
-            "duplicate Permissions-Policy allowlist member",
-          ));
+          return Err(PermissionsPolicyCoreParseError::new(format!(
+            "duplicate {header_name} allowlist member"
+          )));
         }
         members.push(member);
       }
-      Ok(PermissionsPolicyAllowlist::Members(members))
+      Ok((PermissionsPolicyAllowlist::Members(members), report_to))
     }
   }
 }
@@ -315,26 +366,41 @@ fn member_identity(member: &PermissionsPolicyAllowlistMember) -> String {
   }
 }
 
-fn validate_parameters(params: &sfv::Parameters) -> Result<(), PermissionsPolicyParseError> {
-  for (name, value) in params {
-    if name.as_str() != "report-to" {
-      return Err(invalid_member());
-    }
-    if !matches!(value, BareItem::String(_)) {
-      return Err(invalid_member());
-    }
-  }
-  Ok(())
+fn validate_parameters(
+  header_name: &'static str,
+  params: &sfv::Parameters,
+) -> Result<(), PermissionsPolicyCoreParseError> {
+  parse_report_to(header_name, params).map(|_| ())
 }
 
-fn parse_serialized_origin(value: &str) -> Result<String, PermissionsPolicyParseError> {
-  let url = Url::parse(value).map_err(|_| invalid_member())?;
+fn parse_report_to(
+  header_name: &'static str,
+  params: &sfv::Parameters,
+) -> Result<Option<String>, PermissionsPolicyCoreParseError> {
+  let mut report_to = None;
+  for (name, value) in params {
+    if name.as_str() != "report-to" {
+      return Err(invalid_member(header_name));
+    }
+    report_to = Some(match value {
+      BareItem::String(string) => string.as_str().to_owned(),
+      _ => return Err(invalid_member(header_name)),
+    });
+  }
+  Ok(report_to)
+}
+
+fn parse_serialized_origin(
+  header_name: &'static str,
+  value: &str,
+) -> Result<String, PermissionsPolicyCoreParseError> {
+  let url = Url::parse(value).map_err(|_| invalid_member(header_name))?;
   if url.cannot_be_a_base() || !matches!(url.scheme(), "http" | "https") {
-    return Err(invalid_member());
+    return Err(invalid_member(header_name));
   }
   let origin = url.origin().ascii_serialization();
   if origin == "null" || value != origin {
-    return Err(invalid_member());
+    return Err(invalid_member(header_name));
   }
   Ok(origin)
 }
@@ -368,6 +434,20 @@ fn top_level_member_count(value: &str) -> usize {
   count
 }
 
-fn invalid_member() -> PermissionsPolicyParseError {
-  PermissionsPolicyParseError::new("invalid Permissions-Policy dictionary member")
+fn escape_sf_string(value: &str) -> String {
+  let mut escaped = String::new();
+  for byte in value.bytes() {
+    match byte {
+      b'\\' | b'"' => {
+        escaped.push('\\');
+        escaped.push(byte as char);
+      }
+      _ => escaped.push(byte as char),
+    }
+  }
+  escaped
+}
+
+fn invalid_member(header_name: &'static str) -> PermissionsPolicyCoreParseError {
+  PermissionsPolicyCoreParseError::new(format!("invalid {header_name} dictionary member"))
 }

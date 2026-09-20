@@ -1778,13 +1778,20 @@ The helper is bounded and validation-oriented. Each field value is limited to
 allowlist is limited to 256 members. Feature names are opaque tokens; the
 HTML-attribute tokens `src` and `'none'` are rejected, duplicate feature keys
 and duplicate allowlist members are errors, and a well-formed `report-to`
-parameter is accepted and dropped. Unparsable input makes
+parameter is accepted and retained on the directive. Unparsable input makes
 `Response::permissions_policy()` return an error while leaving the original
 response headers and body available through the ordinary response APIs.
 
 The helper is metadata-only. `rttp_client` does not grant or deny browser
 permissions, compare origins, resolve `self`, enable or disable APIs, or
 enforce origin policy, and it does not send reports.
+
+`Response::permissions_policy_report_only()` parses
+`Permissions-Policy-Report-Only` response fields through the same shared
+protocol parser, formatter, directive model, and bounds while returning the
+distinct `PermissionsPolicyReportOnly` metadata type. It preserves raw
+response headers on parse errors and does not enforce browser permissions or
+deliver reports.
 
 ## Bounded Document-Policy response metadata
 
@@ -2196,6 +2203,7 @@ header-block model.
 | Proxy-Status | `Response::proxy_status` parses bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Permissions-Policy | `Response::permissions_policy` parses bounded W3C Permissions Policy dictionary metadata through the shared protocol type, combining fields in wire order and preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, or report sending |
+| Permissions-Policy-Report-Only | `Response::permissions_policy_report_only` parses bounded W3C Permissions Policy Report-Only dictionary metadata through the same shared protocol parser and formatter, retaining report-only type identity and combining fields in wire order while preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, report delivery, scheduling, retry, or endpoint validation |
 | Document-Policy | `Response::document_policy` parses bounded WICG Document Policy dictionary metadata through the shared protocol type, combining fields in wire order, retaining `*` and `report-to`, and preserving raw headers on parse failures | No configuration-point execution, document-load blocking, required-policy comparison, `Sec-Required-Document-Policy` echoing, feature enablement, or report sending |
 | Document-Policy-Report-Only | `Response::document_policy_report_only` parses bounded WICG Document Policy Report-Only dictionary metadata through the same shared protocol parser and formatter, retaining report-only type identity, `*`, and `report-to`, and preserving raw headers on parse failures | No policy enforcement, document-load blocking, required-policy comparison, `Sec-Required-Document-Policy` echoing, feature enablement, report delivery, scheduling, retry, or endpoint validation |
 | Supports-Loading-Mode | `Response::supports_loading_mode` parses bounded Structured Fields token-list response metadata through the shared protocol type, combining fields in wire order, retaining unknown tokens, and preserving raw headers on parse failures | No prerendering, fenced-frame admission, navigation changes, redirects, retries, or resource-loading behavior |

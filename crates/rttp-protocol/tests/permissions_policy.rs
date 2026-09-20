@@ -115,13 +115,24 @@ fn permissions_policy_retains_unknown_feature_tokens() {
 }
 
 #[test]
-fn permissions_policy_accepts_and_drops_report_to_parameters() {
+fn permissions_policy_accepts_and_retains_report_to_parameters() {
   let policy = PermissionsPolicy::parse(
     r#"payment=();report-to="payments", geolocation=self;report-to="geo""#,
   )
   .expect("report-to parameters should be accepted as syntax");
   assert!(policy.directive("payment").unwrap().allowlist().is_empty());
-  assert_eq!(policy.header_value(), r#"payment=(), geolocation=self"#);
+  assert_eq!(
+    policy.directive("payment").unwrap().report_to(),
+    Some("payments")
+  );
+  assert_eq!(
+    policy.directive("geolocation").unwrap().report_to(),
+    Some("geo")
+  );
+  assert_eq!(
+    policy.header_value(),
+    r#"payment=();report-to="payments", geolocation=self;report-to="geo""#
+  );
 }
 
 #[test]
