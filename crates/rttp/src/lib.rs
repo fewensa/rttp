@@ -7,7 +7,10 @@ pub use rttp_server::server;
 #[cfg(feature = "client")]
 pub use rttp_client::response::{
   AcceptCh, AcceptCharset, AcceptEncoding, AcceptPatch, AcceptPatchParseError, AcceptPost,
-  AcceptPostParseError, AcceptRanges, AccessControlAllowCredentials,
+  AcceptPostParseError, AcceptRanges, AcceptSignature, AcceptSignatureBareItem,
+  AcceptSignatureComponent, AcceptSignatureComponentParameter, AcceptSignatureCoveredComponent,
+  AcceptSignatureDecimal, AcceptSignatureEntry, AcceptSignatureMember, AcceptSignatureParameter,
+  AcceptSignatureParameterValue, AcceptSignatureParseError, AccessControlAllowCredentials,
   AccessControlAllowCredentialsParseError, AccessControlAllowPrivateNetwork,
   AccessControlAllowPrivateNetworkParseError, Age, AgeParseError, AltSvc, AltSvcAlternative,
   AltSvcParameter, AltSvcParseError, AltUsed, AltUsedParseError, AlternateAttribute,

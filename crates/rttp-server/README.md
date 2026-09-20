@@ -1750,17 +1750,19 @@ already chose; the two helpers still do not negotiate with each other.
 
 ## HTTP message signature metadata
 
-`Request::signature()` / `signature_input()` and the same methods on
-`HttpRequest` parse received RFC 9421 `Signature` and `Signature-Input`
-fields into `HttpSignature` and `HttpSignatureInput`. Absent field sets
-return `Ok(None)`. Present malformed fields return a parse error while
-`Request::header()` continues to expose the original values. The two
-fields are parsed independently.
+`Request::signature()` / `signature_input()` / `accept_signature()` and the
+same methods on `HttpRequest` parse received RFC 9421 `Signature`,
+`Signature-Input`, and `Accept-Signature` fields into their bounded protocol
+types. Absent field sets return `Ok(None)`. Present malformed fields return a
+parse error while `Request::header()` continues to expose the original values.
+The three fields are parsed independently.
 
-`HttpResponse::with_signature()` and `with_signature_input()` validate and
-replace existing same-name fields with one canonical value.
-`HttpResponse::signature()` and `signature_input()` parse attached raw
-fields without changing them.
+`HttpResponse::with_signature()` and `with_signature_input()` validate and replace
+existing same-name fields with one canonical value.
+`HttpResponse::with_accept_signature()` does the same for bounded
+`Accept-Signature` request metadata. `HttpResponse::signature()`,
+`signature_input()`, and `accept_signature()` parse attached raw fields
+without changing them.
 
 These helpers only declare and parse metadata. They do not sign, verify,
 look up keys, canonicalize covered components, or apply cryptographic

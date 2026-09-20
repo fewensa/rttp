@@ -15,6 +15,7 @@ use rttp_protocol::accept_charset::AcceptCharset;
 use rttp_protocol::accept_datetime::AcceptDatetime;
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_BYTES};
+use rttp_protocol::accept_signature::AcceptSignature;
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
@@ -454,6 +455,19 @@ impl HttpClient {
     let signature = Signature::parse(value)
       .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
     Ok(self.header(Header::new("Signature", signature.header_value())))
+  }
+
+  /// Set bounded RFC 9421 `Accept-Signature` request metadata.
+  ///
+  /// This validates and replaces one `Accept-Signature` field. It does not
+  /// sign, verify, look up keys, or choose a signature policy.
+  pub fn accept_signature<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let accept_signature = AcceptSignature::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Accept-Signature",
+      accept_signature.header_value(),
+    )))
   }
 
   /// Set bounded RFC 9421 `Signature-Input` request metadata.

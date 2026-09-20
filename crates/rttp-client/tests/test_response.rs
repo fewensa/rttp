@@ -1,17 +1,17 @@
 use rttp_client::response::{
-  AltSvc, AltUsed, Alternates, AuthenticationInfo, ContentDisposition, ContentDpr, ContentEncoding,
-  ContentLocation, ContentRange, ContentSecurityPolicy, ContentSecurityPolicyReportOnly,
-  ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, DeltaBase, Deprecation, DocumentPolicy,
-  DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag,
-  HttpClearSiteData, HttpSameSite, HttpSetCookie, HttpSetCookies, Im, ImMember, ImParameter,
-  ImParseError, KeepAlive, LinkValues, Location, LockToken, MementoDatetime, OriginAgentCluster,
-  OriginTrials, PermissionsPolicy, PermissionsPolicyReportOnly, ProxyAuthenticate,
-  ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken,
-  Response, RetryAfter, ScheduleTag, SecWebSocketAccept, SecWebSocketExtensions,
-  SecWebSocketProtocol, SecWebSocketVersion, ServerTiming, ServiceWorkerAllowed, SignatureInput,
-  SpeculationRules, StrictTransportSecurity, SupportsLoadingMode, Tcn, TcnDirective, Via, Warning,
-  XContentTypeOptions, XFrameOptions,
+  AcceptSignature, AltSvc, AltUsed, Alternates, AuthenticationInfo, ContentDisposition, ContentDpr,
+  ContentEncoding, ContentLocation, ContentRange, ContentSecurityPolicy,
+  ContentSecurityPolicyReportOnly, ContentType, CrossOriginEmbedderPolicy,
+  CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy,
+  DeltaBase, Deprecation, DocumentPolicy, DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue,
+  DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpSameSite, HttpSetCookie, HttpSetCookies,
+  Im, ImMember, ImParameter, ImParseError, KeepAlive, LinkValues, Location, LockToken,
+  MementoDatetime, OriginAgentCluster, OriginTrials, PermissionsPolicy,
+  PermissionsPolicyReportOnly, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
+  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ScheduleTag,
+  SecWebSocketAccept, SecWebSocketExtensions, SecWebSocketProtocol, SecWebSocketVersion,
+  ServerTiming, ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
+  SupportsLoadingMode, Tcn, TcnDirective, Via, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use rttp_client::DavClass;
@@ -379,6 +379,56 @@ fn signature_input_metadata_parses_without_verifying_signatures() {
     2,
     "raw headers should remain available"
   );
+}
+
+#[test]
+fn accept_signature_metadata_parses_repeated_fields_without_hiding_raw_headers() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Accept-Signature: sig1=(\"@method\");created;nonce=\"n1\"\r\n",
+      "Accept-Signature: sig2=(\"content-digest\");expires;keyid=\"test-key\"\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .accept_signature()
+    .expect("Accept-Signature should parse")
+    .expect("Accept-Signature should be present");
+  assert_eq!(metadata.entries()[0].label(), "sig1");
+  assert!(metadata.entries()[0].created());
+  assert_eq!(metadata.entries()[1].keyid(), Some("test-key"));
+  assert_eq!(response.header_values("Accept-Signature").len(), 2);
+}
+
+#[test]
+fn accept_signature_metadata_errors_without_hiding_raw_headers() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nAccept-Signature: sig1=(\"@method\");created=1\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.accept_signature().is_err());
+  assert_eq!(
+    response.header_value("Accept-Signature"),
+    Some(&r#"sig1=("@method");created=1"#.to_string())
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  let _: Option<AcceptSignature> = absent
+    .accept_signature()
+    .expect("absent Accept-Signature should not fail");
 }
 
 #[test]

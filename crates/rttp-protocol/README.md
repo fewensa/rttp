@@ -1157,6 +1157,26 @@ empty present fields, and other unparsable input are errors. This parser does
 not sign, verify, look up keys, canonicalize covered components, or apply
 cryptographic policy.
 
+## Accept-Signature
+
+`accept_signature` parses one or more RFC 9421 `Accept-Signature` field values
+as labeled, ordered signature requests. Each field value and the combined
+field-value set are bounded to 64 KiB; the collection accepts at most 256
+entries, each entry accepts at most 256 covered components and 256 request
+parameters, each component accepts at most 256 parameters, and each parameter
+value is bounded to 64 KiB. Duplicate labels or parameters, non-ASCII and
+control input, malformed members, non-inner-list values, empty component
+lists, and bound violations are rejected. Component identifiers and component
+parameters reuse the `Signature-Input` representation where their semantics
+are shared.
+
+The registered request parameters `created` and `expires` must be valueless;
+`nonce`, `alg`, `keyid`, and `tag` must be Structured Fields strings. Unknown
+well-formed parameters remain opaque metadata. Repeated field lines are
+combined in wire order, and `header_value()` produces canonical Structured
+Fields serialization. This parser does not sign, verify, look up keys,
+canonicalize covered components, or make policy decisions.
+
 ## Cross-Origin-Opener-Policy
 
 `cross_origin_opener_policy` parses a singleton `Cross-Origin-Opener-Policy`

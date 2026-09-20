@@ -16,6 +16,7 @@ pub mod accept_language;
 pub mod accept_patch;
 pub mod accept_post;
 pub mod accept_ranges;
+pub mod accept_signature;
 pub mod access_control_allow_credentials;
 pub mod access_control_allow_headers;
 pub mod access_control_allow_methods;

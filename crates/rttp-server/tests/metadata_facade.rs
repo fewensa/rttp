@@ -1,23 +1,23 @@
 use rttp_server::server::{
   HttpAIm, HttpAImMember, HttpAImParameter, HttpAImParseError, HttpAccept, HttpAcceptCh,
   HttpAcceptCharset, HttpAcceptCharsetParseError, HttpAcceptDatetime, HttpAcceptDatetimeParseError,
-  HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAcceptParseError,
-  HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
-  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
-  HttpAccessControlAllowPrivateNetwork, HttpAccessControlAllowPrivateNetworkParseError,
-  HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
-  HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpAccessControlRequestPrivateNetwork, HttpAccessControlRequestPrivateNetworkParseError,
-  HttpAltUsed, HttpAltUsedParseError, HttpAuthenticationInfo, HttpAuthenticationInfoParameter,
-  HttpAuthenticationInfoParseError, HttpAuthorization, HttpAuthorizationParseError, HttpBaggage,
-  HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty, HttpCacheStatus,
-  HttpCacheStatusParseError, HttpCdnCacheControl, HttpCdnLoop, HttpCdnLoopMember,
-  HttpCdnLoopParseError, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
-  HttpContentDisposition, HttpContentDispositionParseError, HttpContentDpr,
-  HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
-  HttpContentRange, HttpContentRangeParseError, HttpContentSecurityPolicyReportOnly,
-  HttpContentSecurityPolicyReportOnlyParseError, HttpCookieParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAcceptParseError, HttpAcceptSignature,
+  HttpAcceptSignatureEntry, HttpAcceptSignatureParameter, HttpAccessControlAllowCredentials,
+  HttpAccessControlAllowCredentialsParseError, HttpAccessControlAllowHeaders,
+  HttpAccessControlAllowMethods, HttpAccessControlAllowPrivateNetwork,
+  HttpAccessControlAllowPrivateNetworkParseError, HttpAccessControlRequestHeaders,
+  HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
+  HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
+  HttpAccessControlRequestPrivateNetworkParseError, HttpAltUsed, HttpAltUsedParseError,
+  HttpAuthenticationInfo, HttpAuthenticationInfoParameter, HttpAuthenticationInfoParseError,
+  HttpAuthorization, HttpAuthorizationParseError, HttpBaggage, HttpBaggageMember,
+  HttpBaggageParseError, HttpBaggageProperty, HttpCacheStatus, HttpCacheStatusParseError,
+  HttpCdnCacheControl, HttpCdnLoop, HttpCdnLoopMember, HttpCdnLoopParseError,
+  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentDisposition,
+  HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpContentSecurityPolicyReportOnly, HttpContentSecurityPolicyReportOnlyParseError,
+  HttpCookieParseError, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeltaBase,
   HttpDeltaBaseParseError, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
   HttpDepthParseError, HttpDeviceMemory, HttpDeviceMemoryParseError, HttpDnt, HttpDntParseError,
@@ -120,6 +120,36 @@ fn server_dav_response_metadata_uses_protocol_representation() {
   let oversized = format!("x{}", "a".repeat(64 * 1024));
   let invalid = HttpResponse::ok("").header("DAV", oversized);
   assert!(invalid.dav().is_err());
+}
+
+#[test]
+fn server_facade_exposes_accept_signature_request_and_response_metadata() {
+  let request = HttpRequest::parse(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nAccept-Signature: sig1=(\"@method\");created;keyid=\"test-key\"\r\n\r\n",
+  )
+  .expect("request should parse");
+  let request_metadata: HttpAcceptSignature = request
+    .accept_signature()
+    .expect("Accept-Signature request metadata should parse")
+    .expect("Accept-Signature request metadata should be present");
+  let entry: &HttpAcceptSignatureEntry = &request_metadata.entries()[0];
+  let _: &[HttpAcceptSignatureParameter] = entry.parameters();
+  assert!(entry.created());
+
+  let response = HttpResponse::ok("")
+    .header("Accept-Signature", "legacy")
+    .with_accept_signature(r#"sig1=("@status");expires;alg="rsa-pss-sha512""#)
+    .expect("Accept-Signature response metadata should be accepted");
+  let response_metadata = response
+    .accept_signature()
+    .expect("Accept-Signature response metadata should parse")
+    .expect("Accept-Signature response metadata should be present");
+  assert_eq!(
+    response_metadata.header_value(),
+    r#"sig1=("@status");expires;alg="rsa-pss-sha512""#
+  );
+  let rendered = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(!rendered.contains("Accept-Signature: legacy"));
 }
 
 #[test]

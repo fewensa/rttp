@@ -2,7 +2,8 @@ use rttp::server::{
   HttpAIm, HttpAImParseError, HttpAccept, HttpAcceptCh, HttpAcceptCharsetParseError,
   HttpAcceptDatetime, HttpAcceptDatetimeParseError, HttpAcceptLanguageParseError,
   HttpAcceptLanguages, HttpAcceptParseError, HttpAcceptPatch, HttpAcceptPatchParseError,
-  HttpAcceptPost, HttpAcceptPostParseError, HttpAccessControlRequestMethod,
+  HttpAcceptPost, HttpAcceptPostParseError, HttpAcceptSignature, HttpAcceptSignatureEntry,
+  HttpAcceptSignatureParameter, HttpAccessControlRequestMethod,
   HttpAccessControlRequestPrivateNetwork, HttpAltUsed, HttpAltUsedParseError, HttpAlternates,
   HttpAlternatesParseError, HttpAuthorization, HttpBaggage, HttpBaggageMember,
   HttpBaggageParseError, HttpBaggageProperty, HttpCdnLoop, HttpCdnLoopParseError,
@@ -78,6 +79,24 @@ fn compatibility_facade_exports_width_request_metadata() {
       .expect("malformed Width should remain available");
   let _: HttpWidthParseError = malformed.width().expect_err("malformed Width should fail");
   assert_eq!(Some("1.0"), malformed.header("Width"));
+}
+
+#[test]
+fn compatibility_facade_exposes_accept_signature_metadata() {
+  let request = HttpRequest::parse(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nAccept-Signature: sig1=(\"@method\");created;tag=\"app\"\r\n\r\n",
+  )
+  .expect("request should parse");
+  let metadata = request
+    .accept_signature()
+    .expect("Accept-Signature should parse")
+    .expect("Accept-Signature should be present");
+  let entry: &HttpAcceptSignatureEntry = &metadata.entries()[0];
+  let _: &[HttpAcceptSignatureParameter] = entry.parameters();
+  assert!(entry.created());
+  assert_eq!(entry.tag(), Some("app"));
+
+  let _: HttpAcceptSignature = metadata;
 }
 
 #[test]

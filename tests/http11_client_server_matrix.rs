@@ -1163,6 +1163,12 @@ struct ObservedSignatureMetadata {
   signature_input: Result<Option<String>, String>,
 }
 
+#[derive(Debug, PartialEq)]
+struct ObservedAcceptSignatureMetadata {
+  raw: Option<String>,
+  parsed: Result<Option<String>, String>,
+}
+
 fn observe_signature_metadata(request: &Request) -> ObservedSignatureMetadata {
   ObservedSignatureMetadata {
     raw_signature: request.header("Signature").map(str::to_string),
@@ -1174,6 +1180,16 @@ fn observe_signature_metadata(request: &Request) -> ObservedSignatureMetadata {
     signature_input: request
       .signature_input()
       .map(|signature_input| signature_input.map(|signature_input| signature_input.header_value()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn observe_accept_signature_metadata(request: &Request) -> ObservedAcceptSignatureMetadata {
+  ObservedAcceptSignatureMetadata {
+    raw: request.header("Accept-Signature").map(str::to_string),
+    parsed: request
+      .accept_signature()
+      .map(|metadata| metadata.map(|metadata| metadata.header_value()))
       .map_err(|error| error.to_string()),
   }
 }
@@ -1366,6 +1382,35 @@ fn spawn_facade_signature_observer() -> (
         response
       })
       .expect("serve signature facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+fn spawn_facade_accept_signature_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedAcceptSignatureMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind Accept-Signature facade server");
+  let addr = server.local_addr().expect("Accept-Signature facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = observe_accept_signature_metadata(&request);
+        let response = match request.accept_signature() {
+          Ok(Some(metadata)) => HttpResponse::ok("OK")
+            .with_accept_signature(metadata.header_value())
+            .expect("echo Accept-Signature"),
+          _ => HttpResponse::ok("OK"),
+        };
+        observed_tx
+          .send(observed)
+          .expect("send observed Accept-Signature metadata");
+        response
+      })
+      .expect("serve Accept-Signature facade request");
   });
 
   (addr, observed_rx, handle)
@@ -3503,6 +3548,164 @@ fn facade_client_and_server_exchange_valid_signature_metadata_without_policy() {
       .expect("server should observe valid signature metadata")
   );
   handle.join().expect("valid signature facade server thread");
+}
+
+#[test]
+fn facade_client_and_server_exchange_valid_accept_signature_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_signature_observer();
+
+  let response = rttp::Http::client()
+    .post()
+    .url(format!("http://{addr}/signed"))
+    .accept_signature(
+      r#"sig1=("@method" "content-digest");created;expires;nonce="n1";alg="rsa-pss-sha512";keyid="test-key";tag="app""#,
+    )
+    .expect("Accept-Signature should be accepted")
+    .emit()
+    .expect("Accept-Signature request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    Some(
+      r#"sig1=("@method" "content-digest");created;expires;nonce="n1";alg="rsa-pss-sha512";keyid="test-key";tag="app""#,
+    ),
+    response
+      .accept_signature()
+      .expect("client Accept-Signature should parse")
+      .map(|metadata| metadata.header_value())
+      .as_deref()
+  );
+  assert_eq!(
+    ObservedAcceptSignatureMetadata {
+      raw: Some(
+        r#"sig1=("@method" "content-digest");created;expires;nonce="n1";alg="rsa-pss-sha512";keyid="test-key";tag="app""#
+          .to_string()
+      ),
+      parsed: Ok(Some(
+        r#"sig1=("@method" "content-digest");created;expires;nonce="n1";alg="rsa-pss-sha512";keyid="test-key";tag="app""#
+          .to_string()
+      )),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid Accept-Signature metadata")
+  );
+  handle
+    .join()
+    .expect("valid Accept-Signature facade server thread");
+}
+
+#[test]
+fn facade_server_combines_repeated_accept_signature_fields_in_wire_order() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_signature_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect repeated Accept-Signature request");
+  stream
+    .write_all(
+      b"POST /signed-repeated HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Signature: sig1=(\"@method\")\r\naccept-signature: sig2=(\"@path\");created\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write repeated Accept-Signature request");
+  let mut raw_response = Vec::new();
+  stream
+    .read_to_end(&mut raw_response)
+    .expect("read repeated Accept-Signature response");
+  let raw_response = String::from_utf8(raw_response).expect("response should be utf-8");
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe repeated Accept-Signature metadata");
+
+  assert_eq!(Some(r#"sig1=("@method")"#.to_string()), observed.raw);
+  assert_eq!(
+    Ok(Some(
+      r#"sig1=("@method"), sig2=("@path");created"#.to_string()
+    )),
+    observed.parsed
+  );
+  assert!(
+    raw_response.contains("Accept-Signature: sig1=(\"@method\"), sig2=(\"@path\");created\r\n")
+  );
+  handle
+    .join()
+    .expect("repeated Accept-Signature facade server thread");
+}
+
+#[test]
+fn facade_server_preserves_malformed_accept_signature_request_and_client_raw_response() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_signature_observer();
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Accept-Signature request");
+  stream
+    .write_all(
+      b"GET /signed-malformed HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Signature: sig1=(\"@method\");created=1\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Accept-Signature request");
+  let mut _raw_response = Vec::new();
+  stream
+    .read_to_end(&mut _raw_response)
+    .expect("read malformed Accept-Signature response");
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed Accept-Signature metadata");
+  assert_eq!(
+    Some(r#"sig1=("@method");created=1"#.to_string()),
+    observed.raw
+  );
+  assert!(observed.parsed.is_err());
+  handle
+    .join()
+    .expect("malformed Accept-Signature facade server thread");
+
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind malformed response server");
+  let response_addr = server.local_addr().expect("malformed response server addr");
+  let response_handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK").header("Accept-Signature", r#"sig1=("@method");created=1"#)
+      })
+      .expect("serve malformed Accept-Signature response");
+  });
+  let response = client()
+    .get()
+    .url(format!("http://{response_addr}/signed-malformed-response"))
+    .emit()
+    .expect("malformed response should remain usable");
+  assert!(response.accept_signature().is_err());
+  assert_eq!(
+    Some(r#"sig1=("@method");created=1"#),
+    response
+      .header_value("Accept-Signature")
+      .map(String::as_str)
+  );
+  response_handle
+    .join()
+    .expect("malformed response server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_accept_signature_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_signature_observer();
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/signed-absent"))
+    .emit()
+    .expect("request without Accept-Signature metadata should succeed");
+  assert_eq!(
+    None,
+    response
+      .accept_signature()
+      .expect("absent client Accept-Signature should parse")
+  );
+  assert_eq!(
+    ObservedAcceptSignatureMetadata {
+      raw: None,
+      parsed: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent Accept-Signature metadata")
+  );
+  handle
+    .join()
+    .expect("absent Accept-Signature facade server thread");
 }
 
 #[test]

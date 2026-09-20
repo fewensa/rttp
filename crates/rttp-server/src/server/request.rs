@@ -22,6 +22,18 @@ pub use rttp_protocol::accept_encoding::{
 pub use rttp_protocol::accept_language::{
   AcceptLanguage as HttpAcceptLanguages, AcceptLanguageParseError as HttpAcceptLanguageParseError,
 };
+pub use rttp_protocol::accept_signature::{
+  AcceptSignature as HttpAcceptSignature, AcceptSignatureBareItem as HttpAcceptSignatureBareItem,
+  AcceptSignatureComponent as HttpAcceptSignatureComponent,
+  AcceptSignatureComponentParameter as HttpAcceptSignatureComponentParameter,
+  AcceptSignatureCoveredComponent as HttpAcceptSignatureCoveredComponent,
+  AcceptSignatureDecimal as HttpAcceptSignatureDecimal,
+  AcceptSignatureEntry as HttpAcceptSignatureEntry,
+  AcceptSignatureMember as HttpAcceptSignatureMember,
+  AcceptSignatureParameter as HttpAcceptSignatureParameter,
+  AcceptSignatureParameterValue as HttpAcceptSignatureParameterValue,
+  AcceptSignatureParseError as HttpAcceptSignatureParseError,
+};
 pub use rttp_protocol::access_control_request_headers::{
   AccessControlRequestHeaders as HttpAccessControlRequestHeaders,
   AccessControlRequestHeadersParseError as HttpAccessControlRequestHeadersParseError,
@@ -1237,6 +1249,14 @@ impl Request {
     parse_signature_values(self.headers_named("Signature"))
   }
 
+  /// Parses received RFC 9421 `Accept-Signature` request metadata without
+  /// choosing a signature, verifying anything, or applying policy.
+  pub fn accept_signature(
+    &self,
+  ) -> Result<Option<HttpAcceptSignature>, HttpAcceptSignatureParseError> {
+    parse_accept_signature_values(self.headers_named("Accept-Signature"))
+  }
+
   /// Parses received RFC 9421 `Signature-Input` request metadata without
   /// verifying signatures, looking up keys, or applying cryptographic policy.
   pub fn signature_input(
@@ -1902,6 +1922,16 @@ fn parse_signature_values<'a>(
     return Ok(None);
   }
   HttpSignature::parse_values(values).map(Some)
+}
+
+fn parse_accept_signature_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpAcceptSignature>, HttpAcceptSignatureParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpAcceptSignature::parse_values(values).map(Some)
 }
 
 fn parse_signature_input_values<'a>(
@@ -3650,6 +3680,20 @@ impl HttpRequest {
         .headers
         .iter()
         .filter(|header| header.name.eq_ignore_ascii_case("Signature"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received RFC 9421 `Accept-Signature` request metadata without
+  /// choosing a signature, verifying anything, or applying policy.
+  pub fn accept_signature(
+    &self,
+  ) -> Result<Option<HttpAcceptSignature>, HttpAcceptSignatureParseError> {
+    parse_accept_signature_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Accept-Signature"))
         .map(|header| header.value.as_str()),
     )
   }

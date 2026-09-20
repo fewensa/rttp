@@ -1,7 +1,7 @@
 use rttp_client::response::{
-  AcceptCh, AcceptCharset, AcceptEncoding, AccessControlAllowCredentials,
-  AccessControlAllowCredentialsParseError, AccessControlAllowHeaders,
-  AccessControlAllowHeadersParseError, AccessControlAllowMethods,
+  AcceptCh, AcceptCharset, AcceptEncoding, AcceptSignature, AcceptSignatureEntry,
+  AcceptSignatureParameter, AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
+  AccessControlAllowHeaders, AccessControlAllowHeadersParseError, AccessControlAllowMethods,
   AccessControlAllowMethodsParseError, AccessControlAllowPrivateNetwork,
   AccessControlAllowPrivateNetworkParseError, AccessControlExposeHeaders, AccessControlMaxAge,
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AltUsed, AltUsedParseError,
@@ -68,6 +68,21 @@ fn client_facade_exports_from_metadata_types() {
   let from: From = From::parse("Ops Team <ops@example.test>").expect("From metadata should parse");
   assert_eq!("Ops Team <ops@example.test>", from.header_value());
   let _: FromParseError = From::parse("invalid").expect_err("invalid From should fail");
+}
+
+#[test]
+fn client_facade_exports_accept_signature_metadata_types() {
+  let metadata = AcceptSignature::parse(
+    r#"sig1=("@method" "content-digest");created;nonce="n1";keyid="test-key""#,
+  )
+  .expect("Accept-Signature should parse");
+  let entry: &AcceptSignatureEntry = &metadata.entries()[0];
+  let _: &[AcceptSignatureParameter] = entry.parameters();
+  assert!(entry.created());
+  assert_eq!(entry.nonce(), Some("n1"));
+
+  let _: rttp_client::response::AcceptSignatureParseError =
+    AcceptSignature::parse("").expect_err("empty Accept-Signature should be rejected");
 }
 
 #[test]

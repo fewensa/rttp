@@ -1715,6 +1715,45 @@ fn signature_helpers_emit_canonical_fields_and_reject_malformed_input_before_con
 }
 
 #[test]
+fn accept_signature_helper_replaces_raw_field_and_rejects_malformed_input_before_connecting() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/signed", base_url))
+      .header(("Accept-Signature", "legacy"))
+      .accept_signature(
+        r#"sig1=("@method" "content-digest");created;expires;nonce="n1";alg="rsa-pss-sha512";keyid="test-key";tag="app""#,
+      )
+      .expect("Accept-Signature should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(
+      r#"sig1=("@method" "content-digest");created;expires;nonce="n1";alg="rsa-pss-sha512";keyid="test-key";tag="app""#,
+    ),
+    header_value(&request, "Accept-Signature")
+  );
+  assert!(!request.contains("Accept-Signature: legacy"));
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .post()
+      .url(format!("{}/signed", base_url))
+      .accept_signature(r#"sig1=("@method");created=1"#)
+      .expect_err("malformed Accept-Signature should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "malformed Accept-Signature helper input should not open a socket"
+  );
+}
+
+#[test]
 fn raw_want_digest_headers_remain_available_for_extended_syntax() {
   let request = capture_request(|base_url| {
     client()

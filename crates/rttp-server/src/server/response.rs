@@ -10,6 +10,10 @@ pub use rttp_protocol::accept_post::{
 pub use rttp_protocol::accept_ranges::{
   AcceptRanges as HttpAcceptRanges, AcceptRangesParseError as HttpAcceptRangesParseError,
 };
+pub use rttp_protocol::accept_signature::{
+  AcceptSignature as HttpAcceptSignature,
+  AcceptSignatureParseError as HttpAcceptSignatureParseError,
+};
 pub use rttp_protocol::access_control_allow_credentials::{
   AccessControlAllowCredentials as HttpAccessControlAllowCredentials,
   AccessControlAllowCredentialsParseError as HttpAccessControlAllowCredentialsParseError,
@@ -1965,6 +1969,23 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces RFC 9421 `Accept-Signature` response metadata
+  /// without signing, verifying, or applying signature policy.
+  pub fn with_accept_signature(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAcceptSignatureParseError> {
+    let accept_signature = HttpAcceptSignature::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Accept-Signature"));
+    self.headers.push(HttpHeader::new(
+      "Accept-Signature",
+      accept_signature.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces RFC 9421 `Signature-Input` response metadata
   /// without signing, verifying, or applying cryptographic policy.
   pub fn with_signature_input(
@@ -3451,6 +3472,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpSignature::parse_values(values).map(Some)
+  }
+
+  /// Parses attached RFC 9421 `Accept-Signature` metadata without changing
+  /// raw headers or making signature decisions.
+  pub fn accept_signature(
+    &self,
+  ) -> Result<Option<HttpAcceptSignature>, HttpAcceptSignatureParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-Signature"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptSignature::parse_values(values).map(Some)
   }
 
   /// Parses attached RFC 9421 `Signature-Input` metadata without changing raw
