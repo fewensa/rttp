@@ -1556,6 +1556,21 @@ content, negotiate `Accept-CH`, generate Client Hints automatically, retry, or
 apply browser policy. Raw values remain available through
 `header(("Sec-CH-Prefers-Reduced-Motion", "..."))`.
 
+## Bounded Sec-CH-Prefers-Reduced-Transparency request Client Hint metadata
+
+`HttpClient::prefers_reduced_transparency(value)` validates and emits one
+bounded `Sec-CH-Prefers-Reduced-Transparency` request field through the
+shared `PrefersReducedTransparency` type, replacing any existing
+case-insensitive field. `PrefersReducedTransparency::parse()` accepts
+`no-preference` and `reduce` case-insensitively with optional surrounding SP
+or HTAB, while `header_value()` emits lowercase canonical text. Empty,
+unknown, comma-list, duplicate, control-byte, non-ASCII, and oversized
+values are rejected before connecting. This helper declares metadata only;
+it does not infer a preference, adapt content, negotiate `Accept-CH`,
+generate Client Hints automatically, retry, or apply browser policy. Raw
+values remain available through
+`header(("Sec-CH-Prefers-Reduced-Transparency", "..."))`.
+
 ## Bounded Sec-CH-Prefers-Contrast request Client Hint metadata
 
 `HttpClient::prefers_contrast(value)` validates and emits one bounded (64 KiB)

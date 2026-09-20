@@ -22,9 +22,10 @@ use rttp_protocol::authorization::Authorization;
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::client_hints::{
-  DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast, PrefersReducedMotion, Rtt,
-  SecChUaArch, SecChUaBitness, SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile,
-  SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width,
+  DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast, PrefersReducedMotion,
+  PrefersReducedTransparency, Rtt, SecChUaArch, SecChUaBitness, SecChUaFormFactors,
+  SecChUaFullVersionList, SecChUaMobile, SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion,
+  SecChUaWow64, ViewportWidth, Width,
 };
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -730,6 +731,26 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-CH-Prefers-Reduced-Motion",
       prefers_reduced_motion.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-CH-Prefers-Reduced-Transparency` request Client Hint metadata.
+  ///
+  /// The value must be the `no-preference` or `reduce` token, matched
+  /// case-insensitively with optional surrounding HTTP optional whitespace.
+  /// This replaces any existing case-insensitive
+  /// `Sec-CH-Prefers-Reduced-Transparency` field and only declares request
+  /// metadata; RTTP does not infer preferences, negotiate content, emit
+  /// `Accept-CH`, or generate this header automatically.
+  pub fn prefers_reduced_transparency<S: AsRef<str>>(
+    &mut self,
+    value: S,
+  ) -> error::Result<&mut Self> {
+    let prefers_reduced_transparency = PrefersReducedTransparency::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-CH-Prefers-Reduced-Transparency",
+      prefers_reduced_transparency.header_value(),
     )))
   }
 

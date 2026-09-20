@@ -55,7 +55,9 @@ pub use rttp_protocol::client_hints::{
   PrefersContrast as HttpPrefersContrast,
   PrefersContrastParseError as HttpPrefersContrastParseError,
   PrefersReducedMotion as HttpPrefersReducedMotion,
-  PrefersReducedMotionParseError as HttpPrefersReducedMotionParseError, Rtt as HttpRtt,
+  PrefersReducedMotionParseError as HttpPrefersReducedMotionParseError,
+  PrefersReducedTransparency as HttpPrefersReducedTransparency,
+  PrefersReducedTransparencyParseError as HttpPrefersReducedTransparencyParseError, Rtt as HttpRtt,
   RttParseError as HttpRttParseError, SecChUaArch as HttpSecChUaArch,
   SecChUaArchParseError as HttpSecChUaArchParseError, SecChUaBitness as HttpSecChUaBitness,
   SecChUaBitnessParseError as HttpSecChUaBitnessParseError,
@@ -682,6 +684,21 @@ impl Request {
       return Ok(None);
     }
     HttpPrefersReducedMotion::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Prefers-Reduced-Transparency` request
+  /// Client Hint metadata without inferring preferences, negotiating content,
+  /// or emitting Client Hints.
+  pub fn prefers_reduced_transparency(
+    &self,
+  ) -> Result<Option<HttpPrefersReducedTransparency>, HttpPrefersReducedTransparencyParseError> {
+    let values: Vec<&str> = self
+      .headers_named("Sec-CH-Prefers-Reduced-Transparency")
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPrefersReducedTransparency::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Contrast` request Client Hint
@@ -3294,6 +3311,28 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpPrefersReducedMotion::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Prefers-Reduced-Transparency` request
+  /// Client Hint metadata without inferring preferences, negotiating content,
+  /// or emitting Client Hints.
+  pub fn prefers_reduced_transparency(
+    &self,
+  ) -> Result<Option<HttpPrefersReducedTransparency>, HttpPrefersReducedTransparencyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Sec-CH-Prefers-Reduced-Transparency")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPrefersReducedTransparency::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-Prefers-Contrast` request Client Hint

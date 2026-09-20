@@ -23,6 +23,7 @@ pub const MAX_SEC_CH_UA_FORM_FACTORS_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_FORM_FACTORS_TOTAL_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_FORM_FACTORS_ITEMS: usize = 256;
 pub const MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_PREFERS_REDUCED_TRANSPARENCY_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_CONTRAST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_WIDTH_VALUE_BYTES: usize = 64 * 1024;
@@ -133,6 +134,13 @@ pub enum PrefersReducedMotion {
   Reduce,
 }
 
+/// Parsed, bounded `Sec-CH-Prefers-Reduced-Transparency` request Client Hint metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PrefersReducedTransparency {
+  NoPreference,
+  Reduce,
+}
+
 /// Parsed, bounded `Sec-CH-Prefers-Contrast` request Client Hint metadata.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PrefersContrast {
@@ -196,6 +204,7 @@ pub type SecChUaPlatformVersionParseError = ClientHintsParseError;
 pub type SecChUaFullVersionListParseError = ClientHintsParseError;
 pub type SecChUaFormFactorsParseError = ClientHintsParseError;
 pub type PrefersReducedMotionParseError = ClientHintsParseError;
+pub type PrefersReducedTransparencyParseError = ClientHintsParseError;
 pub type PrefersContrastParseError = ClientHintsParseError;
 pub type EctParseError = ClientHintsParseError;
 pub type WidthParseError = ClientHintsParseError;
@@ -697,6 +706,34 @@ impl PrefersReducedMotion {
       Ok(Self::Reduce)
     } else {
       Err(invalid_prefers_reduced_motion_value())
+    }
+  }
+
+  pub const fn header_value(self) -> &'static str {
+    match self {
+      Self::NoPreference => "no-preference",
+      Self::Reduce => "reduce",
+    }
+  }
+}
+
+impl PrefersReducedTransparency {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, PrefersReducedTransparencyParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, PrefersReducedTransparencyParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let value = parse_prefers_reduced_transparency_singleton(values)?;
+    let value = value.trim_matches([' ', '\t']);
+    if value.eq_ignore_ascii_case("no-preference") {
+      Ok(Self::NoPreference)
+    } else if value.eq_ignore_ascii_case("reduce") {
+      Ok(Self::Reduce)
+    } else {
+      Err(invalid_prefers_reduced_transparency_value())
     }
   }
 
@@ -1780,6 +1817,54 @@ fn validate_bounded_prefers_reduced_motion_value(
   Ok(())
 }
 
+fn parse_prefers_reduced_transparency_singleton<'a, I>(
+  values: I,
+) -> Result<&'a str, PrefersReducedTransparencyParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values
+    .next()
+    .ok_or_else(invalid_prefers_reduced_transparency_value)?;
+  validate_bounded_prefers_reduced_transparency_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_prefers_reduced_transparency_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(
+      "duplicate Sec-CH-Prefers-Reduced-Transparency header fields",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_bounded_prefers_reduced_transparency_value(
+  value: &str,
+) -> Result<(), PrefersReducedTransparencyParseError> {
+  if value.len() > MAX_PREFERS_REDUCED_TRANSPARENCY_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-Prefers-Reduced-Transparency header value is too large",
+    ));
+  }
+  if !value.is_ascii() {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-Prefers-Reduced-Transparency non-ASCII byte",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-Prefers-Reduced-Transparency control byte",
+    ));
+  }
+  Ok(())
+}
+
 fn parse_prefers_contrast_singleton<'a, I>(values: I) -> Result<&'a str, PrefersContrastParseError>
 where
   I: IntoIterator<Item = &'a str>,
@@ -2042,6 +2127,10 @@ fn invalid_sec_ch_ua_form_factors_value() -> SecChUaFormFactorsParseError {
 
 fn invalid_prefers_reduced_motion_value() -> PrefersReducedMotionParseError {
   ClientHintsParseError::new("invalid Sec-CH-Prefers-Reduced-Motion header value")
+}
+
+fn invalid_prefers_reduced_transparency_value() -> PrefersReducedTransparencyParseError {
+  ClientHintsParseError::new("invalid Sec-CH-Prefers-Reduced-Transparency header value")
 }
 
 fn invalid_prefers_contrast_value() -> PrefersContrastParseError {

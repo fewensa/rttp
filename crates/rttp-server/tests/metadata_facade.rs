@@ -40,19 +40,20 @@ use rttp_server::server::{
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpPrefersColorScheme,
   HttpPrefersColorSchemeParseError, HttpPrefersContrast, HttpPrefersContrastParseError,
-  HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError, HttpProxyAuthenticate,
-  HttpProxyAuthenticateChallenge, HttpProxyAuthenticateParameter, HttpProxyAuthenticateParseError,
-  HttpProxyAuthenticationInfo, HttpProxyAuthenticationInfoParameter,
-  HttpProxyAuthenticationInfoParseError, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRateLimitLimit, HttpRateLimitLimitItem,
-  HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
-  HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
-  HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
-  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
-  HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
-  HttpSaveDataParseError, HttpScheduleTag, HttpSecChUaBitness, HttpSecChUaBitnessParseError,
-  HttpSecChUaFormFactors, HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersionList,
+  HttpPrefersReducedMotion, HttpPrefersReducedMotionParseError, HttpPrefersReducedTransparency,
+  HttpPrefersReducedTransparencyParseError, HttpProxyAuthenticate, HttpProxyAuthenticateChallenge,
+  HttpProxyAuthenticateParameter, HttpProxyAuthenticateParseError, HttpProxyAuthenticationInfo,
+  HttpProxyAuthenticationInfoParameter, HttpProxyAuthenticationInfoParseError,
+  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRateLimitLimit,
+  HttpRateLimitLimitItem, HttpRateLimitLimitParseError, HttpRateLimitParseError,
+  HttpRateLimitRemaining, HttpRateLimitRemainingParseError, HttpRateLimitReset,
+  HttpRateLimitResetParseError, HttpReferer, HttpRefererParseError, HttpRequest,
+  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpResponseDate,
+  HttpResponseDateParseError, HttpResponseExpires, HttpResponseLastModified,
+  HttpResponseLastModifiedParseError, HttpRetryAfter, HttpRetryAfterParseError, HttpRtt,
+  HttpRttParseError, HttpSameSite, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag,
+  HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaFormFactors,
+  HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersionList,
   HttpSecChUaFullVersionListParseError, HttpSecChUaModel, HttpSecChUaModelParseError,
   HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64,
   HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
@@ -2022,6 +2023,74 @@ fn request_facade_parses_prefers_reduced_motion_metadata_without_negotiation() {
     HttpPrefersReducedMotion::parse("reduce\0").expect_err("control byte should fail");
   assert!(
     HttpPrefersReducedMotion::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized value should fail"
+  );
+}
+
+#[test]
+fn request_facade_parses_prefers_reduced_transparency_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nsec-ch-prefers-reduced-transparency: \tReDuCe \t\r\n\r\n",
+  )
+  .expect("Prefers-Reduced-Transparency request should parse");
+  let transparency: HttpPrefersReducedTransparency = request
+    .prefers_reduced_transparency()
+    .expect("Prefers-Reduced-Transparency should parse")
+    .expect("Prefers-Reduced-Transparency should be present");
+  assert_eq!("reduce", transparency.header_value());
+  assert_eq!(
+    Some("ReDuCe"),
+    request.header("Sec-CH-Prefers-Reduced-Transparency")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Prefers-Reduced-Transparency should parse");
+  assert_eq!(
+    None,
+    absent
+      .prefers_reduced_transparency()
+      .expect("missing Prefers-Reduced-Transparency should be valid")
+  );
+
+  for value in ["", "auto", "reduce, no-preference"] {
+    let raw = format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Transparency: {value}\r\n\r\n"
+    );
+    let malformed = HttpRequest::parse(raw.as_bytes())
+      .expect("malformed Prefers-Reduced-Transparency should remain available");
+    let _: HttpPrefersReducedTransparencyParseError = malformed
+      .prefers_reduced_transparency()
+      .expect_err("malformed Prefers-Reduced-Transparency should fail");
+    assert_eq!(
+      Some(value),
+      malformed.header("Sec-CH-Prefers-Reduced-Transparency")
+    );
+  }
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Transparency: no-preference\r\nsec-ch-prefers-reduced-transparency: reduce\r\n\r\n",
+  )
+  .expect("duplicate Prefers-Reduced-Transparency request should retain raw metadata");
+  assert!(duplicate.prefers_reduced_transparency().is_err());
+  assert_eq!(
+    Some("no-preference"),
+    duplicate.header("Sec-CH-Prefers-Reduced-Transparency")
+  );
+
+  let non_ascii = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Reduced-Transparency: \x80\r\n\r\n",
+  )
+  .expect("non-ASCII Prefers-Reduced-Transparency should remain available");
+  assert!(non_ascii.prefers_reduced_transparency().is_err());
+  assert_eq!(
+    Some("\u{0080}"),
+    non_ascii.header("Sec-CH-Prefers-Reduced-Transparency")
+  );
+
+  let _: HttpPrefersReducedTransparencyParseError =
+    HttpPrefersReducedTransparency::parse("reduce\0").expect_err("control byte should fail");
+  assert!(
+    HttpPrefersReducedTransparency::parse("a".repeat(64 * 1024 + 1)).is_err(),
     "oversized value should fail"
   );
 }
