@@ -38,13 +38,13 @@ impl TimingAllowOrigin {
           "Timing-Allow-Origin header value is too large",
         ));
       }
-      if value.bytes().any(|byte| byte.is_ascii_control()) {
-        return Err(invalid_value());
-      }
-
       for member in value.split(',') {
         let member = member.trim_matches([' ', '\t']);
-        if member.is_empty() {
+        if member.is_empty()
+          || member
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte == b' ')
+        {
           return Err(invalid_value());
         }
         if member == "*" {
