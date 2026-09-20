@@ -2594,58 +2594,7 @@ fn h2c_sec_ch_ua_platform_version_malformed_reaches_server_accessor_with_raw_hea
 
 #[test]
 fn h2c_sec_ch_ua_platform_version_non_ascii_reaches_server_accessor_with_raw_header() {
-  for value in [r#""🍎""#, "\"\u{80}\""] {
-    let server = HttpServer::bind("127.0.0.1:0")
-      .expect("bind h2c non-ASCII Sec-CH-UA-Platform-Version server")
-      .with_read_timeout(Some(Duration::from_secs(2)))
-      .with_write_timeout(Some(Duration::from_secs(2)));
-    let addr = server.local_addr().expect("h2c server address");
-    let (tx, rx) = mpsc::channel();
-
-    let handle = thread::spawn(move || {
-      server
-        .accept_one(|request| {
-          tx.send((
-            request
-              .sec_ch_ua_platform_version()
-              .map(|platform_version| {
-                platform_version.map(|platform_version| platform_version.header_value())
-              })
-              .map_err(|error| error.to_string()),
-            request
-              .header("Sec-CH-UA-Platform-Version")
-              .map(str::to_string),
-          ))
-          .expect("record non-ASCII Sec-CH-UA-Platform-Version");
-          HttpResponse::ok("ok")
-        })
-        .expect("serve non-ASCII h2c Sec-CH-UA-Platform-Version request");
-    });
-
-    let response = HttpClient::new()
-      .get()
-      .url(format!("http://{addr}/asset"))
-      .header(("Sec-CH-UA-Platform-Version", value))
-      .emit_http2_prior_knowledge()
-      .expect("receive h2c response");
-
-    assert_eq!("ok", response.body().string().expect("h2c response body"));
-    let observed = rx
-      .recv_timeout(Duration::from_secs(2))
-      .expect("recorded non-ASCII Sec-CH-UA-Platform-Version");
-    let error = observed
-      .0
-      .as_ref()
-      .expect_err("non-ASCII Sec-CH-UA-Platform-Version must fail closed");
-    assert!(
-      error.contains("Sec-CH-UA-Platform-Version"),
-      "non-ASCII Sec-CH-UA-Platform-Version error should identify the field: {error}"
-    );
-    assert_eq!(Some(value.to_string()), observed.1);
-    handle
-      .join()
-      .expect("non-ASCII h2c Sec-CH-UA-Platform-Version server thread");
-  }
+  run_h2c_sec_ch_ua_non_ascii(SEC_CH_UA_PLATFORM_VERSION);
 }
 
 #[test]
