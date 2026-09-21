@@ -341,3 +341,38 @@ fn is_token_byte(byte: u8) -> bool {
 fn escape_quoted(value: &str) -> String {
   value.replace('\\', "\\\\").replace('"', "\\\"")
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn parse_field_rejects_oversized_parameter_values_before_field_bound() {
+    // Bypass parse_values' field-size gate so the parameter-value check is reachable
+    // even while MAX_SERVER_TIMING_PARAMETER_VALUE_BYTES equals the field limit.
+    let mut metrics = Vec::new();
+    let oversized_parameter = format!(
+      "db;note={}",
+      "a".repeat(MAX_SERVER_TIMING_PARAMETER_VALUE_BYTES + 1)
+    );
+    assert_eq!(
+      parse_field(&oversized_parameter, &mut metrics)
+        .expect_err("token parameter values larger than 64 KiB must be rejected")
+        .to_string(),
+      "Server-Timing parameter value is too large"
+    );
+    assert!(metrics.is_empty());
+
+    let oversized_quoted_parameter = format!(
+      "db;desc=\"{}\"",
+      "a".repeat(MAX_SERVER_TIMING_PARAMETER_VALUE_BYTES + 1)
+    );
+    assert_eq!(
+      parse_field(&oversized_quoted_parameter, &mut metrics)
+        .expect_err("quoted parameter values larger than 64 KiB must be rejected")
+        .to_string(),
+      "Server-Timing parameter value is too large"
+    );
+    assert!(metrics.is_empty());
+  }
+}

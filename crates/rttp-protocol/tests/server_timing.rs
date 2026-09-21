@@ -163,21 +163,41 @@ fn server_timing_enforces_value_metric_and_parameter_bounds() {
     "an oversized later field must not bypass validation"
   );
 
+  // Equal constants mean any single-field payload with a parameter value above the
+  // parameter bound also exceeds the field bound, so public parse rejects at the
+  // field-size check. Direct MAX_SERVER_TIMING_PARAMETER_VALUE_BYTES coverage lives
+  // in the crate unit tests that call parse_field below that gate.
+  assert_eq!(
+    MAX_SERVER_TIMING_PARAMETER_VALUE_BYTES, MAX_SERVER_TIMING_VALUE_BYTES,
+    "parameter-value bound equals field bound; field size is the effective public limit"
+  );
   let oversized_parameter = format!(
     "db;note={}",
     "a".repeat(MAX_SERVER_TIMING_PARAMETER_VALUE_BYTES + 1)
   );
   assert!(
-    ServerTiming::parse(&oversized_parameter).is_err(),
-    "parameter values larger than 64 KiB must be rejected"
+    oversized_parameter.len() > MAX_SERVER_TIMING_VALUE_BYTES,
+    "token parameter payloads above the equal bound exceed the field size first"
+  );
+  assert_eq!(
+    ServerTiming::parse(&oversized_parameter)
+      .expect_err("field-oversized token parameter payloads must be rejected")
+      .to_string(),
+    "Server-Timing header value is too large"
   );
   let oversized_quoted_parameter = format!(
     "db;desc=\"{}\"",
     "a".repeat(MAX_SERVER_TIMING_PARAMETER_VALUE_BYTES + 1)
   );
   assert!(
-    ServerTiming::parse(&oversized_quoted_parameter).is_err(),
-    "quoted parameter values larger than 64 KiB must be rejected"
+    oversized_quoted_parameter.len() > MAX_SERVER_TIMING_VALUE_BYTES,
+    "quoted parameter payloads above the equal bound exceed the field size first"
+  );
+  assert_eq!(
+    ServerTiming::parse(&oversized_quoted_parameter)
+      .expect_err("field-oversized quoted parameter payloads must be rejected")
+      .to_string(),
+    "Server-Timing header value is too large"
   );
 
   let at_metric_limit = (0..MAX_SERVER_TIMING_METRICS)
