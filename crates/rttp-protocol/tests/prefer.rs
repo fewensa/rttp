@@ -212,13 +212,13 @@ fn enforces_field_value_preference_and_parameter_bounds() {
   assert_eq!(MAX_PREFERENCE_PARAMETERS, 256);
 
   let exact_value = format!("extension={}", "x".repeat(MAX_PREFER_VALUE_BYTES));
-  let parsed = Prefer::parse(&exact_value).expect("an 8 KiB preference value should parse");
+  let parsed = Prefer::parse(exact_value).expect("an 8 KiB preference value should parse");
   assert_eq!(
     parsed.preferences()[0].value().map(str::len),
     Some(8 * 1024)
   );
   assert!(
-    Prefer::parse(&format!(
+    Prefer::parse(format!(
       "extension={}x",
       "x".repeat(MAX_PREFER_VALUE_BYTES)
     ))
@@ -230,7 +230,7 @@ fn enforces_field_value_preference_and_parameter_bounds() {
   let parsed = Prefer::parse(&exact_field).expect("an exact 64 KiB Prefer field should parse");
   assert_eq!(parsed.len(), MAX_PREFERENCES);
   assert!(
-    Prefer::parse(&format!("{exact_field}x")).is_err(),
+    Prefer::parse(format!("{exact_field}x")).is_err(),
     "a Prefer field over 64 KiB should be rejected"
   );
   assert!(
@@ -246,7 +246,7 @@ fn enforces_field_value_preference_and_parameter_bounds() {
     MAX_PREFERENCES
   );
   assert!(
-    Prefer::parse(&format!("{exact_preferences}, over")).is_err(),
+    Prefer::parse(format!("{exact_preferences}, over")).is_err(),
     "more than 32 Prefer members should be rejected"
   );
 
@@ -261,7 +261,7 @@ fn enforces_field_value_preference_and_parameter_bounds() {
   );
   let too_many_parameters = format!("{exact_parameters}; over=value");
   assert!(
-    Prefer::parse(&too_many_parameters).is_err(),
+    Prefer::parse(too_many_parameters).is_err(),
     "more than 256 preference parameters should be rejected"
   );
 }
@@ -301,11 +301,11 @@ fn preference_applied_validates_response_restrictions_and_bounds() {
 
   let exact_value = format!("extension={}", "x".repeat(MAX_PREFER_VALUE_BYTES));
   assert!(
-    PreferenceApplied::parse(&exact_value).is_ok(),
+    PreferenceApplied::parse(exact_value).is_ok(),
     "an 8 KiB Preference-Applied value should parse"
   );
   assert!(
-    PreferenceApplied::parse(&format!(
+    PreferenceApplied::parse(format!(
       "extension={}x",
       "x".repeat(MAX_PREFER_VALUE_BYTES)
     ))
@@ -322,7 +322,7 @@ fn preference_applied_validates_response_restrictions_and_bounds() {
     MAX_PREFERENCES
   );
   assert!(
-    PreferenceApplied::parse(&format!("{exact_field}x")).is_err(),
+    PreferenceApplied::parse(format!("{exact_field}x")).is_err(),
     "an oversized Preference-Applied field should be rejected"
   );
 
@@ -335,7 +335,7 @@ fn preference_applied_validates_response_restrictions_and_bounds() {
     MAX_PREFERENCES
   );
   assert!(
-    PreferenceApplied::parse(&format!("{exact_preferences}, over")).is_err(),
+    PreferenceApplied::parse(format!("{exact_preferences}, over")).is_err(),
     "more than 32 Preference-Applied members should be rejected"
   );
 }
