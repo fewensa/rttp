@@ -774,6 +774,22 @@ fn compatibility_facade_exports_prefers_contrast_request_metadata() {
     .expect_err("unknown Prefers-Contrast should fail");
   assert_eq!(Some("auto"), malformed.header("Sec-CH-Prefers-Contrast"));
 
+  let non_ascii = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: \x80\r\n\r\n",
+  )
+  .expect("non-ASCII Prefers-Contrast should remain available");
+  let error: HttpPrefersContrastParseError = non_ascii
+    .prefers_contrast()
+    .expect_err("non-ASCII Prefers-Contrast should fail");
+  assert!(
+    error.to_string().contains("Sec-CH-Prefers-Contrast"),
+    "non-ASCII Prefers-Contrast error should identify the field: {error}"
+  );
+  assert_eq!(
+    Some("\u{0080}"),
+    non_ascii.header("Sec-CH-Prefers-Contrast")
+  );
+
   let duplicate = HttpRequest::parse(
     b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: more\r\nsec-ch-prefers-contrast: less\r\n\r\n",
   )
@@ -860,6 +876,16 @@ fn compatibility_facade_exports_ect_request_metadata() {
     .expect("ECT should be present");
   assert_eq!("4g", ect.header_value());
   let _: HttpEctParseError = HttpEct::parse("5g").expect_err("invalid ECT should fail");
+
+  let non_ascii =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: \x80\r\n\r\n")
+      .expect("non-ASCII ECT should remain available");
+  let error: HttpEctParseError = non_ascii.ect().expect_err("non-ASCII ECT should fail");
+  assert!(
+    error.to_string().contains("ECT"),
+    "non-ASCII ECT error should identify the field: {error}"
+  );
+  assert_eq!(Some("\u{0080}"), non_ascii.header("ECT"));
 }
 
 #[cfg(feature = "client")]
