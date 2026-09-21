@@ -704,6 +704,232 @@ fn sync_client_and_server_exchange_canonical_prefers_contrast_metadata() {
 }
 
 #[test]
+fn facade_server_rejects_malformed_prefers_contrast_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind malformed Prefers-Contrast server");
+  let addr = server
+    .local_addr()
+    .expect("malformed Prefers-Contrast server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request
+              .header("Sec-CH-Prefers-Contrast")
+              .map(str::to_string),
+            request.prefers_contrast().is_err(),
+          ))
+          .expect("send observed malformed Prefers-Contrast");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve malformed Prefers-Contrast request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Prefers-Contrast");
+  stream
+    .write_all(
+      b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: auto\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Prefers-Contrast request");
+
+  assert_eq!(
+    (Some("auto".to_string()), true),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed Prefers-Contrast")
+  );
+  handle
+    .join()
+    .expect("malformed Prefers-Contrast server thread");
+}
+
+#[test]
+fn facade_server_rejects_duplicate_prefers_contrast_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind duplicate Prefers-Contrast server");
+  let addr = server
+    .local_addr()
+    .expect("duplicate Prefers-Contrast server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request
+              .header("Sec-CH-Prefers-Contrast")
+              .map(str::to_string),
+            request.prefers_contrast().is_err(),
+          ))
+          .expect("send observed duplicate Prefers-Contrast");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve duplicate Prefers-Contrast request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect duplicate Prefers-Contrast");
+  stream
+    .write_all(
+      b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: no-preference\r\nsec-ch-prefers-contrast: more\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write duplicate Prefers-Contrast request");
+
+  assert_eq!(
+    (Some("no-preference".to_string()), true),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe duplicate Prefers-Contrast")
+  );
+  handle
+    .join()
+    .expect("duplicate Prefers-Contrast server thread");
+}
+
+#[test]
+fn facade_server_rejects_control_byte_prefers_contrast_before_handler_dispatch() {
+  // HTTP/1.1 rejects a forbidden control byte while parsing the request head,
+  // so no Request exists and the handler is not called.
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind control-byte Prefers-Contrast server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("control-byte Prefers-Contrast server addr");
+  let (observed_tx, observed_rx) = mpsc::channel::<()>();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| {
+        observed_tx
+          .send(())
+          .expect("handler must not observe control-byte request head");
+        HttpResponse::ok("unreachable")
+      })
+      .expect("control-byte request head should be answered as 400");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect control-byte Prefers-Contrast");
+  stream
+    .write_all(
+      b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: custom\x01\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write control-byte Prefers-Contrast request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read control-byte request-head response");
+  let response = String::from_utf8(response).expect("response should be utf-8");
+
+  assert!(
+    response.starts_with("HTTP/1.1 400 "),
+    "control-byte request head should be rejected before handler dispatch: {response}"
+  );
+  assert!(
+    observed_rx.try_recv().is_err(),
+    "control-byte Prefers-Contrast must not reach the handler"
+  );
+  handle
+    .join()
+    .expect("control-byte Prefers-Contrast server thread");
+}
+
+#[test]
+fn facade_server_rejects_non_ascii_prefers_contrast_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind non-ASCII Prefers-Contrast server");
+  let addr = server
+    .local_addr()
+    .expect("non-ASCII Prefers-Contrast server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request
+              .header("Sec-CH-Prefers-Contrast")
+              .map(str::to_string),
+            request.prefers_contrast().is_err(),
+          ))
+          .expect("send observed non-ASCII Prefers-Contrast");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve non-ASCII Prefers-Contrast request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect non-ASCII Prefers-Contrast");
+  stream
+    .write_all(
+      b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: \x80\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write non-ASCII Prefers-Contrast request");
+
+  assert_eq!(
+    (Some("\u{0080}".to_string()), true),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe non-ASCII Prefers-Contrast")
+  );
+  handle
+    .join()
+    .expect("non-ASCII Prefers-Contrast server thread");
+}
+
+#[test]
+fn facade_server_rejects_oversized_prefers_contrast_request_head() {
+  // A 64 KiB + 1 field value plus the request line exceeds the shared HTTP/1.1
+  // request-head bound, so the request is rejected as 400 before handler
+  // dispatch. Oversized accessor parsing without losing raw access is covered
+  // by protocol and server unit tests plus the raised-limit h2c facade test.
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind oversized Prefers-Contrast server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("oversized Prefers-Contrast server addr");
+  let (observed_tx, observed_rx) = mpsc::channel::<()>();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| {
+        observed_tx
+          .send(())
+          .expect("handler must not observe oversized request head");
+        HttpResponse::ok("unreachable")
+      })
+      .expect("oversized request head should be answered as 400");
+  });
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let request = format!(
+    "GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Prefers-Contrast: {oversized}\r\nConnection: close\r\n\r\n"
+  );
+  let mut stream = TcpStream::connect(addr).expect("connect oversized Prefers-Contrast");
+  stream
+    .write_all(request.as_bytes())
+    .expect("write oversized Prefers-Contrast request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read oversized request-head response");
+  let response = String::from_utf8(response).expect("response should be utf-8");
+
+  assert!(
+    response.starts_with("HTTP/1.1 400 "),
+    "oversized request head should be rejected before handler dispatch: {response}"
+  );
+  assert!(
+    observed_rx.try_recv().is_err(),
+    "oversized Prefers-Contrast must not reach the handler"
+  );
+  handle
+    .join()
+    .expect("oversized Prefers-Contrast server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_canonical_downlink_metadata() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Downlink server");
   let addr = server.local_addr().expect("Downlink server addr");
