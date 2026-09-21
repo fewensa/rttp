@@ -771,6 +771,7 @@ fn sec_ch_ua_full_version_accepts_structured_strings_and_canonicalizes_them() {
     ),
     (r#""14.0.0""#, "14.0.0", r#""14.0.0""#),
     (r#""99\\\".0""#, "99\\\".0", r#""99\\\".0""#),
+    (r#""""#, "", r#""""#),
   ] {
     let full_version = SecChUaFullVersion::parse(format!("\t{value} \t"))
       .expect("valid Sec-CH-UA-Full-Version value");
@@ -789,10 +790,7 @@ fn sec_ch_ua_full_version_rejects_invalid_duplicate_oversized_and_control_values
   assert!(SecChUaFullVersion::parse_values([]).is_err());
 
   for value in [
-    "",
     " ",
-    r#""""#,
-    "\t\"\" \t",
     "120.0",
     r#""120.0", "121.0""#,
     r#""120.0";foo=bar"#,

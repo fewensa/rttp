@@ -7276,6 +7276,25 @@ fn sec_ch_ua_full_version_helper_emits_one_canonical_request_client_hint() {
   );
 }
 
+#[test]
+fn sec_ch_ua_full_version_helper_accepts_empty_structured_string() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .sec_ch_ua_full_version(r#""""#)
+      .expect("empty Sec-CH-UA-Full-Version string should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#""""#),
+    header_value(&request, "Sec-CH-UA-Full-Version")
+  );
+}
+
 #[cfg(feature = "async")]
 #[test]
 fn async_sec_ch_ua_full_version_helper_matches_blocking_contract() {
@@ -7303,10 +7322,7 @@ fn async_sec_ch_ua_full_version_helper_matches_blocking_contract() {
 fn sec_ch_ua_full_version_helper_rejects_malformed_values_before_connecting() {
   let oversized = format!("\"{}\"", "x".repeat(64 * 1024));
   for value in [
-    "",
     " ",
-    r#""""#,
-    "\t\"\" \t",
     "120.0.6099.110",
     r#""120.0.6099.110", "121.0.0.0""#,
     r#""120.0.6099.110";foo=bar"#,
@@ -7338,10 +7354,7 @@ fn sec_ch_ua_full_version_helper_rejects_malformed_values_before_connecting() {
 fn async_sec_ch_ua_full_version_helper_rejects_malformed_values_before_connecting() {
   let oversized = format!("\"{}\"", "x".repeat(64 * 1024));
   for value in [
-    "",
     " ",
-    r#""""#,
-    "\t\"\" \t",
     "120.0.6099.110",
     r#""120.0.6099.110", "121.0.0.0""#,
     r#""120.0.6099.110";foo=bar"#,

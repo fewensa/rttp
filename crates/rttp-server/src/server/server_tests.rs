@@ -26,6 +26,27 @@ fn with_max_request_head_bytes_accepts_nonzero_limit() {
 }
 
 #[test]
+fn sec_ch_ua_full_version_helpers_accept_empty_structured_strings() {
+  let raw = b"GET / HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Full-Version: \"\"\r\n\r\n";
+
+  let request = Request::from_raw_frame(raw).expect("request should parse");
+  let full_version = request
+    .sec_ch_ua_full_version()
+    .expect("Request accessor should parse an empty structured string")
+    .expect("Request accessor should find the field");
+  assert_eq!("", full_version.value());
+  assert_eq!(r#""""#, full_version.header_value());
+
+  let http_request = HttpRequest::parse(raw).expect("request should parse");
+  let http_full_version = http_request
+    .sec_ch_ua_full_version()
+    .expect("HttpRequest accessor should parse an empty structured string")
+    .expect("HttpRequest accessor should find the field");
+  assert_eq!("", http_full_version.value());
+  assert_eq!(r#""""#, http_full_version.header_value());
+}
+
+#[test]
 fn request_cache_control_combines_case_insensitive_header_fields() {
   let request = Request::from_raw_frame(
     b"GET / HTTP/1.1\r\nHost: example.test\r\nCache-Control: no-cache, max-age=60\r\ncache-control: min-fresh=30, only-if-cached\r\n\r\n",

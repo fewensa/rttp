@@ -620,8 +620,8 @@ browser policy.
 `HttpRequest::sec_ch_ua_full_version()` parse a singleton
 `Sec-CH-UA-Full-Version` request Client Hint into `HttpSecChUaFullVersion`,
 accepting one Structured Fields string after optional SP or HTAB trimming and
-exposing canonical quoted-string text through `header_value()`. Empty,
-non-string, comma-list, parameterized, duplicate, non-ASCII, forbidden-control,
+exposing canonical quoted-string text through `header_value()`. Non-string,
+comma-list, parameterized, duplicate, non-ASCII, forbidden-control,
 invalid-escape, or oversized fields return `HttpSecChUaFullVersionParseError`
 while the raw field remains available through `header()`. This is
 metadata-only: the server does not infer browser or platform versions,

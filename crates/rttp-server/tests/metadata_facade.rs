@@ -2547,6 +2547,17 @@ fn request_facade_parses_sec_ch_ua_full_version_metadata_without_negotiation() {
   assert_eq!("120.0.6099.110", full_version.value());
   assert_eq!(r#""120.0.6099.110""#, full_version.header_value());
 
+  let empty = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Full-Version: \"\"\r\n\r\n",
+  )
+  .expect("empty Sec-CH-UA-Full-Version request should parse");
+  let empty_full_version = empty
+    .sec_ch_ua_full_version()
+    .expect("empty Sec-CH-UA-Full-Version should parse")
+    .expect("empty Sec-CH-UA-Full-Version should be present");
+  assert_eq!("", empty_full_version.value());
+  assert_eq!(r#""""#, empty_full_version.header_value());
+
   let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request without Sec-CH-UA-Full-Version should parse");
   assert_eq!(
