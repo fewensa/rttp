@@ -52,12 +52,17 @@ impl Expect {
         return Err(ExpectParseError::new("Expect header value is too large"));
       }
       for member in value.split(',') {
-        let expectation = member.trim();
+        let expectation = member.trim_matches([' ', '\t']);
+        if has_non_ows_whitespace_at_boundary(expectation)
+          || has_non_ows_whitespace_around_separator(expectation)
+        {
+          return Err(ExpectParseError::new("invalid Expect expectation"));
+        }
         let name = expectation
           .split(['=', ';'])
           .next()
           .unwrap_or_default()
-          .trim();
+          .trim_matches([' ', '\t']);
         if !is_token(name) {
           return Err(ExpectParseError::new("invalid Expect expectation"));
         }
@@ -101,6 +106,49 @@ impl Expect {
     parts.extend(self.unsupported.iter().map(String::as_str));
     parts.join(", ")
   }
+}
+
+fn has_non_ows_whitespace_at_boundary(value: &str) -> bool {
+  value
+    .chars()
+    .next()
+    .is_some_and(|character| character.is_whitespace())
+    || value
+      .chars()
+      .next_back()
+      .is_some_and(|character| character.is_whitespace())
+}
+
+fn has_non_ows_whitespace_around_separator(value: &str) -> bool {
+  let mut quoted = false;
+  let mut escaped = false;
+  for (index, separator) in value.char_indices() {
+    if escaped {
+      escaped = false;
+      continue;
+    }
+    match separator {
+      '\\' if quoted => escaped = true,
+      '"' => quoted = !quoted,
+      '=' | ';' if !quoted => {
+        let before = value[..index].trim_end_matches([' ', '\t']);
+        let after = value[index + separator.len_utf8()..].trim_start_matches([' ', '\t']);
+        if before
+          .chars()
+          .next_back()
+          .is_some_and(|character| character.is_whitespace())
+          || after
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_whitespace())
+        {
+          return true;
+        }
+      }
+      _ => {}
+    }
+  }
+  false
 }
 
 /// An error returned when `Expect` metadata is malformed or exceeds bounds.
