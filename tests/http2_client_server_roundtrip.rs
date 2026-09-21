@@ -1817,6 +1817,76 @@ fn h2c_malformed_prefers_contrast_reaches_server_accessor_with_raw_header() {
 }
 
 #[test]
+fn h2c_non_ascii_prefers_contrast_reaches_server_accessor_with_raw_header() {
+  for value in ["custom🍎", "custom\u{0080}"] {
+    let server = HttpServer::bind("127.0.0.1:0")
+      .expect("bind h2c non-ASCII Prefers-Contrast server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("h2c server address");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((
+            request
+              .header("Sec-CH-Prefers-Contrast")
+              .map(str::to_string),
+            request
+              .prefers_contrast()
+              .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+              .map_err(|error| error.to_string()),
+          ))
+          .expect("record non-ASCII Prefers-Contrast");
+          HttpResponse::ok("ok")
+        })
+        .expect("serve non-ASCII h2c Prefers-Contrast request");
+    });
+
+    let authority = addr.to_string();
+    let mut stream = send_h2c_prior_knowledge_headers(
+      addr,
+      &[
+        (":method", "GET"),
+        (":scheme", "http"),
+        (":path", "/asset"),
+        (":authority", authority.as_str()),
+        ("sec-ch-prefers-contrast", value),
+      ],
+    );
+
+    let (frame_type, flags, stream_id, payload) = read_http2_frame(&mut stream);
+    assert_eq!(0x1, frame_type, "h2c response should start with HEADERS");
+    assert_eq!(
+      0x4, flags,
+      "h2c response headers should end the header block"
+    );
+    assert_eq!(1, stream_id);
+    assert_eq!(
+      Some(&0x88),
+      payload.first(),
+      "h2c response should be 200 OK"
+    );
+
+    let (raw, parsed) = rx
+      .recv_timeout(Duration::from_secs(2))
+      .expect("recorded non-ASCII Prefers-Contrast");
+    assert_eq!(Some(value.to_string()), raw);
+    let error = parsed
+      .as_ref()
+      .expect_err("non-ASCII Prefers-Contrast must fail closed");
+    assert!(
+      error.contains("Sec-CH-Prefers-Contrast"),
+      "non-ASCII Prefers-Contrast error should identify the field: {error}"
+    );
+    handle
+      .join()
+      .expect("non-ASCII h2c Prefers-Contrast server thread");
+  }
+}
+
+#[test]
 fn h2c_duplicate_prefers_contrast_reaches_server_accessor_with_raw_header() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c duplicate Prefers-Contrast server")
