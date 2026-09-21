@@ -1102,6 +1102,32 @@ fn ect_rejects_invalid_duplicate_oversized_and_list_values() {
 }
 
 #[test]
+fn bounded_numeric_and_preference_client_hints_reject_non_ascii_with_field_errors() {
+  for (field, error) in [
+    ("DPR", Dpr::parse("1é").unwrap_err().to_string()),
+    ("Downlink", Downlink::parse("1é").unwrap_err().to_string()),
+    (
+      "Device-Memory",
+      DeviceMemory::parse("1é").unwrap_err().to_string(),
+    ),
+    (
+      "Sec-CH-Prefers-Color-Scheme",
+      PrefersColorScheme::parse("lighté").unwrap_err().to_string(),
+    ),
+    (
+      "Sec-CH-Prefers-Contrast",
+      PrefersContrast::parse("moreé").unwrap_err().to_string(),
+    ),
+    ("ECT", Ect::parse("4gé").unwrap_err().to_string()),
+  ] {
+    assert!(
+      error.contains(field),
+      "{field} error does not identify the field: {error}"
+    );
+  }
+}
+
+#[test]
 fn width_parses_non_negative_integer_and_round_trips() {
   for (value, expected) in [
     ("0", 0),
