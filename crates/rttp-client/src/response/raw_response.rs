@@ -7,6 +7,7 @@ use crate::response::ResponseBody;
 use crate::types::{is_sensitive_debug_header, Cookie, Header, RoUrl, ToUrl};
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::cookie::HttpSetCookie;
+use rttp_protocol::http1::{is_header_value_byte, is_token};
 use url::Url;
 
 static CR: u8 = b'\r';
@@ -254,10 +255,13 @@ impl Parser {
       };
       let (name, value) = line.split_at(colon);
       let value = &value[1..];
-      headers.push(Header::from_http1(
-        decode_http1_text(name),
-        decode_http1_text(value),
-      ));
+      let Ok(name) = std::str::from_utf8(name) else {
+        return Err(error::bad_response("Invalid response header"));
+      };
+      if !is_token(name) || !value.iter().copied().all(is_header_value_byte) {
+        return Err(error::bad_response("Invalid response header"));
+      }
+      headers.push(Header::from_http1(name, decode_http1_text(value)));
     }
 
     let cookies: Vec<Cookie> = headers

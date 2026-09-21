@@ -83,7 +83,7 @@ fn origin_agent_cluster_response_metadata_preserves_raw_invalid_headers() {
   assert_eq!(OriginAgentCluster::Boolean(true), value);
   assert_eq!("?1", value.header_value());
 
-  for raw_value in ["true", "?1, ?0", "?1\0"] {
+  for raw_value in ["true", "?1, ?0", "?1x"] {
     let raw =
       format!("HTTP/1.1 200 OK\r\nOrigin-Agent-Cluster: {raw_value}\r\nContent-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test/"), raw.into_bytes())
@@ -724,7 +724,7 @@ fn content_security_policy_metadata_preserves_layered_policy_fields() {
 
 #[test]
 fn content_security_policy_metadata_rejects_invalid_values_without_hiding_raw_headers() {
-  for value in ["", "default-src 'self'\u{7f}"] {
+  for value in [""] {
     let response = Response::new(
       RoUrl::with("https://example.test"),
       format!("HTTP/1.1 200 OK\r\nContent-Security-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
@@ -827,7 +827,7 @@ fn content_security_policy_report_only_metadata_preserves_layered_policy_fields(
 #[test]
 fn content_security_policy_report_only_metadata_rejects_invalid_values_without_hiding_raw_headers()
 {
-  for value in ["", "default-src 'self'\u{7f}"] {
+  for value in [""] {
     let response = Response::new(
       RoUrl::with("https://example.test"),
       format!(
@@ -2238,6 +2238,31 @@ fn test_parse_response_rejects_folded_and_invalid_line_break_headers() {
   ] {
     let error = Response::new(RoUrl::with("https://example.test"), raw.to_vec())
       .expect_err("folded and invalid response header line breaks must be rejected");
+    assert!(error.to_string().contains("Invalid response header"));
+  }
+}
+
+#[test]
+fn test_parse_response_rejects_empty_and_non_token_header_names() {
+  for raw in [
+    b"HTTP/1.1 200 OK\r\n: value\r\nContent-Length: 0\r\n\r\n".as_slice(),
+    b"HTTP/1.1 200 OK\r\nX Test: value\r\nContent-Length: 0\r\n\r\n".as_slice(),
+  ] {
+    let error = Response::new(RoUrl::with("https://example.test"), raw.to_vec())
+      .expect_err("empty and non-token response header names must be rejected");
+    assert!(error.to_string().contains("Invalid response header"));
+  }
+}
+
+#[test]
+fn test_parse_response_rejects_invalid_header_value_bytes_before_body_decoding() {
+  for byte in [0x00, 0x1f, 0x7f] {
+    let mut raw = b"HTTP/1.1 200 OK\r\nX-Test: value".to_vec();
+    raw.push(byte);
+    raw.extend_from_slice(b"\r\nContent-Encoding: gzip\r\nContent-Length: 8\r\n\r\nnot gzip");
+
+    let error = Response::new(RoUrl::with("https://example.test"), raw)
+      .expect_err("invalid response header value bytes must be rejected");
     assert!(error.to_string().contains("Invalid response header"));
   }
 }
@@ -4027,7 +4052,7 @@ fn test_proxy_status_rejects_malformed_and_oversized_values_without_hiding_heade
     "",
     "(ExampleCDN)",
     "ExampleCDN; error=timeout; error=reset",
-    "ExampleCDN;\x01bad",
+    "ExampleCDN; error=\"unterminated",
   ] {
     let raw = format!(
       "HTTP/1.1 504 Gateway Timeout\r\nProxy-Status: {value}\r\nContent-Length: 7\r\n\r\ntimeout"
@@ -5806,7 +5831,7 @@ fn test_parse_content_location_response_helper_trims_outer_whitespace_and_allows
 
 #[test]
 fn test_parse_content_location_rejects_invalid_helper_values_without_rejecting_response() {
-  let invalid_values = ["", "http://[::1", "not valid", "/bad path", "ok\u{7f}"];
+  let invalid_values = ["", "http://[::1", "not valid", "/bad path", "ok%zz"];
 
   for value in invalid_values {
     let raw =
@@ -6349,7 +6374,7 @@ fn test_parse_location_response_helper_trims_outer_whitespace() {
 
 #[test]
 fn test_parse_location_rejects_invalid_values_without_rejecting_response() {
-  let invalid_values = ["", "http://[::1", "/bad path", "/bad%zz", "ok\u{7f}"];
+  let invalid_values = ["", "http://[::1", "/bad path", "/bad%zz", "http://"];
 
   for value in invalid_values {
     let raw = format!("HTTP/1.1 302 Found\r\nLocation: {value}\r\nContent-Length: 2\r\n\r\nOK");
@@ -8015,7 +8040,7 @@ fn access_control_allow_private_network_response_helper_preserves_raw_parse_fail
     "True".to_string(),
     "false".to_string(),
     "true, true".to_string(),
-    "true\0".to_string(),
+    "trueish".to_string(),
     "x".repeat(64 * 1024 + 1),
   ] {
     let raw = format!(
