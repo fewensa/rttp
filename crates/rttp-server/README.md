@@ -616,6 +616,18 @@ This is metadata-only: the server does not infer a platform version or
 capabilities, negotiate the UA brands family, emit `Accept-CH`, retry, or apply
 browser policy.
 
+`Request::sec_ch_ua_full_version()` and
+`HttpRequest::sec_ch_ua_full_version()` parse a singleton
+`Sec-CH-UA-Full-Version` request Client Hint into `HttpSecChUaFullVersion`,
+accepting one Structured Fields string after optional SP or HTAB trimming and
+exposing canonical quoted-string text through `header_value()`. Empty,
+non-string, comma-list, parameterized, duplicate, non-ASCII, forbidden-control,
+invalid-escape, or oversized fields return `HttpSecChUaFullVersionParseError`
+while the raw field remains available through `header()`. This is
+metadata-only: the server does not infer browser or platform versions,
+negotiate the UA brands family, emit `Accept-CH`, retry, or apply browser
+policy.
+
 `Request::sec_ch_ua()` and `HttpRequest::sec_ch_ua()` parse a bounded
 `Sec-CH-UA` request Client Hint into `HttpSecChUa`. Each ordered member must
 be an RFC 8941 string brand with exactly one string `v` parameter;

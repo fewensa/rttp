@@ -25,8 +25,9 @@ use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::client_hints::{
   DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast, PrefersReducedData,
   PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChDpr, SecChUa, SecChUaArch,
-  SecChUaBitness, SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile, SecChUaModel,
-  SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, SecChViewportHeight, ViewportWidth, Width,
+  SecChUaBitness, SecChUaFormFactors, SecChUaFullVersion, SecChUaFullVersionList, SecChUaMobile,
+  SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, SecChViewportHeight,
+  ViewportWidth, Width,
 };
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -707,6 +708,22 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-CH-UA-Platform-Version",
       sec_ch_ua_platform_version.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-CH-UA-Full-Version` request Client Hint metadata.
+  ///
+  /// The value must be one Structured Fields string with optional surrounding
+  /// HTTP optional whitespace. This replaces any existing case-insensitive
+  /// `Sec-CH-UA-Full-Version` field and only declares request metadata; RTTP
+  /// does not infer a browser or platform version, negotiate the UA brands
+  /// family, emit `Accept-CH`, or generate this header automatically.
+  pub fn sec_ch_ua_full_version<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_ch_ua_full_version = SecChUaFullVersion::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-CH-UA-Full-Version",
+      sec_ch_ua_full_version.header_value(),
     )))
   }
 
