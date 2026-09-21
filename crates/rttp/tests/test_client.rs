@@ -207,12 +207,7 @@ fn compatibility_facade_reexports_client_hints_response_metadata() {
 }
 
 #[test]
-#[cfg(any(
-  feature = "all",
-  feature = "client",
-  feature = "tls-native",
-  feature = "tls-rustls"
-))]
+#[cfg(any(feature = "all", feature = "tls-native", feature = "tls-rustls"))]
 fn test_client_https() {
   let (addr, _handle) = support::spawn_tls_server();
   let response = rttp::Http::client()
@@ -250,9 +245,8 @@ fn test_client_async_http() {
 #[test]
 #[cfg(any(
   feature = "all",
-  feature = "async",
-  feature = "tls-native",
-  feature = "tls-rustls"
+  all(feature = "async", feature = "tls-native"),
+  all(feature = "async", feature = "tls-rustls")
 ))]
 fn test_client_async_https() {
   async_std::task::block_on(async {
