@@ -91,18 +91,18 @@ impl Range {
 
     let mut ranges = Vec::new();
     validate_value(value, MAX_RANGE_VALUE_BYTES, "Range").map_err(RangeParseError::new)?;
-    let value = value.trim();
+    let value = trim_http_ows(value);
     let Some((unit, members)) = value.split_once('=') else {
       return Err(RangeParseError::new("invalid Range header value"));
     };
-    if !unit.trim().eq_ignore_ascii_case("bytes") || members.is_empty() {
+    if !trim_http_ows(unit).eq_ignore_ascii_case("bytes") || members.is_empty() {
       return Err(RangeParseError::new("invalid Range header value"));
     }
     for member in members.split(',') {
       if ranges.len() >= MAX_RANGE_COUNT {
         return Err(RangeParseError::new("too many Range members"));
       }
-      ranges.push(parse_range_member(member.trim())?);
+      ranges.push(parse_range_member(trim_http_ows(member))?);
     }
     if ranges.is_empty() {
       return Err(RangeParseError::new("invalid Range header value"));
@@ -252,7 +252,10 @@ fn validate_value(value: &str, maximum_length: usize, name: &str) -> Result<(), 
   if value.len() > maximum_length {
     return Err(format!("{name} header value is too large"));
   }
-  if value.bytes().any(|byte| byte.is_ascii_control()) {
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
     return Err(format!("invalid {name} header value"));
   }
   Ok(())

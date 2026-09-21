@@ -22,6 +22,51 @@ fn range_parses_byte_and_suffix_specs_from_one_field_value() {
 }
 
 #[test]
+fn range_accepts_http_ows_and_rejects_non_ascii_whitespace() {
+  let expected = [
+    ByteRangeSpec::FromTo {
+      start: 0,
+      end: Some(1),
+    },
+    ByteRangeSpec::Suffix { length: 2 },
+  ];
+
+  for value in [
+    " bytes=0-1,-2 ",
+    "\tbytes=0-1,-2\t",
+    " \t BYTES \t = \t 0-1 \t , \t -2 \t ",
+    "bytes =0-1,-2",
+    "bytes= 0-1,-2",
+    "bytes\t=\t0-1,-2",
+    "bytes=0-1 , -2",
+    "bytes=0-1\t,\t-2",
+  ] {
+    let range = Range::parse(value)
+      .unwrap_or_else(|error| panic!("{value:?} must accept HTTP OWS padding: {error}"));
+    assert_eq!(expected.as_slice(), range.ranges(), "{value:?}");
+    assert_eq!("bytes=0-1, -2", range.header_value());
+  }
+
+  for value in [
+    "\u{00A0}bytes=0-1,-2",
+    "bytes\u{00A0}=0-1,-2",
+    "bytes=\u{00A0}0-1,-2",
+    "bytes=0-1\u{00A0},-2",
+    "bytes=0-1,\u{00A0}-2",
+    "bytes=0-1,-2\u{00A0}",
+    "\u{2003}bytes=0-1",
+    "bytes\u{3000}=0-1,-2",
+    "bytes=0-1\u{0085},-2",
+    "bytes=0-\u{00A0}1",
+  ] {
+    assert!(
+      Range::parse(value).is_err(),
+      "{value:?} must reject non-ASCII whitespace"
+    );
+  }
+}
+
+#[test]
 fn range_rejects_repeated_field_values() {
   assert!(Range::parse_values(["bytes=0-1", "bytes=2-3"]).is_err());
 }
