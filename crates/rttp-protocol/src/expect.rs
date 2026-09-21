@@ -120,22 +120,32 @@ fn has_non_ows_whitespace_at_boundary(value: &str) -> bool {
 }
 
 fn has_non_ows_whitespace_around_separator(value: &str) -> bool {
+  let mut quoted = false;
+  let mut escaped = false;
   for (index, separator) in value.char_indices() {
-    if !matches!(separator, '=' | ';') {
+    if escaped {
+      escaped = false;
       continue;
     }
-    let before = value[..index].trim_end_matches([' ', '\t']);
-    let after = value[index + separator.len_utf8()..].trim_start_matches([' ', '\t']);
-    if before
-      .chars()
-      .next_back()
-      .is_some_and(|character| character.is_whitespace())
-      || after
-        .chars()
-        .next()
-        .is_some_and(|character| character.is_whitespace())
-    {
-      return true;
+    match separator {
+      '\\' if quoted => escaped = true,
+      '"' => quoted = !quoted,
+      '=' | ';' if !quoted => {
+        let before = value[..index].trim_end_matches([' ', '\t']);
+        let after = value[index + separator.len_utf8()..].trim_start_matches([' ', '\t']);
+        if before
+          .chars()
+          .next_back()
+          .is_some_and(|character| character.is_whitespace())
+          || after
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_whitespace())
+        {
+          return true;
+        }
+      }
+      _ => {}
     }
   }
   false

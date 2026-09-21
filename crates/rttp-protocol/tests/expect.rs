@@ -41,6 +41,27 @@ fn expect_accepts_http_optional_whitespace_padding() {
 }
 
 #[test]
+fn expect_accepts_quoted_extension_values_with_obs_text_beside_embedded_separators() {
+  for whitespace in ["\u{00a0}", "\u{3000}"] {
+    for value in [
+      format!(r#"preview="x={whitespace}y""#),
+      format!(r#"preview="x;{whitespace}y""#),
+    ] {
+      let expect = Expect::parse(&value).expect("quoted Expect obs-text should stay opaque");
+
+      assert!(!expect.expects_continue());
+      assert_eq!(["preview"], expect.unsupported());
+      assert_eq!(expect.header_value(), "preview");
+    }
+  }
+
+  assert!(
+    Expect::parse("preview=\"x\";\u{00a0}parameter").is_err(),
+    "non-OWS beside an unquoted parameter separator must still be rejected"
+  );
+}
+
+#[test]
 fn expect_rejects_non_ows_whitespace_at_members_and_separators() {
   for value in [
     "\u{00a0}preview",
