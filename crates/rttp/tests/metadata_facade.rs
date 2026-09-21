@@ -880,9 +880,7 @@ fn compatibility_facade_exports_ect_request_metadata() {
   let non_ascii =
     HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nECT: \x80\r\n\r\n")
       .expect("non-ASCII ECT should remain available");
-  let error: HttpEctParseError = non_ascii
-    .ect()
-    .expect_err("non-ASCII ECT should fail");
+  let error: HttpEctParseError = non_ascii.ect().expect_err("non-ASCII ECT should fail");
   assert!(
     error.to_string().contains("ECT"),
     "non-ASCII ECT error should identify the field: {error}"
