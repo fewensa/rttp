@@ -2187,6 +2187,365 @@ fn h2c_oversized_prefers_contrast_reaches_server_accessor_with_raw_header() {
     .expect("oversized h2c Prefers-Contrast server thread");
 }
 
+#[test]
+fn h2c_ect_helper_reaches_server_accessor() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c ECT server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.target().to_string(),
+          request.header("ECT").map(str::to_string),
+          request
+            .ect()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+            .map_err(|error| error.to_string()),
+        ))
+        .expect("record ECT");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve h2c ECT request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .ect("\tSLoW-2G\t")
+    .expect("ECT should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (
+      "/asset".to_string(),
+      Some("slow-2g".to_string()),
+      Ok(Some("slow-2g".to_string()))
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded ECT")
+  );
+  handle.join().expect("h2c ECT server thread");
+}
+
+#[test]
+fn h2c_malformed_ect_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c malformed ECT server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("ECT").map(str::to_string),
+          request
+            .ect()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+            .map_err(|error| error.to_string()),
+        ))
+        .expect("record malformed ECT");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve malformed h2c ECT request");
+  });
+
+  let authority = addr.to_string();
+  let mut stream = send_h2c_prior_knowledge_headers(
+    addr,
+    &[
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", "/asset"),
+      (":authority", authority.as_str()),
+      ("ect", "5g"),
+    ],
+  );
+
+  let (frame_type, flags, stream_id, payload) = read_http2_frame(&mut stream);
+  assert_eq!(0x1, frame_type, "h2c response should start with HEADERS");
+  assert_eq!(
+    0x4, flags,
+    "h2c response headers should end the header block"
+  );
+  assert_eq!(1, stream_id);
+  assert_eq!(
+    Some(&0x88),
+    payload.first(),
+    "h2c response should be 200 OK"
+  );
+
+  let (raw, parsed) = rx
+    .recv_timeout(Duration::from_secs(2))
+    .expect("recorded malformed ECT");
+  assert_eq!(Some("5g".to_string()), raw);
+  let error = parsed.as_ref().expect_err("malformed ECT must fail closed");
+  assert!(
+    error.contains("ECT"),
+    "malformed ECT error should identify the field: {error}"
+  );
+  handle.join().expect("malformed h2c ECT server thread");
+}
+
+#[test]
+fn h2c_control_and_non_ascii_ect() {
+  for value in ["4g\u{0001}", "4g\u{0080}"] {
+    let server = HttpServer::bind("127.0.0.1:0")
+      .expect("bind h2c control/non-ASCII ECT server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("h2c server address");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          let raw = request.header("ECT").map(str::to_string);
+          let parsed = request
+            .ect()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+            .map_err(|error| error.to_string());
+          tx.send((raw, parsed))
+            .expect("record control/non-ASCII ECT");
+          HttpResponse::ok("ok")
+        })
+        .expect("serve control/non-ASCII h2c ECT request");
+    });
+
+    let authority = addr.to_string();
+    let mut stream = send_h2c_prior_knowledge_headers(
+      addr,
+      &[
+        (":method", "GET"),
+        (":scheme", "http"),
+        (":path", "/asset"),
+        (":authority", authority.as_str()),
+        ("ect", value),
+      ],
+    );
+
+    let (frame_type, flags, stream_id, payload) = read_http2_frame(&mut stream);
+    assert_eq!(0x1, frame_type, "h2c response should start with HEADERS");
+    assert_eq!(
+      0x4, flags,
+      "h2c response headers should end the header block"
+    );
+    assert_eq!(1, stream_id);
+    assert_eq!(
+      Some(&0x88),
+      payload.first(),
+      "h2c response should be 200 OK"
+    );
+
+    let (raw, parsed) = rx
+      .recv_timeout(Duration::from_secs(2))
+      .expect("recorded control/non-ASCII ECT");
+    assert_eq!(Some(value.to_string()), raw);
+    let error = parsed
+      .as_ref()
+      .expect_err("control/non-ASCII ECT must fail closed");
+    assert!(
+      error.contains("ECT"),
+      "control/non-ASCII ECT error should identify the field: {error}"
+    );
+    handle
+      .join()
+      .expect("control/non-ASCII h2c ECT server thread");
+  }
+}
+
+#[test]
+fn h2c_non_ascii_ect_reaches_server_accessor_with_raw_header() {
+  for value in ["4g🍎", "4g\u{0080}"] {
+    let server = HttpServer::bind("127.0.0.1:0")
+      .expect("bind h2c non-ASCII ECT server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("h2c server address");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((
+            request.header("ECT").map(str::to_string),
+            request
+              .ect()
+              .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+              .map_err(|error| error.to_string()),
+          ))
+          .expect("record non-ASCII ECT");
+          HttpResponse::ok("ok")
+        })
+        .expect("serve non-ASCII h2c ECT request");
+    });
+
+    let authority = addr.to_string();
+    let mut stream = send_h2c_prior_knowledge_headers(
+      addr,
+      &[
+        (":method", "GET"),
+        (":scheme", "http"),
+        (":path", "/asset"),
+        (":authority", authority.as_str()),
+        ("ect", value),
+      ],
+    );
+
+    let (frame_type, flags, stream_id, payload) = read_http2_frame(&mut stream);
+    assert_eq!(0x1, frame_type, "h2c response should start with HEADERS");
+    assert_eq!(
+      0x4, flags,
+      "h2c response headers should end the header block"
+    );
+    assert_eq!(1, stream_id);
+    assert_eq!(
+      Some(&0x88),
+      payload.first(),
+      "h2c response should be 200 OK"
+    );
+
+    let (raw, parsed) = rx
+      .recv_timeout(Duration::from_secs(2))
+      .expect("recorded non-ASCII ECT");
+    assert_eq!(Some(value.to_string()), raw);
+    let error = parsed.as_ref().expect_err("non-ASCII ECT must fail closed");
+    assert!(
+      error.contains("ECT"),
+      "non-ASCII ECT error should identify the field: {error}"
+    );
+    handle.join().expect("non-ASCII h2c ECT server thread");
+  }
+}
+
+#[test]
+fn h2c_duplicate_ect_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c duplicate ECT server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("ECT").map(str::to_string),
+          request
+            .ect()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+            .map_err(|error| error.to_string()),
+        ))
+        .expect("record duplicate ECT");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve duplicate h2c ECT request");
+  });
+
+  let authority = addr.to_string();
+  let _stream = send_h2c_prior_knowledge_headers(
+    addr,
+    &[
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", "/asset"),
+      (":authority", authority.as_str()),
+      ("ECT", "4g"),
+      ("ect", "3g"),
+    ],
+  );
+
+  let (raw, parsed) = rx
+    .recv_timeout(Duration::from_secs(2))
+    .expect("recorded duplicate ECT");
+  assert_eq!(Some("4g".to_string()), raw);
+  let error = parsed.as_ref().expect_err("duplicate ECT must fail closed");
+  assert!(
+    error.contains("ECT"),
+    "duplicate ECT error should identify the field: {error}"
+  );
+  handle.join().expect("duplicate h2c ECT server thread");
+}
+
+#[test]
+fn h2c_oversized_ect_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c oversized ECT server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)))
+    .with_http2_policy(
+      Http2ServerPolicy::new()
+        .with_max_frame_size(256 * 1024)
+        .with_max_header_list_size(256 * 1024),
+    );
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let raw = request.header("ECT").map(str::to_string);
+        tx.send((
+          raw.clone(),
+          request
+            .ect()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+            .map_err(|error| error.to_string()),
+        ))
+        .expect("record oversized ECT");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve oversized h2c ECT request");
+  });
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let authority = addr.to_string();
+  let mut stream = send_h2c_prior_knowledge_headers(
+    addr,
+    &[
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", "/asset"),
+      (":authority", authority.as_str()),
+      ("ect", oversized.as_str()),
+    ],
+  );
+
+  let (frame_type, flags, stream_id, payload) = read_http2_frame(&mut stream);
+  assert_eq!(0x1, frame_type, "h2c response should start with HEADERS");
+  assert_eq!(
+    0x4, flags,
+    "h2c response headers should end the header block"
+  );
+  assert_eq!(1, stream_id);
+  assert_eq!(
+    Some(&0x88),
+    payload.first(),
+    "h2c response should be 200 OK"
+  );
+
+  let (raw, parsed) = rx
+    .recv_timeout(Duration::from_secs(2))
+    .expect("recorded oversized ECT");
+  assert_eq!(Some(oversized.clone()), raw);
+  let error = parsed.as_ref().expect_err("oversized ECT must fail closed");
+  assert!(
+    error.contains("ECT"),
+    "oversized ECT error should identify the field: {error}"
+  );
+  handle.join().expect("oversized h2c ECT server thread");
+}
+
 #[derive(Clone, Copy)]
 struct SecChUaFieldSpec {
   name: &'static str,
@@ -3601,12 +3960,23 @@ fn send_h2c_prior_knowledge_headers(
 }
 
 fn encode_hpack_string(block: &mut Vec<u8>, value: &[u8]) {
-  assert!(
-    value.len() < 127,
-    "raw h2c test helper only encodes short HPACK strings"
-  );
-  block.push(value.len() as u8);
+  encode_hpack_integer(block, value.len(), 7);
   block.extend_from_slice(value);
+}
+
+fn encode_hpack_integer(block: &mut Vec<u8>, mut value: usize, prefix_bits: u8) {
+  let max = (1usize << prefix_bits) - 1;
+  if value < max {
+    block.push(value as u8);
+    return;
+  }
+  block.push(max as u8);
+  value -= max;
+  while value >= 128 {
+    block.push(((value % 128) as u8) | 0x80);
+    value /= 128;
+  }
+  block.push(value as u8);
 }
 
 fn write_http2_frame(
