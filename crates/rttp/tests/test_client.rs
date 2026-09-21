@@ -183,6 +183,12 @@ fn compatibility_facade_reexports_client_hints_response_metadata() {
   let _: rttp::ViewportWidthParseError =
     rttp::ViewportWidth::parse("1.0").expect_err("malformed Viewport-Width should fail");
 
+  let viewport_height: rttp::SecChViewportHeight =
+    rttp::SecChViewportHeight::parse("900").expect("Sec-CH-Viewport-Height should parse");
+  assert_eq!(900, viewport_height.value());
+  let _: rttp::SecChViewportHeightParseError = rttp::SecChViewportHeight::parse("1.0")
+    .expect_err("malformed Sec-CH-Viewport-Height should fail");
+
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
     "Accept-CH: Sec-CH-UA, DPR\r\n",

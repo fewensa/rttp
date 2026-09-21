@@ -32,6 +32,7 @@ pub const MAX_PREFERS_CONTRAST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ECT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_WIDTH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_VIEWPORT_WIDTH_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_VIEWPORT_HEIGHT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_RTT_VALUE_BYTES: usize = 64 * 1024;
 
 /// Parsed, bounded `DPR` request Client Hint metadata.
@@ -195,6 +196,10 @@ pub struct Width(u64);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ViewportWidth(u64);
 
+/// Parsed, bounded `Sec-CH-Viewport-Height` request Client Hint metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SecChViewportHeight(u64);
+
 /// Parsed, bounded `RTT` request Client Hint metadata.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Rtt(u64);
@@ -239,6 +244,7 @@ pub type PrefersContrastParseError = ClientHintsParseError;
 pub type EctParseError = ClientHintsParseError;
 pub type WidthParseError = ClientHintsParseError;
 pub type ViewportWidthParseError = ClientHintsParseError;
+pub type SecChViewportHeightParseError = ClientHintsParseError;
 pub type RttParseError = ClientHintsParseError;
 
 impl ClientHintsParseError {
@@ -969,6 +975,31 @@ impl ViewportWidth {
     I: IntoIterator<Item = &'a str>,
   {
     parse_viewport_width_singleton(values).map(Self)
+  }
+
+  pub const fn value(self) -> u64 {
+    self.0
+  }
+
+  pub fn header_value(self) -> String {
+    self.0.to_string()
+  }
+}
+
+impl SecChViewportHeight {
+  pub const fn new(value: u64) -> Self {
+    Self(value)
+  }
+
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, SecChViewportHeightParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, SecChViewportHeightParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    parse_sec_ch_viewport_height_singleton(values).map(Self)
   }
 
   pub const fn value(self) -> u64 {
@@ -2227,6 +2258,56 @@ fn validate_bounded_viewport_width_value(value: &str) -> Result<(), ViewportWidt
   Ok(())
 }
 
+fn parse_sec_ch_viewport_height_singleton<'a, I>(
+  values: I,
+) -> Result<u64, SecChViewportHeightParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values
+    .next()
+    .ok_or_else(invalid_sec_ch_viewport_height_value)?;
+  validate_bounded_sec_ch_viewport_height_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_sec_ch_viewport_height_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(
+      "duplicate Sec-CH-Viewport-Height header fields",
+    ));
+  }
+
+  let value = value.trim_matches([' ', '\t']);
+  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(invalid_sec_ch_viewport_height_value());
+  }
+  value
+    .parse()
+    .map_err(|_| invalid_sec_ch_viewport_height_value())
+}
+
+fn validate_bounded_sec_ch_viewport_height_value(
+  value: &str,
+) -> Result<(), SecChViewportHeightParseError> {
+  if value.len() > MAX_SEC_CH_VIEWPORT_HEIGHT_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-Viewport-Height header value is too large",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-Viewport-Height control byte",
+    ));
+  }
+  Ok(())
+}
+
 fn parse_rtt_singleton<'a, I>(values: I) -> Result<u64, RttParseError>
 where
   I: IntoIterator<Item = &'a str>,
@@ -2365,6 +2446,10 @@ fn invalid_width_value() -> WidthParseError {
 
 fn invalid_viewport_width_value() -> ViewportWidthParseError {
   ClientHintsParseError::new("invalid Viewport-Width header value")
+}
+
+fn invalid_sec_ch_viewport_height_value() -> SecChViewportHeightParseError {
+  ClientHintsParseError::new("invalid Sec-CH-Viewport-Height header value")
 }
 
 fn invalid_rtt_value() -> RttParseError {

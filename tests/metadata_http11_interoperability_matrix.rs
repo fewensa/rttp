@@ -24,6 +24,7 @@ const PREFERS_REDUCED_TRANSPARENCY_CANONICAL: &str = "reduce";
 const PREFERS_REDUCED_DATA_CANONICAL: &str = "reduce";
 const PREFERS_CONTRAST_CANONICAL: &str = "custom";
 const RTT_CANONICAL: &str = "150";
+const SEC_CH_VIEWPORT_HEIGHT_CANONICAL: &str = "900";
 const ORIGIN_AGENT_CLUSTER_CANONICAL: &str = "?1";
 const ACCEPT_PATCH_WIRE: &str = r#"Text/Plain; title="a,b\"c", application/json"#;
 const ACCEPT_POST_WIRE: &str = "application/json, text/plain; charset=utf-8";
@@ -76,6 +77,8 @@ struct ObservedRequestMetadata {
   raw_prefers_contrast: Option<String>,
   rtt: Result<Option<String>, String>,
   raw_rtt: Option<String>,
+  sec_ch_viewport_height: Result<Option<String>, String>,
+  raw_sec_ch_viewport_height: Option<String>,
 }
 
 fn client() -> HttpClient {
@@ -169,6 +172,11 @@ fn observe_request(request: &Request) -> ObservedRequestMetadata {
       .map(|rtt| rtt.map(|rtt| rtt.header_value()))
       .map_err(|error| error.to_string()),
     raw_rtt: request.header("RTT").map(str::to_string),
+    sec_ch_viewport_height: request
+      .sec_ch_viewport_height()
+      .map(|height| height.map(|height| height.header_value()))
+      .map_err(|error| error.to_string()),
+    raw_sec_ch_viewport_height: request.header("Sec-CH-Viewport-Height").map(str::to_string),
   }
 }
 
@@ -246,6 +254,8 @@ fn attach_valid_client_metadata(client: &mut HttpClient) -> &mut HttpClient {
     .expect("mixed-case Prefers-Contrast should be accepted")
     .rtt("\t150\t")
     .expect("RTT should be accepted")
+    .sec_ch_viewport_height("\t900\t")
+    .expect("Sec-CH-Viewport-Height should be accepted")
 }
 
 fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
@@ -306,6 +316,14 @@ fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
   );
   assert_eq!(Ok(Some(RTT_CANONICAL.to_string())), observed.rtt);
   assert_eq!(Some(RTT_CANONICAL.to_string()), observed.raw_rtt);
+  assert_eq!(
+    Ok(Some(SEC_CH_VIEWPORT_HEIGHT_CANONICAL.to_string())),
+    observed.sec_ch_viewport_height
+  );
+  assert_eq!(
+    Some(SEC_CH_VIEWPORT_HEIGHT_CANONICAL.to_string()),
+    observed.raw_sec_ch_viewport_height
+  );
 }
 
 fn assert_valid_response_metadata(response: &Response) {
@@ -686,6 +704,8 @@ fn http11_absent_metadata_returns_ok_none() {
   assert_eq!(None, observed.raw_prefers_contrast);
   assert_eq!(Ok(None), observed.rtt);
   assert_eq!(None, observed.raw_rtt);
+  assert_eq!(Ok(None), observed.sec_ch_viewport_height);
+  assert_eq!(None, observed.raw_sec_ch_viewport_height);
 
   assert!(response
     .accept_patch()
@@ -865,6 +885,18 @@ fn typed_request_helpers_reject_malformed_values_before_connect() {
   reject_before_connect("oversized RTT", |client| {
     client.rtt("1".repeat(64 * 1024 + 1))
   });
+  reject_before_connect("malformed Sec-CH-Viewport-Height", |client| {
+    client.sec_ch_viewport_height("1.0")
+  });
+  reject_before_connect("signed Sec-CH-Viewport-Height", |client| {
+    client.sec_ch_viewport_height("-1")
+  });
+  reject_before_connect("Sec-CH-Viewport-Height with control byte", |client| {
+    client.sec_ch_viewport_height("900\0")
+  });
+  reject_before_connect("oversized Sec-CH-Viewport-Height", |client| {
+    client.sec_ch_viewport_height("1".repeat(64 * 1024 + 1))
+  });
 }
 
 #[test]
@@ -929,6 +961,8 @@ ECT: 5g\r\n\
 Sec-CH-Prefers-Reduced-Transparency: auto\r\n\
 Sec-CH-Prefers-Reduced-Data: auto\r\n\
 Sec-CH-Prefers-Contrast: auto\r\n\
+RTT: 1.0\r\n\
+Sec-CH-Viewport-Height: 1.0\r\n\
 Connection: close\r\n\
 \r\n",
     )
@@ -964,6 +998,10 @@ Connection: close\r\n\
   assert_eq!(Some("auto".to_string()), observed.raw_prefers_reduced_data);
   assert!(observed.prefers_contrast.is_err());
   assert_eq!(Some("auto".to_string()), observed.raw_prefers_contrast);
+  assert!(observed.rtt.is_err());
+  assert_eq!(Some("1.0".to_string()), observed.raw_rtt);
+  assert!(observed.sec_ch_viewport_height.is_err());
+  assert_eq!(Some("1.0".to_string()), observed.raw_sec_ch_viewport_height);
   assert!(
     response.starts_with("HTTP/1.1 200 "),
     "malformed typed metadata must not fail the HTTP exchange: {response}"
@@ -1001,6 +1039,10 @@ Sec-CH-Prefers-Reduced-Data: no-preference\r\n\
 sec-ch-prefers-reduced-data: reduce\r\n\
 Sec-CH-Prefers-Contrast: more\r\n\
 sec-ch-prefers-contrast: less\r\n\
+RTT: 1\r\n\
+rtt: 2\r\n\
+Sec-CH-Viewport-Height: 1\r\n\
+sec-ch-viewport-height: 2\r\n\
 Connection: close\r\n\
 \r\n",
     )
@@ -1034,6 +1076,10 @@ Connection: close\r\n\
   );
   assert!(observed.prefers_contrast.is_err());
   assert_eq!(Some("more".to_string()), observed.raw_prefers_contrast);
+  assert!(observed.rtt.is_err());
+  assert_eq!(Some("1".to_string()), observed.raw_rtt);
+  assert!(observed.sec_ch_viewport_height.is_err());
+  assert_eq!(Some("1".to_string()), observed.raw_sec_ch_viewport_height);
   handle.join().expect("duplicate request server thread");
 }
 

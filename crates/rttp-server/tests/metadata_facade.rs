@@ -57,8 +57,9 @@ use rttp_server::server::{
   HttpSecChUaBitnessParseError, HttpSecChUaFormFactors, HttpSecChUaFormFactorsParseError,
   HttpSecChUaFullVersionList, HttpSecChUaFullVersionListParseError, HttpSecChUaModel,
   HttpSecChUaModelParseError, HttpSecChUaParseError, HttpSecChUaPlatformVersion,
-  HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc,
-  HttpSecGpcParseError, HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError,
+  HttpSecChViewportHeight, HttpSecChViewportHeightParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
   HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
@@ -2869,6 +2870,72 @@ fn request_facade_parses_viewport_width_metadata_without_negotiation() {
 
   let _: HttpViewportWidthParseError =
     HttpViewportWidth::parse("").expect_err("empty Viewport-Width should fail");
+}
+
+#[test]
+fn request_facade_parses_sec_ch_viewport_height_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Height: \t900 \t\r\n\r\n",
+  )
+  .expect("Sec-CH-Viewport-Height request should parse");
+  let viewport_height: HttpSecChViewportHeight = request
+    .sec_ch_viewport_height()
+    .expect("Sec-CH-Viewport-Height should parse")
+    .expect("Sec-CH-Viewport-Height should be present");
+  assert_eq!(900, viewport_height.value());
+  assert_eq!("900", viewport_height.header_value());
+  assert_eq!(Some("900"), request.header("Sec-CH-Viewport-Height"));
+
+  let zero = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Height: 0\r\n\r\n",
+  )
+  .expect("zero Sec-CH-Viewport-Height request should parse");
+  assert_eq!(
+    0,
+    zero
+      .sec_ch_viewport_height()
+      .expect("zero Sec-CH-Viewport-Height should parse")
+      .expect("zero Sec-CH-Viewport-Height should be present")
+      .value()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-Viewport-Height should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_viewport_height()
+      .expect("missing Sec-CH-Viewport-Height should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Height: 1.0\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-Viewport-Height request should retain raw metadata");
+  assert!(malformed.sec_ch_viewport_height().is_err());
+  assert_eq!(Some("1.0"), malformed.header("Sec-CH-Viewport-Height"));
+
+  let overflow = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Height: 18446744073709551616\r\n\r\n",
+  )
+  .expect("overflow Sec-CH-Viewport-Height request should retain raw metadata");
+  assert!(overflow.sec_ch_viewport_height().is_err());
+  assert_eq!(
+    Some("18446744073709551616"),
+    overflow.header("Sec-CH-Viewport-Height")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Height: 1\r\nsec-ch-viewport-height: 2\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-Viewport-Height request should retain raw metadata");
+  let _: HttpSecChViewportHeightParseError = duplicate
+    .sec_ch_viewport_height()
+    .expect_err("duplicate Sec-CH-Viewport-Height should fail");
+  assert_eq!(Some("1"), duplicate.header("Sec-CH-Viewport-Height"));
+
+  let _: HttpSecChViewportHeightParseError =
+    HttpSecChViewportHeight::parse("").expect_err("empty Sec-CH-Viewport-Height should fail");
 }
 
 #[test]

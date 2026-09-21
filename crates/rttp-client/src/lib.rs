@@ -149,8 +149,8 @@ pub use rttp_protocol::client_hints::{
   SecChUaFullVersionListEntry, SecChUaFullVersionListParseError, SecChUaMobile,
   SecChUaMobileParseError, SecChUaModel, SecChUaModelParseError, SecChUaParseError,
   SecChUaPlatform, SecChUaPlatformParseError, SecChUaPlatformVersion,
-  SecChUaPlatformVersionParseError, SecChUaWow64, SecChUaWow64ParseError, ViewportWidth,
-  ViewportWidthParseError, Width, WidthParseError,
+  SecChUaPlatformVersionParseError, SecChUaWow64, SecChUaWow64ParseError, SecChViewportHeight,
+  SecChViewportHeightParseError, ViewportWidth, ViewportWidthParseError, Width, WidthParseError,
 };
 pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
 pub use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};
