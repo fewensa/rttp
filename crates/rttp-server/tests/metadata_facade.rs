@@ -1439,7 +1439,7 @@ fn response_facade_builds_and_parses_preference_applied_metadata() {
   let response = HttpResponse::ok("")
     .header("Preference-Applied", "return=minimal")
     .header("preference-applied", "wait=10")
-    .with_preference_applied("return=representation, vendor=enabled; trace=\"a b\"")
+    .with_preference_applied("return=representation, vendor=enabled")
     .expect("Preference-Applied should be accepted");
   let metadata: HttpPreferenceApplied = response
     .preference_applied()
@@ -1447,12 +1447,11 @@ fn response_facade_builds_and_parses_preference_applied_metadata() {
     .expect("Preference-Applied should be present");
 
   assert_eq!(
-    "return=representation, vendor=enabled; trace=\"a b\"",
+    "return=representation, vendor=enabled",
     metadata.header_value()
   );
   let rendered = String::from_utf8(response.to_bytes()).expect("response should serialize");
-  assert!(rendered
-    .contains("\r\nPreference-Applied: return=representation, vendor=enabled; trace=\"a b\"\r\n"));
+  assert!(rendered.contains("\r\nPreference-Applied: return=representation, vendor=enabled\r\n"));
   assert!(!rendered.contains("return=minimal"));
   assert!(!rendered.contains("wait=10"));
 

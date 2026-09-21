@@ -154,9 +154,10 @@ fn rejects_case_insensitive_duplicate_names_and_parameters() {
     "duplicate preference names across fields should be rejected"
   );
 
-  let applied = PreferenceApplied::parse("return=minimal; Source=cache; source=origin")
-    .expect_err("duplicate Preference-Applied parameters should be rejected");
-  assert!(applied.to_string().contains("duplicate"));
+  assert!(
+    PreferenceApplied::parse("return=minimal; source=cache").is_err(),
+    "Preference-Applied parameters should be rejected"
+  );
   assert!(
     PreferenceApplied::parse_values(["return=minimal", "RETURN=representation"]).is_err(),
     "duplicate Preference-Applied names across fields should be rejected"
@@ -267,24 +268,30 @@ fn enforces_field_value_preference_and_parameter_bounds() {
 
 #[test]
 fn preference_applied_validates_response_restrictions_and_bounds() {
-  let applied =
-    PreferenceApplied::parse_values(["return=minimal", "respond-async; source=server", "wait=10"])
-      .expect("valid Preference-Applied values should parse");
+  let applied = PreferenceApplied::parse_values(["return=minimal", "respond-async", "wait=10"])
+    .expect("valid Preference-Applied values should parse");
   assert_eq!(
     preference_names_applied(&applied),
     ["return", "respond-async", "wait"]
   );
   assert_eq!(
     applied.header_value(),
-    "return=minimal, respond-async; source=server, wait=10"
+    "return=minimal, respond-async, wait=10"
   );
+  assert!(applied
+    .preferences()
+    .iter()
+    .all(|preference| preference.parameters().is_empty()));
 
   for value in [
     "return",
     "return=other",
     "respond-async=value",
+    "respond-async; source=server",
     "wait",
+    "wait=10; source=server",
     "handling=relaxed",
+    "vendor=enabled; trace=a",
   ] {
     assert!(
       PreferenceApplied::parse(value).is_err(),
@@ -330,19 +337,5 @@ fn preference_applied_validates_response_restrictions_and_bounds() {
   assert!(
     PreferenceApplied::parse(&format!("{exact_preferences}, over")).is_err(),
     "more than 32 Preference-Applied members should be rejected"
-  );
-
-  let exact_parameters = parameters_at_limit();
-  assert_eq!(
-    PreferenceApplied::parse(&exact_parameters)
-      .expect("Preference-Applied parameter bound should parse")
-      .preferences()[0]
-      .parameters()
-      .len(),
-    MAX_PREFERENCE_PARAMETERS
-  );
-  assert!(
-    PreferenceApplied::parse(&format!("{exact_parameters}; over=value")).is_err(),
-    "Preference-Applied parameter bound should be enforced"
   );
 }

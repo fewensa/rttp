@@ -1061,7 +1061,7 @@ fn client_response_omits_content_length_metadata_for_chunked_framing() {
 fn response_facade_parses_preference_applied_metadata() {
   let response = rttp_client::response::Response::new(
     rttp_client::types::RoUrl::with("http://example.test/"),
-    b"HTTP/1.1 200 OK\r\nPreference-Applied: return=minimal; source=cache\r\n\r\n".to_vec(),
+    b"HTTP/1.1 200 OK\r\nPreference-Applied: return=minimal\r\n\r\n".to_vec(),
   )
   .expect("response should parse");
 
@@ -1072,7 +1072,7 @@ fn response_facade_parses_preference_applied_metadata() {
 
   assert_eq!(applied.preferences()[0].name(), "return");
   assert_eq!(applied.preferences()[0].value(), Some("minimal"));
-  assert_eq!(applied.preferences()[0].parameters()[0].name(), "source");
+  assert!(applied.preferences()[0].parameters().is_empty());
 }
 
 #[test]
