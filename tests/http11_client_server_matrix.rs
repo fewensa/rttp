@@ -930,6 +930,111 @@ fn facade_server_rejects_oversized_prefers_contrast_request_head() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_canonical_sec_ch_dpr_metadata() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Sec-CH-DPR server");
+  let addr = server.local_addr().expect("Sec-CH-DPR server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request.header("Sec-CH-DPR").map(str::to_string),
+          request
+            .sec_ch_dpr()
+            .map(|sec_ch_dpr| sec_ch_dpr.map(|sec_ch_dpr| sec_ch_dpr.header_value()))
+            .map_err(|error| error.to_string()),
+          request
+            .sec_ch_dpr()
+            .ok()
+            .flatten()
+            .map(|sec_ch_dpr| sec_ch_dpr.ratio()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Sec-CH-DPR metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Sec-CH-DPR metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .sec_ch_dpr("\t1.5 ")
+    .expect("Sec-CH-DPR should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (
+      Some("1.5".to_string()),
+      Ok(Some("1.5".to_string())),
+      Some(1.5)
+    ),
+    observed_rx
+      .recv()
+      .expect("server should observe Sec-CH-DPR metadata")
+  );
+  handle.join().expect("Sec-CH-DPR server thread");
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_client_and_server_exchange_canonical_sec_ch_dpr_metadata() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind async Sec-CH-DPR server");
+  let addr = server.local_addr().expect("async Sec-CH-DPR server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request.header("Sec-CH-DPR").map(str::to_string),
+          request
+            .sec_ch_dpr()
+            .map(|sec_ch_dpr| sec_ch_dpr.map(|sec_ch_dpr| sec_ch_dpr.header_value()))
+            .map_err(|error| error.to_string()),
+          request
+            .sec_ch_dpr()
+            .ok()
+            .flatten()
+            .map(|sec_ch_dpr| sec_ch_dpr.ratio()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed async Sec-CH-DPR metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve async Sec-CH-DPR metadata request");
+  });
+
+  let response = block_on(
+    client()
+      .get()
+      .url(format!("http://{addr}/asset"))
+      .sec_ch_dpr("\t1.5 ")
+      .expect("Sec-CH-DPR should be accepted")
+      .rasync(),
+  )
+  .expect("async request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (
+      Some("1.5".to_string()),
+      Ok(Some("1.5".to_string())),
+      Some(1.5)
+    ),
+    observed_rx
+      .recv()
+      .expect("server should observe async Sec-CH-DPR metadata")
+  );
+  handle.join().expect("async Sec-CH-DPR server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_canonical_downlink_metadata() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Downlink server");
   let addr = server.local_addr().expect("Downlink server addr");

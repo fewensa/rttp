@@ -1,13 +1,13 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
-  PrefersReducedData, PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChUa, SecChUaArch,
-  SecChUaBitness, SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile, SecChUaModel,
-  SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, SecChViewportHeight, ViewportWidth, Width,
-  MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
-  MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
-  MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
+  PrefersReducedData, PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChDpr, SecChUa,
+  SecChUaArch, SecChUaBitness, SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile,
+  SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, SecChViewportHeight,
+  ViewportWidth, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
+  MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
+  MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
   MAX_PREFERS_REDUCED_DATA_VALUE_BYTES, MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES,
-  MAX_PREFERS_REDUCED_TRANSPARENCY_VALUE_BYTES, MAX_RTT_VALUE_BYTES,
+  MAX_PREFERS_REDUCED_TRANSPARENCY_VALUE_BYTES, MAX_RTT_VALUE_BYTES, MAX_SEC_CH_DPR_VALUE_BYTES,
   MAX_SEC_CH_UA_ARCH_VALUE_BYTES, MAX_SEC_CH_UA_BITNESS_VALUE_BYTES, MAX_SEC_CH_UA_ENTRIES,
   MAX_SEC_CH_UA_FORM_FACTORS_ITEMS, MAX_SEC_CH_UA_FORM_FACTORS_TOTAL_BYTES,
   MAX_SEC_CH_UA_FORM_FACTORS_VALUE_BYTES, MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES,
@@ -132,6 +132,60 @@ fn dpr_checks_duplicate_values_against_the_bound() {
 #[test]
 fn dpr_rejects_non_finite_oversized_digits() {
   assert!(Dpr::parse("9".repeat(400)).is_err());
+}
+
+#[test]
+fn sec_ch_dpr_parses_positive_finite_decimal_and_round_trips() {
+  for (value, ratio) in [("1", 1.0), ("2.0", 2.0), ("1.5", 1.5)] {
+    let sec_ch_dpr = SecChDpr::parse(value).expect("valid Sec-CH-DPR");
+    assert_eq!(ratio, sec_ch_dpr.ratio());
+    assert_eq!(value, sec_ch_dpr.header_value());
+    assert_eq!(
+      sec_ch_dpr,
+      SecChDpr::parse(sec_ch_dpr.header_value()).expect("Sec-CH-DPR roundtrip")
+    );
+  }
+}
+
+#[test]
+fn sec_ch_dpr_trims_outer_optional_whitespace() {
+  let sec_ch_dpr = SecChDpr::parse("\t 1.5 \t").expect("OWS-padded Sec-CH-DPR");
+  assert_eq!(1.5, sec_ch_dpr.ratio());
+  assert_eq!("1.5", sec_ch_dpr.header_value());
+}
+
+#[test]
+fn sec_ch_dpr_rejects_malformed_duplicate_empty_non_finite_and_non_positive_values() {
+  assert!(SecChDpr::parse_values(["1", "2"]).is_err());
+  assert!(SecChDpr::parse_values([]).is_err());
+
+  for value in [
+    "", " ", "0", "0.0", "00", "2.", ".5", "+1", "-1", "1e1", "1E1", "1.5.0", "1, 2", "1 5", "inf",
+    "nan",
+  ] {
+    assert!(
+      SecChDpr::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn sec_ch_dpr_rejects_oversized_and_control_byte_values() {
+  assert!(SecChDpr::parse("1".repeat(MAX_SEC_CH_DPR_VALUE_BYTES + 1)).is_err());
+  assert!(SecChDpr::parse("1\r\nInjected: yes").is_err());
+  assert!(SecChDpr::parse("1{7f}").is_err());
+}
+
+#[test]
+fn sec_ch_dpr_checks_duplicate_values_against_the_bound() {
+  let oversized = "1".repeat(MAX_SEC_CH_DPR_VALUE_BYTES + 1);
+  assert!(SecChDpr::parse_values(["1.5", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn sec_ch_dpr_rejects_non_finite_oversized_digits() {
+  assert!(SecChDpr::parse("9".repeat(400)).is_err());
 }
 
 #[test]
@@ -1105,6 +1159,7 @@ fn ect_rejects_invalid_duplicate_oversized_and_list_values() {
 fn bounded_numeric_and_preference_client_hints_reject_non_ascii_with_field_errors() {
   for (field, error) in [
     ("DPR", Dpr::parse("1é").unwrap_err().to_string()),
+    ("Sec-CH-DPR", SecChDpr::parse("1é").unwrap_err().to_string()),
     ("Downlink", Downlink::parse("1é").unwrap_err().to_string()),
     (
       "Device-Memory",

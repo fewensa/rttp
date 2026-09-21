@@ -24,9 +24,9 @@ use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::client_hints::{
   DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast, PrefersReducedData,
-  PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChUa, SecChUaArch, SecChUaBitness,
-  SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile, SecChUaModel, SecChUaPlatform,
-  SecChUaPlatformVersion, SecChUaWow64, SecChViewportHeight, ViewportWidth, Width,
+  PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChDpr, SecChUa, SecChUaArch,
+  SecChUaBitness, SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile, SecChUaModel,
+  SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, SecChViewportHeight, ViewportWidth, Width,
 };
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -540,6 +540,19 @@ impl HttpClient {
     let dpr = Dpr::parse(value.as_ref())
       .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
     Ok(self.header(Header::new("DPR", dpr.header_value())))
+  }
+
+  /// Set bounded `Sec-CH-DPR` request Client Hint metadata.
+  ///
+  /// The value must be one finite positive decimal ratio with optional
+  /// surrounding HTTP optional whitespace. This replaces any existing
+  /// case-insensitive `Sec-CH-DPR` field and only declares request metadata;
+  /// RTTP does not negotiate content, emit `Accept-CH`, infer viewport size,
+  /// retry, adapt representations, or generate this header automatically.
+  pub fn sec_ch_dpr<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_ch_dpr = SecChDpr::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Sec-CH-DPR", sec_ch_dpr.header_value())))
   }
 
   /// Set bounded `Downlink` request Client Hint metadata.

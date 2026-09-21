@@ -126,6 +126,17 @@ fn compatibility_facade_roundtrips_accept_post_metadata_over_http11() {
 #[test]
 #[cfg(any(feature = "all", feature = "client"))]
 fn compatibility_facade_reexports_client_hints_response_metadata() {
+  let dpr: rttp::Dpr = rttp::Dpr::parse("1.5").expect("DPR should parse");
+  assert_eq!(1.5, dpr.ratio());
+  assert_eq!("1.5", dpr.header_value());
+  let _: rttp::DprParseError = rttp::Dpr::parse("0").expect_err("zero DPR should fail");
+
+  let sec_ch_dpr: rttp::SecChDpr = rttp::SecChDpr::parse("1.5").expect("Sec-CH-DPR should parse");
+  assert_eq!(1.5, sec_ch_dpr.ratio());
+  assert_eq!("1.5", sec_ch_dpr.header_value());
+  let _: rttp::SecChDprParseError =
+    rttp::SecChDpr::parse("0").expect_err("zero Sec-CH-DPR should fail");
+
   let downlink: rttp::Downlink = rttp::Downlink::parse("10.25").expect("Downlink should parse");
   assert_eq!(10.25, downlink.mbps());
   assert_eq!("10.25", downlink.header_value());

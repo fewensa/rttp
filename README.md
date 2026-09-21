@@ -1915,6 +1915,7 @@ gain additional HTTP/2 header-block handling.
 | Accept-Language | Client `accept_language` emits bounded `Accept-Language` request metadata through the protocol `AcceptLanguage` type; server `Request::accept_language()` and `HttpRequest::accept_language()` parse typed received values as `HttpAcceptLanguages` while preserving raw headers on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, CORS policy, or Private Network Access policy |
 | DPR request Client Hint | `HttpClient::dpr` emits bounded singleton `DPR` request metadata through `Dpr`; server `Request::dpr()` and `HttpRequest::dpr()` parse received fields as `HttpDpr` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
+| Sec-CH-DPR request Client Hint | `HttpClient::sec_ch_dpr` emits bounded singleton `Sec-CH-DPR` request metadata through `SecChDpr`; server `Request::sec_ch_dpr()` and `HttpRequest::sec_ch_dpr()` parse received fields as `HttpSecChDpr` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, viewport inference, retry, adaptation, or transport changes |
 | Downlink request Client Hint | `HttpClient::downlink` emits bounded singleton `Downlink` request metadata through `Downlink`; server `Request::downlink()` and `HttpRequest::downlink()` parse non-negative finite decimal Mbps values while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
 | Device-Memory request Client Hint | `HttpClient::device_memory` emits bounded singleton `Device-Memory` request metadata through `DeviceMemory`; server `Request::device_memory()` and `HttpRequest::device_memory()` parse non-negative finite decimal GiB values while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, content adaptation, retry, or transport changes |
 | Sec-CH-Prefers-Color-Scheme request Client Hint | `HttpClient::prefers_color_scheme` emits bounded singleton `Sec-CH-Prefers-Color-Scheme` metadata through `PrefersColorScheme`; server `Request::prefers_color_scheme()` and `HttpRequest::prefers_color_scheme()` parse case-insensitive `light`/`dark` tokens and preserve raw values on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
@@ -1956,6 +1957,7 @@ gain additional HTTP/2 header-block handling.
 | Service-Worker-Allowed | `Response::service_worker_allowed` and `ServiceWorkerAllowed::parse` parse bounded singleton response `Service-Worker-Allowed` path metadata while preserving raw headers | No service-worker registration, scope evaluation, script-URL resolution, or application routing policy |
 | Content-DPR | `Response::content_dpr` and `ContentDpr::parse` parse bounded singleton response `Content-DPR` decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | DPR | `Dpr::parse`, `HttpClient::dpr`, `Request::dpr`, and `HttpRequest::dpr` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
+| Sec-CH-DPR | `SecChDpr::parse`, `HttpClient::sec_ch_dpr`, `Request::sec_ch_dpr`, and `HttpRequest::sec_ch_dpr` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, viewport inference, retry, adaptation, or transport changes |
 | Downlink | `Downlink::parse`, `HttpClient::downlink`, `Request::downlink`, and `HttpRequest::downlink` validate, emit, or parse bounded singleton non-negative finite decimal Mbps request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or transport changes |
 | Device-Memory | `DeviceMemory::parse`, `HttpClient::device_memory`, `Request::device_memory`, and `HttpRequest::device_memory` validate, emit, or parse bounded singleton non-negative finite decimal GiB request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, content adaptation, retry, or transport changes |
 | Sec-CH-Prefers-Color-Scheme | `PrefersColorScheme::parse`, `HttpClient::prefers_color_scheme`, `Request::prefers_color_scheme`, and `HttpRequest::prefers_color_scheme` validate, emit, or parse bounded singleton `light`/`dark` request Client Hint metadata with case-insensitive parsing and lowercase formatting while preserving raw headers on errors | No preference inference, content adaptation, `Accept-CH` negotiation, retries, or browser policy |
@@ -2781,6 +2783,20 @@ and oversized values return parser errors while raw headers remain available.
 These helpers are metadata-only. RTTP does not negotiate content, emit
 `Accept-CH`, generate Client Hints automatically, retry, replay, redirect, or
 change transport from `DPR`.
+
+### Bounded Sec-CH-DPR request Client Hint metadata
+
+`HttpClient::sec_ch_dpr(value)` validates and emits one singleton `Sec-CH-DPR`
+request Client Hint through the shared `SecChDpr` type. `Request::sec_ch_dpr()`
+and `HttpRequest::sec_ch_dpr()` parse received fields into `HttpSecChDpr`,
+exposing the finite positive ratio with `ratio()` and the trimmed decimal text
+with `header_value()`. Invalid, duplicate, non-finite, non-positive,
+control-byte, and oversized values return parser errors while raw headers
+remain available.
+
+These helpers are metadata-only. RTTP does not negotiate content, emit
+`Accept-CH`, generate Client Hints automatically, infer viewport size, retry,
+replay, redirect, adapt representations, or change transport from `Sec-CH-DPR`.
 
 ### Bounded Downlink request Client Hint metadata
 

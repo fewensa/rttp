@@ -751,6 +751,232 @@ fn h2c_oversized_sec_ch_viewport_height_reaches_server_accessor_with_raw_header(
 }
 
 #[test]
+fn h2c_sec_ch_dpr_helper_reaches_server_accessor() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c Sec-CH-DPR server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.target().to_string(),
+          request.header("Sec-CH-DPR").map(str::to_string),
+          request
+            .sec_ch_dpr()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value()))
+            .map_err(|error| error.to_string()),
+          request
+            .sec_ch_dpr()
+            .ok()
+            .flatten()
+            .map(|metadata| metadata.ratio()),
+        ))
+        .expect("record Sec-CH-DPR");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve h2c Sec-CH-DPR request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .sec_ch_dpr("\t1.5\t")
+    .expect("Sec-CH-DPR should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (
+      "/asset".to_string(),
+      Some("1.5".to_string()),
+      Ok(Some("1.5".to_string())),
+      Some(1.5)
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded Sec-CH-DPR")
+  );
+  handle.join().expect("h2c Sec-CH-DPR server thread");
+}
+
+#[test]
+fn h2c_malformed_sec_ch_dpr_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c malformed Sec-CH-DPR server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("Sec-CH-DPR").map(str::to_string),
+          request.sec_ch_dpr().is_err(),
+        ))
+        .expect("record malformed Sec-CH-DPR");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve malformed h2c Sec-CH-DPR request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Sec-CH-DPR", "1e1"))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some("1e1".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded malformed Sec-CH-DPR")
+  );
+  handle
+    .join()
+    .expect("malformed h2c Sec-CH-DPR server thread");
+}
+
+#[test]
+fn h2c_control_sec_ch_dpr_reaches_server_accessor_with_raw_header() {
+  for value in ["1{0001}", "1{7f}"] {
+    let server = HttpServer::bind("127.0.0.1:0")
+      .expect("bind h2c control Sec-CH-DPR server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("h2c server address");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((
+            request.header("Sec-CH-DPR").map(str::to_string),
+            request.sec_ch_dpr().is_err(),
+          ))
+          .expect("record control Sec-CH-DPR");
+          HttpResponse::ok("ok")
+        })
+        .expect("serve control h2c Sec-CH-DPR request");
+    });
+
+    let authority = addr.to_string();
+    let _stream = send_h2c_prior_knowledge_headers(
+      addr,
+      &[
+        (":method", "GET"),
+        (":scheme", "http"),
+        (":path", "/asset"),
+        (":authority", authority.as_str()),
+        ("Sec-CH-DPR", value),
+      ],
+    );
+
+    assert_eq!(
+      (Some(value.to_string()), true),
+      rx.recv_timeout(Duration::from_secs(2))
+        .expect("recorded control Sec-CH-DPR")
+    );
+    handle.join().expect("control h2c Sec-CH-DPR server thread");
+  }
+}
+
+#[test]
+fn h2c_duplicate_sec_ch_dpr_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c duplicate Sec-CH-DPR server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("Sec-CH-DPR").map(str::to_string),
+          request.sec_ch_dpr().is_err(),
+        ))
+        .expect("record duplicate Sec-CH-DPR");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve duplicate h2c Sec-CH-DPR request");
+  });
+
+  let authority = addr.to_string();
+  let _stream = send_h2c_prior_knowledge_headers(
+    addr,
+    &[
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", "/asset"),
+      (":authority", authority.as_str()),
+      ("Sec-CH-DPR", "1"),
+      ("sec-ch-dpr", "2"),
+    ],
+  );
+
+  assert_eq!(
+    (Some("1".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded duplicate Sec-CH-DPR")
+  );
+  handle
+    .join()
+    .expect("duplicate h2c Sec-CH-DPR server thread");
+}
+
+#[test]
+fn h2c_oversized_sec_ch_dpr_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c oversized Sec-CH-DPR server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)))
+    .with_http2_policy(Http2ServerPolicy::new().with_max_header_list_size(256 * 1024));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let raw = request.header("Sec-CH-DPR").map(str::to_string);
+        tx.send((
+          raw.as_ref().map(String::len),
+          request.sec_ch_dpr().is_err(),
+          raw.is_some(),
+        ))
+        .expect("record oversized Sec-CH-DPR");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve oversized h2c Sec-CH-DPR request");
+  });
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Sec-CH-DPR", oversized.as_str()))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some(64 * 1024 + 1), true, true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded oversized Sec-CH-DPR")
+  );
+  handle
+    .join()
+    .expect("oversized h2c Sec-CH-DPR server thread");
+}
+
+#[test]
 fn h2c_downlink_helper_reaches_server_accessor() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c Downlink server")

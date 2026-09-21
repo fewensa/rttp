@@ -1404,6 +1404,18 @@ This helper declares metadata only; it does not negotiate content, emit
 `Accept-CH`, or generate Client Hints automatically. Raw values remain
 available through `header(("DPR", "..."))`.
 
+## Bounded Sec-CH-DPR request Client Hint metadata
+
+`HttpClient::sec_ch_dpr(value)` validates and emits one bounded `Sec-CH-DPR`
+request field through the shared `SecChDpr` type, replacing any existing
+same-name field. `SecChDpr::ratio()` exposes the finite positive ratio and
+`SecChDpr::header_value()` returns the trimmed decimal text. Invalid,
+non-positive, non-finite, control-byte, duplicate, and oversized values are
+rejected before connecting. This helper declares metadata only; it does not
+negotiate content, emit `Accept-CH`, infer viewport size, retry, adapt
+representations, or generate Client Hints automatically. Raw values remain
+available through `header(("Sec-CH-DPR", "..."))`.
+
 ## Bounded Downlink request Client Hint metadata
 
 `HttpClient::downlink(value)` validates and emits one bounded `Downlink`
@@ -2217,6 +2229,7 @@ header-block model.
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Service-Worker-Allowed | `Response::service_worker_allowed` and `ServiceWorkerAllowed::parse` parse bounded singleton response `Service-Worker-Allowed` path metadata while preserving raw headers | No service-worker registration, scope evaluation, script-URL resolution, or application routing policy |
 | Content-DPR | `Response::content_dpr` and `ContentDpr::parse` parse bounded singleton response `Content-DPR` decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
+| Sec-CH-DPR | `HttpClient::sec_ch_dpr` emits bounded singleton `Sec-CH-DPR` request metadata through `SecChDpr`, replacing existing case-insensitive fields; invalid, empty, malformed, duplicate, control, non-ASCII, non-finite, non-positive, and oversized values are rejected before connecting | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, viewport inference, retry, adaptation, or transport changes |
 | Deprecation | `Response::deprecation` and `Deprecation::parse` parse bounded singleton Structured Fields boolean or date `Deprecation` metadata while preserving raw headers | No Sunset comparison, Link follow, already-deprecated clocks, retries, endpoint selection, or browser/cache policy |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |

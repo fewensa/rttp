@@ -6,6 +6,7 @@ use sfv::{BareItem, List, ListEntry, Parser, Version};
 pub const MAX_CLIENT_HINT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_CLIENT_HINT_NAMES: usize = 256;
 pub const MAX_DPR_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_DPR_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DOWNLINK_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DEVICE_MEMORY_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES: usize = 64 * 1024;
@@ -41,6 +42,12 @@ const MAX_SEC_CH_VIEWPORT_HEIGHT_INTEGER_DIGITS: usize = 15;
 /// Parsed, bounded `DPR` request Client Hint metadata.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Dpr {
+  value: String,
+}
+
+/// Parsed, bounded `Sec-CH-DPR` request Client Hint metadata.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SecChDpr {
   value: String,
 }
 
@@ -227,6 +234,7 @@ pub struct ClientHintsParseError {
 pub type AcceptChParseError = ClientHintsParseError;
 pub type CriticalChParseError = ClientHintsParseError;
 pub type DprParseError = ClientHintsParseError;
+pub type SecChDprParseError = ClientHintsParseError;
 pub type DownlinkParseError = ClientHintsParseError;
 pub type DeviceMemoryParseError = ClientHintsParseError;
 pub type PrefersColorSchemeParseError = ClientHintsParseError;
@@ -285,6 +293,32 @@ impl Dpr {
 
   pub fn ratio(&self) -> f64 {
     parse_dpr_ratio(&self.value).expect("DPR values are validated at construction")
+  }
+
+  pub fn header_value(&self) -> String {
+    self.value.clone()
+  }
+}
+
+impl SecChDpr {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, SecChDprParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, SecChDprParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let value = parse_sec_ch_dpr_singleton(values)?;
+    let value = value.trim_matches([' ', '\t']);
+    parse_sec_ch_dpr_ratio(value)?;
+    Ok(Self {
+      value: value.to_string(),
+    })
+  }
+
+  pub fn ratio(&self) -> f64 {
+    parse_sec_ch_dpr_ratio(&self.value).expect("Sec-CH-DPR values are validated at construction")
   }
 
   pub fn header_value(&self) -> String {
@@ -1177,6 +1211,54 @@ fn parse_dpr_ratio(value: &str) -> Result<f64, DprParseError> {
   let ratio: f64 = value.parse().map_err(|_| invalid_dpr_value())?;
   if !ratio.is_finite() || ratio <= 0.0 {
     return Err(invalid_dpr_value());
+  }
+  Ok(ratio)
+}
+
+fn parse_sec_ch_dpr_singleton<'a, I>(values: I) -> Result<&'a str, SecChDprParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values.next().ok_or_else(invalid_sec_ch_dpr_value)?;
+  validate_bounded_sec_ch_dpr_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_sec_ch_dpr_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(
+      "duplicate Sec-CH-DPR header fields",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_bounded_sec_ch_dpr_value(value: &str) -> Result<(), SecChDprParseError> {
+  if value.len() > MAX_SEC_CH_DPR_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-DPR header value is too large",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-DPR control byte",
+    ));
+  }
+  Ok(())
+}
+
+fn parse_sec_ch_dpr_ratio(value: &str) -> Result<f64, SecChDprParseError> {
+  if !matches_decimal_grammar(value) {
+    return Err(invalid_sec_ch_dpr_value());
+  }
+  let ratio: f64 = value.parse().map_err(|_| invalid_sec_ch_dpr_value())?;
+  if !ratio.is_finite() || ratio <= 0.0 {
+    return Err(invalid_sec_ch_dpr_value());
   }
   Ok(ratio)
 }
@@ -2381,6 +2463,10 @@ fn matches_decimal_grammar(value: &str) -> bool {
 
 fn invalid_dpr_value() -> DprParseError {
   ClientHintsParseError::new("invalid DPR header value")
+}
+
+fn invalid_sec_ch_dpr_value() -> SecChDprParseError {
+  ClientHintsParseError::new("invalid Sec-CH-DPR header value")
 }
 
 fn invalid_downlink_value() -> DownlinkParseError {

@@ -72,10 +72,11 @@ pub use rttp_protocol::client_hints::{
   PrefersReducedMotionParseError as HttpPrefersReducedMotionParseError,
   PrefersReducedTransparency as HttpPrefersReducedTransparency,
   PrefersReducedTransparencyParseError as HttpPrefersReducedTransparencyParseError, Rtt as HttpRtt,
-  RttParseError as HttpRttParseError, SecChUa as HttpSecChUa, SecChUaArch as HttpSecChUaArch,
-  SecChUaArchParseError as HttpSecChUaArchParseError, SecChUaBitness as HttpSecChUaBitness,
-  SecChUaBitnessParseError as HttpSecChUaBitnessParseError, SecChUaEntry as HttpSecChUaEntry,
-  SecChUaFormFactors as HttpSecChUaFormFactors,
+  RttParseError as HttpRttParseError, SecChDpr as HttpSecChDpr,
+  SecChDprParseError as HttpSecChDprParseError, SecChUa as HttpSecChUa,
+  SecChUaArch as HttpSecChUaArch, SecChUaArchParseError as HttpSecChUaArchParseError,
+  SecChUaBitness as HttpSecChUaBitness, SecChUaBitnessParseError as HttpSecChUaBitnessParseError,
+  SecChUaEntry as HttpSecChUaEntry, SecChUaFormFactors as HttpSecChUaFormFactors,
   SecChUaFormFactorsParseError as HttpSecChUaFormFactorsParseError,
   SecChUaFullVersionList as HttpSecChUaFullVersionList,
   SecChUaFullVersionListEntry as HttpSecChUaFullVersionListEntry,
@@ -543,6 +544,16 @@ impl Request {
       return Ok(None);
     }
     HttpDpr::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-DPR` request Client Hint metadata without
+  /// negotiating content or emitting Client Hints.
+  pub fn sec_ch_dpr(&self) -> Result<Option<HttpSecChDpr>, HttpSecChDprParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-DPR").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChDpr::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Downlink` request Client Hint metadata without
@@ -3145,6 +3156,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpDpr::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-DPR` request Client Hint metadata without
+  /// negotiating content or emitting Client Hints.
+  pub fn sec_ch_dpr(&self) -> Result<Option<HttpSecChDpr>, HttpSecChDprParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-CH-DPR"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChDpr::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Downlink` request Client Hint metadata without

@@ -5936,6 +5936,58 @@ fn dpr_helper_rejects_malformed_values_before_connecting() {
 }
 
 #[test]
+fn sec_ch_dpr_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-dpr", "2"))
+      .sec_ch_dpr("\t1.5\t")
+      .expect("Sec-CH-DPR should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("1.5"), header_value(&request, "Sec-CH-DPR"));
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line.to_ascii_lowercase().starts_with("sec-ch-dpr:"))
+      .count(),
+    "typed Sec-CH-DPR should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn sec_ch_dpr_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "1".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    "0",
+    "1e1",
+    "1, 2",
+    "inf",
+    "1\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_ch_dpr(value)
+        .expect_err("invalid Sec-CH-DPR input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-DPR input must not open a socket"
+    );
+  }
+}
+
+#[test]
 fn downlink_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()
@@ -7937,6 +7989,21 @@ fn raw_dpr_header_remains_available_as_escape_hatch() {
   let request = request_text(&request);
 
   assert_eq!(Some("legacy-token"), header_value(&request, "DPR"));
+}
+
+#[test]
+fn raw_sec_ch_dpr_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-DPR", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("legacy-token"), header_value(&request, "Sec-CH-DPR"));
 }
 
 #[test]

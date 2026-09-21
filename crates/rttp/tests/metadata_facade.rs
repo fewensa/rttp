@@ -32,9 +32,10 @@ use rttp::server::{
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpResponse, HttpRtt,
-  HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecChUa, HttpSecChUaArch,
-  HttpSecChUaArchParseError, HttpSecChUaBitness, HttpSecChUaBitnessParseError,
-  HttpSecChUaFormFactors, HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersionList,
+  HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecChDpr,
+  HttpSecChDprParseError, HttpSecChUa, HttpSecChUaArch, HttpSecChUaArchParseError,
+  HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaFormFactors,
+  HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersionList,
   HttpSecChUaFullVersionListParseError, HttpSecChUaMobile, HttpSecChUaMobileParseError,
   HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaParseError, HttpSecChUaPlatform,
   HttpSecChUaPlatformParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
@@ -820,6 +821,39 @@ fn compatibility_facade_exports_prefers_contrast_request_metadata() {
   .expect("duplicate Prefers-Contrast fields should remain parseable");
   assert!(duplicate.prefers_contrast().is_err());
   assert_eq!(Some("more"), duplicate.header("Sec-CH-Prefers-Contrast"));
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_dpr_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-DPR: \t1.5 \t\r\n\r\n",
+  )
+  .expect("Sec-CH-DPR request should parse");
+  let sec_ch_dpr: HttpSecChDpr = request
+    .sec_ch_dpr()
+    .expect("Sec-CH-DPR should parse")
+    .expect("Sec-CH-DPR should be present");
+  assert_eq!(1.5, sec_ch_dpr.ratio());
+  assert_eq!("1.5", sec_ch_dpr.header_value());
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-DPR should parse");
+  assert_eq!(None, absent.sec_ch_dpr().expect("absence should be valid"));
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-DPR: 1e1\r\n\r\n")
+      .expect("malformed Sec-CH-DPR should remain available");
+  let _: HttpSecChDprParseError = malformed
+    .sec_ch_dpr()
+    .expect_err("malformed Sec-CH-DPR should fail");
+  assert_eq!(Some("1e1"), malformed.header("Sec-CH-DPR"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-DPR: 1\r\nsec-ch-dpr: 2\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-DPR fields should remain parseable");
+  assert!(duplicate.sec_ch_dpr().is_err());
+  assert_eq!(Some("1"), duplicate.header("Sec-CH-DPR"));
 }
 
 #[test]

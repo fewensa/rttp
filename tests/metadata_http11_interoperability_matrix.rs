@@ -16,6 +16,7 @@ use rttp_server::server::{
 const FROM_CANONICAL: &str = "Ops Team <ops@example.test>";
 const REFERER_CANONICAL: &str = "https://shop.example/checkout?step=pay";
 const DPR_CANONICAL: &str = "1.5";
+const SEC_CH_DPR_CANONICAL: &str = "1.5";
 const DOWNLINK_CANONICAL: &str = "10.25";
 const ECT_CANONICAL: &str = "4g";
 const PREFERS_COLOR_SCHEME_CANONICAL: &str = "dark";
@@ -60,6 +61,9 @@ struct ObservedRequestMetadata {
   dpr: Result<Option<String>, String>,
   dpr_ratio: Option<f64>,
   raw_dpr: Option<String>,
+  sec_ch_dpr: Result<Option<String>, String>,
+  sec_ch_dpr_ratio: Option<f64>,
+  raw_sec_ch_dpr: Option<String>,
   downlink: Result<Option<String>, String>,
   downlink_mbps: Option<f64>,
   raw_downlink: Option<String>,
@@ -117,6 +121,16 @@ fn observe_request(request: &Request) -> ObservedRequestMetadata {
       .map_err(|error| error.to_string()),
     dpr_ratio: request.dpr().ok().flatten().map(|dpr| dpr.ratio()),
     raw_dpr: request.header("DPR").map(str::to_string),
+    sec_ch_dpr: request
+      .sec_ch_dpr()
+      .map(|sec_ch_dpr| sec_ch_dpr.map(|sec_ch_dpr| sec_ch_dpr.header_value()))
+      .map_err(|error| error.to_string()),
+    sec_ch_dpr_ratio: request
+      .sec_ch_dpr()
+      .ok()
+      .flatten()
+      .map(|sec_ch_dpr| sec_ch_dpr.ratio()),
+    raw_sec_ch_dpr: request.header("Sec-CH-DPR").map(str::to_string),
     downlink: request
       .downlink()
       .map(|downlink| downlink.map(|downlink| downlink.header_value()))
@@ -238,6 +252,8 @@ fn attach_valid_client_metadata(client: &mut HttpClient) -> &mut HttpClient {
     .expect("Referer should be accepted")
     .dpr("\t1.5\t")
     .expect("DPR should be accepted")
+    .sec_ch_dpr("\t1.5\t")
+    .expect("Sec-CH-DPR should be accepted")
     .downlink("\t10.25\t")
     .expect("Downlink should be accepted")
     .ect("\t4G\t")
@@ -269,6 +285,15 @@ fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
   assert_eq!(Ok(Some(DPR_CANONICAL.to_string())), observed.dpr);
   assert_eq!(Some(1.5), observed.dpr_ratio);
   assert_eq!(Some(DPR_CANONICAL.to_string()), observed.raw_dpr);
+  assert_eq!(
+    Ok(Some(SEC_CH_DPR_CANONICAL.to_string())),
+    observed.sec_ch_dpr
+  );
+  assert_eq!(Some(1.5), observed.sec_ch_dpr_ratio);
+  assert_eq!(
+    Some(SEC_CH_DPR_CANONICAL.to_string()),
+    observed.raw_sec_ch_dpr
+  );
   assert_eq!(Ok(Some(DOWNLINK_CANONICAL.to_string())), observed.downlink);
   assert_eq!(Some(10.25), observed.downlink_mbps);
   assert_eq!(Some(DOWNLINK_CANONICAL.to_string()), observed.raw_downlink);
@@ -687,6 +712,8 @@ fn http11_absent_metadata_returns_ok_none() {
   assert_eq!(None, observed.raw_referer);
   assert_eq!(Ok(None), observed.dpr);
   assert_eq!(None, observed.raw_dpr);
+  assert_eq!(Ok(None), observed.sec_ch_dpr);
+  assert_eq!(None, observed.raw_sec_ch_dpr);
   assert_eq!(Ok(None), observed.downlink);
   assert_eq!(None, observed.downlink_mbps);
   assert_eq!(None, observed.raw_downlink);
@@ -782,6 +809,14 @@ fn typed_request_helpers_reject_malformed_values_before_connect() {
   reject_before_connect("DPR with control byte", |client| client.dpr("1\0"));
   reject_before_connect("oversized DPR", |client| {
     client.dpr("1".repeat(64 * 1024 + 1))
+  });
+  reject_before_connect("malformed Sec-CH-DPR", |client| client.sec_ch_dpr("1e1"));
+  reject_before_connect("non-positive Sec-CH-DPR", |client| client.sec_ch_dpr("0"));
+  reject_before_connect("Sec-CH-DPR with control byte", |client| {
+    client.sec_ch_dpr("1\0")
+  });
+  reject_before_connect("oversized Sec-CH-DPR", |client| {
+    client.sec_ch_dpr("1".repeat(64 * 1024 + 1))
   });
   reject_before_connect("malformed Downlink", |client| client.downlink("1e1"));
   reject_before_connect("negative Downlink", |client| client.downlink("-1"));
@@ -956,6 +991,7 @@ Host: example.test\r\n\
 From: ops\r\n\
 Referer: https://example.test/path#frag\r\n\
 DPR: 1e1\r\n\
+Sec-CH-DPR: 1e1\r\n\
 Downlink: 1e1\r\n\
 ECT: 5g\r\n\
 Sec-CH-Prefers-Reduced-Transparency: auto\r\n\
@@ -985,6 +1021,8 @@ Connection: close\r\n\
   );
   assert!(observed.dpr.is_err());
   assert_eq!(Some("1e1".to_string()), observed.raw_dpr);
+  assert!(observed.sec_ch_dpr.is_err());
+  assert_eq!(Some("1e1".to_string()), observed.raw_sec_ch_dpr);
   assert!(observed.downlink.is_err());
   assert_eq!(Some("1e1".to_string()), observed.raw_downlink);
   assert!(observed.ect.is_err());
@@ -1029,6 +1067,8 @@ Referer: https://shop.example/a\r\n\
 referer: https://shop.example/b\r\n\
 DPR: 1\r\n\
 dpr: 2\r\n\
+Sec-CH-DPR: 1\r\n\
+sec-ch-dpr: 2\r\n\
 Downlink: 1\r\n\
 downlink: 2\r\n\
 ECT: 3g\r\n\
@@ -1060,6 +1100,8 @@ Connection: close\r\n\
   );
   assert!(observed.dpr.is_err());
   assert_eq!(Some("1".to_string()), observed.raw_dpr);
+  assert!(observed.sec_ch_dpr.is_err());
+  assert_eq!(Some("1".to_string()), observed.raw_sec_ch_dpr);
   assert!(observed.downlink.is_err());
   assert_eq!(Some("1".to_string()), observed.raw_downlink);
   assert!(observed.ect.is_err());
