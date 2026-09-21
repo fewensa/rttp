@@ -41,7 +41,7 @@ fn response_accept_patch_parse_failures_preserve_raw_headers() {
   for value in [
     "application/json,",
     "application/json; charset",
-    "application/json\0",
+    "application/json; charset=",
   ] {
     let response = response_with_values(&[value]);
     assert!(response.accept_patch().is_err(), "{value:?} should fail");

@@ -724,23 +724,22 @@ fn content_security_policy_metadata_preserves_layered_policy_fields() {
 
 #[test]
 fn content_security_policy_metadata_rejects_invalid_values_without_hiding_raw_headers() {
-  for value in [""] {
-    let response = Response::new(
-      RoUrl::with("https://example.test"),
-      format!("HTTP/1.1 200 OK\r\nContent-Security-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
-        .into_bytes(),
-    )
-    .expect("response should parse");
+  let value = "";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nContent-Security-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
 
-    assert!(
-      response.content_security_policy().is_err(),
-      "should reject {value:?}"
-    );
-    assert_eq!(
-      response.header_value("Content-Security-Policy"),
-      Some(&value.to_string())
-    );
-  }
+  assert!(
+    response.content_security_policy().is_err(),
+    "should reject {value:?}"
+  );
+  assert_eq!(
+    response.header_value("Content-Security-Policy"),
+    Some(&value.to_string())
+  );
 
   let oversized = "x".repeat(64 * 1024 + 1);
   let response = Response::new(
@@ -827,25 +826,24 @@ fn content_security_policy_report_only_metadata_preserves_layered_policy_fields(
 #[test]
 fn content_security_policy_report_only_metadata_rejects_invalid_values_without_hiding_raw_headers()
 {
-  for value in [""] {
-    let response = Response::new(
-      RoUrl::with("https://example.test"),
-      format!(
-        "HTTP/1.1 200 OK\r\nContent-Security-Policy-Report-Only: {value}\r\nContent-Length: 0\r\n\r\n"
-      )
-      .into_bytes(),
+  let value = "";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nContent-Security-Policy-Report-Only: {value}\r\nContent-Length: 0\r\n\r\n"
     )
-    .expect("response should parse");
+    .into_bytes(),
+  )
+  .expect("response should parse");
 
-    assert!(
-      response.content_security_policy_report_only().is_err(),
-      "should reject {value:?}"
-    );
-    assert_eq!(
-      response.header_value("Content-Security-Policy-Report-Only"),
-      Some(&value.to_string())
-    );
-  }
+  assert!(
+    response.content_security_policy_report_only().is_err(),
+    "should reject {value:?}"
+  );
+  assert_eq!(
+    response.header_value("Content-Security-Policy-Report-Only"),
+    Some(&value.to_string())
+  );
 
   let oversized = "x".repeat(64 * 1024 + 1);
   let response = Response::new(

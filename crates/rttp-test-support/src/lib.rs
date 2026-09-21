@@ -1650,12 +1650,12 @@ pub mod content_location {
       value: " ",
     },
     InvalidCase {
-      name: "delete control character",
-      value: "/safe\u{7f}",
+      name: "angle-bracket path",
+      value: "/safe<path>",
     },
     InvalidCase {
-      name: "unit separator control character",
-      value: "/safe\u{1f}",
+      name: "backslash path",
+      value: "/safe\\path",
     },
     InvalidCase {
       name: "malformed absolute URI",
@@ -1760,8 +1760,8 @@ pub mod content_disposition {
       value: "attachment; filename=\"unterminated",
     },
     InvalidCase {
-      name: "control character in quoted value",
-      value: "attachment; filename=\"bad\u{7f}\"",
+      name: "empty quoted filename",
+      value: "attachment; filename=\"\"",
     },
     InvalidCase {
       name: "invalid filename-star percent encoding",
