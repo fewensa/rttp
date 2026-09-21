@@ -1554,6 +1554,20 @@ negotiate the UA brands family, emit `Accept-CH`, generate Client Hints
 automatically, retry, or apply browser policy. Raw values remain available
 through `header(("Sec-CH-UA-Platform-Version", "..."))`.
 
+## Bounded Sec-CH-UA-Full-Version request Client Hint metadata
+
+`HttpClient::sec_ch_ua_full_version(value)` validates and emits one bounded
+`Sec-CH-UA-Full-Version` request field through the shared
+`SecChUaFullVersion` type, replacing any existing case-insensitive field. The
+value must be one Structured Fields string; optional surrounding SP or HTAB is
+trimmed and canonical quoted-string escaping is emitted. Non-string,
+comma-list, parameterized, duplicate, non-ASCII, forbidden-control,
+invalid-escape, and oversized values are rejected before connecting. This
+helper declares metadata only; it does not infer browser or platform versions,
+negotiate the UA brands family, emit `Accept-CH`, generate Client Hints
+automatically, retry, or apply browser policy. Raw values remain available
+through `header(("Sec-CH-UA-Full-Version", "..."))`.
+
 ## Bounded Sec-CH-UA request Client Hint metadata
 
 `HttpClient::sec_ch_ua(value)` validates and emits one canonical `Sec-CH-UA`

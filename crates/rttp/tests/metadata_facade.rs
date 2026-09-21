@@ -35,12 +35,12 @@ use rttp::server::{
   HttpRttParseError, HttpSameSite, HttpSaveData, HttpScheduleTag, HttpSecChDpr,
   HttpSecChDprParseError, HttpSecChUa, HttpSecChUaArch, HttpSecChUaArchParseError,
   HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaFormFactors,
-  HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersionList,
-  HttpSecChUaFullVersionListParseError, HttpSecChUaMobile, HttpSecChUaMobileParseError,
-  HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaParseError, HttpSecChUaPlatform,
-  HttpSecChUaPlatformParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
-  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecChViewportHeight,
-  HttpSecChViewportHeightParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersion, HttpSecChUaFullVersionList,
+  HttpSecChUaFullVersionListParseError, HttpSecChUaFullVersionParseError, HttpSecChUaMobile,
+  HttpSecChUaMobileParseError, HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaParseError,
+  HttpSecChUaPlatform, HttpSecChUaPlatformParseError, HttpSecChUaPlatformVersion,
+  HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError,
+  HttpSecChViewportHeight, HttpSecChViewportHeightParseError, HttpSecGpc, HttpSecGpcParseError,
   HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
   HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
@@ -623,6 +623,55 @@ fn compatibility_facade_exports_sec_ch_ua_platform_version_request_metadata() {
   assert_eq!(
     Some(r#""14.0.0""#),
     duplicate.header("Sec-CH-UA-Platform-Version")
+  );
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_ua_full_version_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Full-Version: \t\"120.0.6099.110\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Full-Version request should parse");
+  let full_version: HttpSecChUaFullVersion = request
+    .sec_ch_ua_full_version()
+    .expect("Sec-CH-UA-Full-Version should parse")
+    .expect("Sec-CH-UA-Full-Version should be present");
+  assert_eq!("120.0.6099.110", full_version.value());
+  assert_eq!(r#""120.0.6099.110""#, full_version.header_value());
+  assert_eq!(
+    Some(r#""120.0.6099.110""#),
+    request.header("Sec-CH-UA-Full-Version")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-Full-Version should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_ua_full_version()
+      .expect("absence should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Full-Version: 120.0.6099.110\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-UA-Full-Version should remain available");
+  let _: HttpSecChUaFullVersionParseError = malformed
+    .sec_ch_ua_full_version()
+    .expect_err("unquoted Sec-CH-UA-Full-Version should fail");
+  assert_eq!(
+    Some("120.0.6099.110"),
+    malformed.header("Sec-CH-UA-Full-Version")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Full-Version: \"120.0\"\r\nsec-ch-ua-full-version: \"121.0\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Full-Version fields should remain parseable");
+  assert!(duplicate.sec_ch_ua_full_version().is_err());
+  assert_eq!(
+    Some(r#""120.0""#),
+    duplicate.header("Sec-CH-UA-Full-Version")
   );
 }
 

@@ -17,6 +17,7 @@ pub const MAX_SEC_CH_UA_MODEL_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_ARCH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_BITNESS_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_CH_UA_FULL_VERSION_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_TOTAL_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_UA_ENTRIES: usize = 256;
@@ -111,6 +112,12 @@ pub struct SecChUaBitness {
 /// Parsed, bounded `Sec-CH-UA-Platform-Version` request Client Hint metadata.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SecChUaPlatformVersion {
+  value: String,
+}
+
+/// Parsed, bounded `Sec-CH-UA-Full-Version` request Client Hint metadata.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SecChUaFullVersion {
   value: String,
 }
 
@@ -245,6 +252,7 @@ pub type SecChUaModelParseError = ClientHintsParseError;
 pub type SecChUaArchParseError = ClientHintsParseError;
 pub type SecChUaBitnessParseError = ClientHintsParseError;
 pub type SecChUaPlatformVersionParseError = ClientHintsParseError;
+pub type SecChUaFullVersionParseError = ClientHintsParseError;
 pub type SecChUaParseError = ClientHintsParseError;
 pub type SecChUaFullVersionListParseError = ClientHintsParseError;
 pub type SecChUaFormFactorsParseError = ClientHintsParseError;
@@ -615,6 +623,39 @@ impl SecChUaPlatformVersion {
     let value = parse_sec_ch_ua_platform_version_singleton(values)?;
     let value = value.trim_matches([' ', '\t']);
     let value = parse_sec_ch_ua_platform_version_string(value)?;
+    Ok(Self { value })
+  }
+
+  pub fn value(&self) -> &str {
+    &self.value
+  }
+
+  pub fn header_value(&self) -> String {
+    let mut header_value = String::with_capacity(self.value.len() + 2);
+    header_value.push('"');
+    for character in self.value.chars() {
+      if matches!(character, '"' | '\\') {
+        header_value.push('\\');
+      }
+      header_value.push(character);
+    }
+    header_value.push('"');
+    header_value
+  }
+}
+
+impl SecChUaFullVersion {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, SecChUaFullVersionParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, SecChUaFullVersionParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let value = parse_sec_ch_ua_full_version_singleton(values)?;
+    let value = value.trim_matches([' ', '\t']);
+    let value = parse_sec_ch_ua_full_version_string(value)?;
     Ok(Self { value })
   }
 
@@ -1828,6 +1869,79 @@ fn parse_sec_ch_ua_platform_version_string(
   Ok(parsed)
 }
 
+fn parse_sec_ch_ua_full_version_singleton<'a, I>(
+  values: I,
+) -> Result<&'a str, SecChUaFullVersionParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values
+    .next()
+    .ok_or_else(invalid_sec_ch_ua_full_version_value)?;
+  validate_bounded_sec_ch_ua_full_version_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_sec_ch_ua_full_version_value(value)?;
+  }
+  if has_duplicate {
+    return Err(ClientHintsParseError::new(
+      "duplicate Sec-CH-UA-Full-Version header fields",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_bounded_sec_ch_ua_full_version_value(
+  value: &str,
+) -> Result<(), SecChUaFullVersionParseError> {
+  if value.len() > MAX_SEC_CH_UA_FULL_VERSION_VALUE_BYTES {
+    return Err(ClientHintsParseError::new(
+      "Sec-CH-UA-Full-Version header value is too large",
+    ));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(ClientHintsParseError::new(
+      "invalid Sec-CH-UA-Full-Version control byte",
+    ));
+  }
+  Ok(())
+}
+
+fn parse_sec_ch_ua_full_version_string(
+  value: &str,
+) -> Result<String, SecChUaFullVersionParseError> {
+  let characters: Vec<char> = value.chars().collect();
+  if characters.len() < 2 || characters[0] != '"' || characters[characters.len() - 1] != '"' {
+    return Err(invalid_sec_ch_ua_full_version_value());
+  }
+
+  let mut parsed = String::with_capacity(value.len() - 2);
+  let mut index = 1;
+  while index < characters.len() - 1 {
+    match characters[index] {
+      '\\' => {
+        index += 1;
+        if index >= characters.len() - 1 || !matches!(characters[index], '"' | '\\') {
+          return Err(invalid_sec_ch_ua_full_version_value());
+        }
+        parsed.push(characters[index]);
+      }
+      '"' => return Err(invalid_sec_ch_ua_full_version_value()),
+      character if !character.is_ascii() || character.is_ascii_control() => {
+        return Err(invalid_sec_ch_ua_full_version_value());
+      }
+      character => parsed.push(character),
+    }
+    index += 1;
+  }
+  Ok(parsed)
+}
+
 fn parse_sec_ch_ua_brand_list_values<'a, I>(
   values: I,
   header_name: &str,
@@ -2518,6 +2632,10 @@ fn invalid_sec_ch_ua_bitness_value() -> SecChUaBitnessParseError {
 
 fn invalid_sec_ch_ua_platform_version_value() -> SecChUaPlatformVersionParseError {
   ClientHintsParseError::new("invalid Sec-CH-UA-Platform-Version header value")
+}
+
+fn invalid_sec_ch_ua_full_version_value() -> SecChUaFullVersionParseError {
+  ClientHintsParseError::new("invalid Sec-CH-UA-Full-Version header value")
 }
 
 fn invalid_sec_ch_ua_brand_list_value(header_name: &str) -> ClientHintsParseError {

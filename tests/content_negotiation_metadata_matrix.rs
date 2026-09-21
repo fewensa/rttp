@@ -281,6 +281,14 @@ fn public_facade_exports_content_negotiation_metadata_types() {
       .expect("server platform version facade type should parse");
   assert_eq!("\"15.0.0\"", server_platform_version.header_value());
 
+  let full_version: rttp::SecChUaFullVersion =
+    rttp::SecChUaFullVersion::parse("\"120.0.6099.110\"")
+      .expect("full version facade type should parse");
+  assert_eq!("\"120.0.6099.110\"", full_version.header_value());
+  let server_full_version = rttp_server::server::HttpSecChUaFullVersion::parse("\"121.0.0.0\"")
+    .expect("server full version facade type should parse");
+  assert_eq!("\"121.0.0.0\"", server_full_version.header_value());
+
   let wow64: rttp::SecChUaWow64 =
     rttp::SecChUaWow64::parse("?1").expect("wow64 facade type should parse");
   assert_eq!("?1", wow64.header_value());
@@ -865,6 +873,108 @@ fn sec_ch_ua_form_factors_parses_valid_duplicate_and_malformed_http11_headers() 
   assert!(rttp::SecChUaFormFactors::parse("Desktop").is_err());
   assert!(rttp::SecChUaFormFactors::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
   assert!(rttp::SecChUaFormFactors::parse("\"Desktop\0\"").is_err());
+}
+
+#[test]
+fn sec_ch_ua_full_version_parses_valid_duplicate_and_malformed_http11_headers() {
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_full_version()
+          .map(|full_version| full_version.map(|full_version| full_version.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Full-Version").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("full-version"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /full-version HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Full-Version: \"120.0.6099.110\"\r\nConnection: close\r\n\r\n",
+  );
+  assert_eq!(
+    (
+      Ok(Some("\"120.0.6099.110\"".to_owned())),
+      Some("\"120.0.6099.110\"".to_owned())
+    ),
+    observed_rx
+      .recv_timeout(TIMEOUT)
+      .expect("observe valid Sec-CH-UA-Full-Version")
+  );
+  handle.join().expect("valid full version server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      request
+        .sec_ch_ua_full_version()
+        .map(|full_version| full_version.map(|full_version| full_version.header_value()))
+    },
+    |_| HttpResponse::ok("duplicate"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /full-version HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Full-Version: \"120.0\"\r\nsec-ch-ua-full-version: \"121.0\"\r\nConnection: close\r\n\r\n",
+  );
+  assert!(observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe duplicate Sec-CH-UA-Full-Version")
+    .is_err());
+  handle.join().expect("duplicate full version server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      request
+        .sec_ch_ua_full_version()
+        .map(|full_version| full_version.map(|full_version| full_version.header_value()))
+    },
+    |_| HttpResponse::ok("malformed"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /full-version HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Full-Version: 120.0.6099.110\r\nConnection: close\r\n\r\n",
+  );
+  assert!(observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe malformed Sec-CH-UA-Full-Version")
+    .is_err());
+  handle.join().expect("malformed full version server thread");
+
+  let (addr, observed_rx, handle) = spawn_observed_facade_server(
+    |request| {
+      (
+        request
+          .sec_ch_ua_full_version()
+          .map(|full_version| full_version.map(|full_version| full_version.header_value()))
+          .map_err(|error| error.to_string()),
+        request.header("Sec-CH-UA-Full-Version").map(str::to_owned),
+      )
+    },
+    |_| HttpResponse::ok("non-ascii"),
+  );
+  write_raw_request(
+    addr,
+    b"GET /full-version HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-CH-UA-Full-Version: \"\x80\"\r\nConnection: close\r\n\r\n",
+  );
+  let observed = observed_rx
+    .recv_timeout(TIMEOUT)
+    .expect("observe non-ASCII Sec-CH-UA-Full-Version");
+  let error = observed
+    .0
+    .as_ref()
+    .expect_err("non-ASCII Sec-CH-UA-Full-Version must fail closed");
+  assert!(
+    error.contains("Sec-CH-UA-Full-Version"),
+    "non-ASCII Sec-CH-UA-Full-Version error should identify the field: {error}"
+  );
+  assert_eq!(Some("\"\u{0080}\"".to_owned()), observed.1);
+  handle.join().expect("non-ASCII full version server thread");
+
+  assert!(rttp::SecChUaFullVersion::parse("120.0.6099.110").is_err());
+  assert!(rttp::SecChUaFullVersion::parse(r#""120.0";foo=bar"#).is_err());
+  assert!(rttp::SecChUaFullVersion::parse(r#""120.0", "121.0""#).is_err());
+  assert!(rttp::SecChUaFullVersion::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
+  assert!(rttp::SecChUaFullVersion::parse("\"120.0\0\"").is_err());
 }
 
 #[test]

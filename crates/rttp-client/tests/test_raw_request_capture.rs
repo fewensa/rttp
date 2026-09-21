@@ -7245,6 +7245,162 @@ fn raw_sec_ch_ua_platform_version_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn sec_ch_ua_full_version_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-ua-full-version", "legacy"))
+      .sec_ch_ua_full_version("\t\"120.0.6099.110\\\".0\" \t")
+      .expect("Sec-CH-UA-Full-Version should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#""120.0.6099.110\".0""#),
+    header_value(&request, "Sec-CH-UA-Full-Version")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| {
+        line
+          .to_ascii_lowercase()
+          .starts_with("sec-ch-ua-full-version:")
+      })
+      .count(),
+    "typed Sec-CH-UA-Full-Version should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn sec_ch_ua_full_version_helper_accepts_empty_structured_string() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .sec_ch_ua_full_version(r#""""#)
+      .expect("empty Sec-CH-UA-Full-Version string should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#""""#),
+    header_value(&request, "Sec-CH-UA-Full-Version")
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_full_version_helper_matches_blocking_contract() {
+  let request = capture_request(|base_url| {
+    block_on(
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .header(("SEC-CH-UA-FULL-VERSION", "legacy"))
+        .sec_ch_ua_full_version("\t\"120.0.6099.110\" \t")
+        .expect("Sec-CH-UA-Full-Version should be accepted")
+        .rasync(),
+    )
+    .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#""120.0.6099.110""#),
+    header_value(&request, "Sec-CH-UA-Full-Version")
+  );
+}
+
+#[test]
+fn sec_ch_ua_full_version_helper_rejects_malformed_values_before_connecting() {
+  let oversized = format!("\"{}\"", "x".repeat(64 * 1024));
+  for value in [
+    " ",
+    "120.0.6099.110",
+    r#""120.0.6099.110", "121.0.0.0""#,
+    r#""120.0.6099.110";foo=bar"#,
+    r#""unterminated"#,
+    r#""bad\escape""#,
+    "\"\u{1f34e}\"",
+    "\"120.0.6099.110\u{80}\"",
+    "\"120.0.6099.110\0\"",
+    "\"120.0.6099.110\r\nInjected: yes\"",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_ch_ua_full_version(value)
+        .expect_err("invalid Sec-CH-UA-Full-Version input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA-Full-Version input must not open a socket"
+    );
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_ua_full_version_helper_rejects_malformed_values_before_connecting() {
+  let oversized = format!("\"{}\"", "x".repeat(64 * 1024));
+  for value in [
+    " ",
+    "120.0.6099.110",
+    r#""120.0.6099.110", "121.0.0.0""#,
+    r#""120.0.6099.110";foo=bar"#,
+    r#""unterminated"#,
+    r#""bad\escape""#,
+    "\"\u{1f34e}\"",
+    "\"120.0.6099.110\u{80}\"",
+    "\"120.0.6099.110\0\"",
+    "\"120.0.6099.110\r\nInjected: yes\"",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = block_on(async {
+        let mut http_client = client();
+        let request = http_client.get().url(format!("{}/asset", base_url));
+        request.sec_ch_ua_full_version(value)?.rasync().await
+      })
+      .expect_err("invalid Sec-CH-UA-Full-Version input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-UA-Full-Version input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_sec_ch_ua_full_version_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-UA-Full-Version", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request, "Sec-CH-UA-Full-Version")
+  );
+}
+
+#[test]
 fn sec_ch_ua_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()

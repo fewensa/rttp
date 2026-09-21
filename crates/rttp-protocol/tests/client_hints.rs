@@ -1,9 +1,9 @@
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
   PrefersReducedData, PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChDpr, SecChUa,
-  SecChUaArch, SecChUaBitness, SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile,
-  SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, SecChViewportHeight,
-  ViewportWidth, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
+  SecChUaArch, SecChUaBitness, SecChUaFormFactors, SecChUaFullVersion, SecChUaFullVersionList,
+  SecChUaMobile, SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64,
+  SecChViewportHeight, ViewportWidth, Width, MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES,
   MAX_DEVICE_MEMORY_VALUE_BYTES, MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES,
   MAX_ECT_VALUE_BYTES, MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
   MAX_PREFERS_REDUCED_DATA_VALUE_BYTES, MAX_PREFERS_REDUCED_MOTION_VALUE_BYTES,
@@ -12,10 +12,11 @@ use rttp_protocol::client_hints::{
   MAX_SEC_CH_UA_FORM_FACTORS_ITEMS, MAX_SEC_CH_UA_FORM_FACTORS_TOTAL_BYTES,
   MAX_SEC_CH_UA_FORM_FACTORS_VALUE_BYTES, MAX_SEC_CH_UA_FULL_VERSION_LIST_ENTRIES,
   MAX_SEC_CH_UA_FULL_VERSION_LIST_TOTAL_BYTES, MAX_SEC_CH_UA_FULL_VERSION_LIST_VALUE_BYTES,
-  MAX_SEC_CH_UA_MOBILE_VALUE_BYTES, MAX_SEC_CH_UA_MODEL_VALUE_BYTES,
-  MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES, MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES,
-  MAX_SEC_CH_UA_TOTAL_BYTES, MAX_SEC_CH_UA_VALUE_BYTES, MAX_SEC_CH_UA_WOW64_VALUE_BYTES,
-  MAX_SEC_CH_VIEWPORT_HEIGHT_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  MAX_SEC_CH_UA_FULL_VERSION_VALUE_BYTES, MAX_SEC_CH_UA_MOBILE_VALUE_BYTES,
+  MAX_SEC_CH_UA_MODEL_VALUE_BYTES, MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES,
+  MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES, MAX_SEC_CH_UA_TOTAL_BYTES, MAX_SEC_CH_UA_VALUE_BYTES,
+  MAX_SEC_CH_UA_WOW64_VALUE_BYTES, MAX_SEC_CH_VIEWPORT_HEIGHT_VALUE_BYTES,
+  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -758,6 +759,60 @@ fn sec_ch_ua_preserves_order_and_canonicalizes_strings() {
     list,
     SecChUa::parse(list.header_value()).expect("canonical roundtrip")
   );
+}
+
+#[test]
+fn sec_ch_ua_full_version_accepts_structured_strings_and_canonicalizes_them() {
+  for (value, expected_value, canonical) in [
+    (
+      r#""120.0.6099.110""#,
+      "120.0.6099.110",
+      r#""120.0.6099.110""#,
+    ),
+    (r#""14.0.0""#, "14.0.0", r#""14.0.0""#),
+    (r#""99\\\".0""#, "99\\\".0", r#""99\\\".0""#),
+    (r#""""#, "", r#""""#),
+  ] {
+    let full_version = SecChUaFullVersion::parse(format!("\t{value} \t"))
+      .expect("valid Sec-CH-UA-Full-Version value");
+    assert_eq!(expected_value, full_version.value());
+    assert_eq!(canonical, full_version.header_value());
+    assert_eq!(
+      full_version,
+      SecChUaFullVersion::parse(full_version.header_value()).expect("roundtrip")
+    );
+  }
+}
+
+#[test]
+fn sec_ch_ua_full_version_rejects_invalid_duplicate_oversized_and_control_values() {
+  assert!(SecChUaFullVersion::parse_values([r#""120.0""#, r#""121.0""#]).is_err());
+  assert!(SecChUaFullVersion::parse_values([]).is_err());
+
+  for value in [
+    " ",
+    "120.0",
+    r#""120.0", "121.0""#,
+    r#""120.0";foo=bar"#,
+    r#""unterminated"#,
+    r#""bad"quote""#,
+    r#""bad\escape""#,
+    "\"\u{1f34e}\"",
+    "\"120.0\u{80}\"",
+    "\"\u{65e5}\u{672c}\u{8a9e}\"",
+    "\"120.0\0\"",
+    "\"120.0\r\nInjected: yes\"",
+    "\"120.0\u{7f}\"",
+  ] {
+    assert!(
+      SecChUaFullVersion::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let oversized = format!("\"{}\"", "x".repeat(MAX_SEC_CH_UA_FULL_VERSION_VALUE_BYTES));
+  assert!(SecChUaFullVersion::parse(&oversized).is_err());
+  assert!(SecChUaFullVersion::parse_values([r#""120.0""#, oversized.as_str()]).is_err());
 }
 
 #[test]

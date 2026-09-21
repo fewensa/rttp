@@ -78,9 +78,11 @@ pub use rttp_protocol::client_hints::{
   SecChUaBitness as HttpSecChUaBitness, SecChUaBitnessParseError as HttpSecChUaBitnessParseError,
   SecChUaEntry as HttpSecChUaEntry, SecChUaFormFactors as HttpSecChUaFormFactors,
   SecChUaFormFactorsParseError as HttpSecChUaFormFactorsParseError,
+  SecChUaFullVersion as HttpSecChUaFullVersion,
   SecChUaFullVersionList as HttpSecChUaFullVersionList,
   SecChUaFullVersionListEntry as HttpSecChUaFullVersionListEntry,
   SecChUaFullVersionListParseError as HttpSecChUaFullVersionListParseError,
+  SecChUaFullVersionParseError as HttpSecChUaFullVersionParseError,
   SecChUaMobile as HttpSecChUaMobile, SecChUaMobileParseError as HttpSecChUaMobileParseError,
   SecChUaModel as HttpSecChUaModel, SecChUaModelParseError as HttpSecChUaModelParseError,
   SecChUaParseError as HttpSecChUaParseError, SecChUaPlatform as HttpSecChUaPlatform,
@@ -694,6 +696,19 @@ impl Request {
       return Ok(None);
     }
     HttpSecChUaFullVersionList::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Full-Version` request Client Hint
+  /// metadata without inferring browser identity or a platform version,
+  /// negotiating the UA brands family, or emitting Client Hints.
+  pub fn sec_ch_ua_full_version(
+    &self,
+  ) -> Result<Option<HttpSecChUaFullVersion>, HttpSecChUaFullVersionParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-UA-Full-Version").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaFullVersion::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-UA-Form-Factors` request Client Hint
@@ -3383,6 +3398,24 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecChUaFullVersionList::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-UA-Full-Version` request Client Hint
+  /// metadata without inferring browser identity or a platform version,
+  /// negotiating the UA brands family, or emitting Client Hints.
+  pub fn sec_ch_ua_full_version(
+    &self,
+  ) -> Result<Option<HttpSecChUaFullVersion>, HttpSecChUaFullVersionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-CH-UA-Full-Version"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChUaFullVersion::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `Sec-CH-UA-Form-Factors` request Client Hint

@@ -773,6 +773,24 @@ helpers only expose metadata: RTTP does not infer a platform version or
 capabilities, negotiate the UA brands family, emit `Accept-CH`, retry, or apply
 browser policy.
 
+## Bounded Sec-CH-UA-Full-Version request Client Hint metadata
+
+With the client feature, `HttpClient::sec_ch_ua_full_version(value)` validates
+and emits one singleton `Sec-CH-UA-Full-Version` request field through
+`rttp::SecChUaFullVersion`, replacing any existing case-insensitive field. The
+value must be one Structured Fields string, including the quoted empty string
+`""`; optional surrounding SP or HTAB is trimmed and `header_value()` emits
+canonical quoted-string syntax. On the server facade,
+`Request::sec_ch_ua_full_version()` and
+`HttpRequest::sec_ch_ua_full_version()` parse received fields into
+`HttpSecChUaFullVersion`; parse errors leave the raw header available. Blank,
+whitespace-only, non-string, comma-list, parameterized, duplicate, non-ASCII,
+forbidden-control, invalid-escape, and oversized values are rejected. These
+helpers only expose metadata: RTTP does not infer browser or platform versions,
+negotiate the UA brands family, emit `Accept-CH`, retry, or apply browser policy.
+Use `header(("Sec-CH-UA-Full-Version", "..."))` as the raw-header escape
+hatch.
+
 ## Bounded Sec-CH-UA request Client Hint metadata
 
 With the client feature, `HttpClient::sec_ch_ua(value)` validates and emits
