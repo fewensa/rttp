@@ -8447,6 +8447,153 @@ fn raw_sec_ch_viewport_height_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn sec_ch_viewport_width_helper_emits_one_canonical_request_client_hint() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("sec-ch-viewport-width", "2"))
+      .sec_ch_viewport_width("\t1440\t")
+      .expect("Sec-CH-Viewport-Width should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("1440"),
+    header_value(&request, "Sec-CH-Viewport-Width")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("sec-ch-viewport-width:"))
+      .count(),
+    "typed Sec-CH-Viewport-Width should replace an existing same-name field"
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_viewport_width_helper_matches_blocking_contract() {
+  let request = capture_request(|base_url| {
+    block_on(
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .header(("sec-ch-viewport-width", "2"))
+        .sec_ch_viewport_width("\t1440\t")
+        .expect("Sec-CH-Viewport-Width should be accepted")
+        .rasync(),
+    )
+    .expect("async request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("1440"),
+    header_value(&request, "Sec-CH-Viewport-Width")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("sec-ch-viewport-width:"))
+      .count(),
+    "typed Sec-CH-Viewport-Width should replace an existing same-name field"
+  );
+}
+
+#[test]
+fn sec_ch_viewport_width_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "1".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    "-1",
+    "+1",
+    "1.0",
+    "1e1",
+    "1, 2",
+    "900;foo=bar",
+    "1000000000000000",
+    "18446744073709551616",
+    "1\u{80}",
+    "1\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .sec_ch_viewport_width(value)
+        .expect_err("invalid Sec-CH-Viewport-Width input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-Viewport-Width input must not open a socket"
+    );
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_sec_ch_viewport_width_helper_rejects_malformed_values_before_connecting() {
+  let oversized = "1".repeat(64 * 1024 + 1);
+  for value in [
+    "",
+    "-1",
+    "+1",
+    "1.0",
+    "1e1",
+    "1, 2",
+    "900;foo=bar",
+    "1000000000000000",
+    "18446744073709551616",
+    "1\u{80}",
+    "1\r\nInjected: yes",
+    oversized.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = block_on(async {
+        let mut http_client = client();
+        let request = http_client.get().url(format!("{}/asset", base_url));
+        request.sec_ch_viewport_width(value)?.rasync().await
+      })
+      .expect_err("invalid Sec-CH-Viewport-Width input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Sec-CH-Viewport-Width input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_sec_ch_viewport_width_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Sec-CH-Viewport-Width", "legacy-token"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("legacy-token"),
+    header_value(&request, "Sec-CH-Viewport-Width")
+  );
+}
+
+#[test]
 fn rtt_helper_emits_one_canonical_request_client_hint() {
   let request = capture_request(|base_url| {
     client()

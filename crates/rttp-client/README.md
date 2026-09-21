@@ -1703,6 +1703,19 @@ negotiate content, emit `Accept-CH`, track viewport size, or adapt
 representations. Raw values remain available through
 `header(("Sec-CH-Viewport-Height", "..."))`.
 
+## Bounded Sec-CH-Viewport-Width request Client Hint metadata
+
+`HttpClient::sec_ch_viewport_width(value)` validates and emits one bounded
+`Sec-CH-Viewport-Width` request field through the shared `SecChViewportWidth`
+type, replacing any existing same-name field. `SecChViewportWidth::value()`
+exposes the non-negative unsigned integer and
+`SecChViewportWidth::header_value()` returns canonical decimal text. Invalid,
+signed, fractional, parameterized, comma-list, overflowing, non-ASCII,
+control-byte, duplicate, and oversized values are rejected before connecting.
+This helper declares metadata only; it does not negotiate content, emit
+`Accept-CH`, track viewport size, or adapt representations. Raw values remain
+available through `header(("Sec-CH-Viewport-Width", "..."))`.
+
 ## Bounded RTT request Client Hint metadata
 
 `HttpClient::rtt(value)` validates and emits one bounded `RTT` request field

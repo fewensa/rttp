@@ -27,7 +27,7 @@ use rttp_protocol::client_hints::{
   PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChDpr, SecChUa, SecChUaArch,
   SecChUaBitness, SecChUaFormFactors, SecChUaFullVersion, SecChUaFullVersionList, SecChUaMobile,
   SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, SecChViewportHeight,
-  ViewportWidth, Width,
+  SecChViewportWidth, ViewportWidth, Width,
 };
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -897,6 +897,22 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-CH-Viewport-Height",
       viewport_height.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-CH-Viewport-Width` request Client Hint metadata.
+  ///
+  /// The value must be one non-negative decimal integer with optional
+  /// surrounding HTTP optional whitespace. This replaces any existing
+  /// case-insensitive `Sec-CH-Viewport-Width` field and only declares request
+  /// metadata; RTTP does not negotiate content, emit `Accept-CH`, track
+  /// viewport size, or generate this header automatically.
+  pub fn sec_ch_viewport_width<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let viewport_width = SecChViewportWidth::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-CH-Viewport-Width",
+      viewport_width.header_value(),
     )))
   }
 
