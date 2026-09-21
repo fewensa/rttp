@@ -113,7 +113,7 @@ fn response_rate_limit_parse_failures_preserve_raw_fields() {
     ("RateLimit-Limit", "100, (50)"),
     ("RateLimit-Limit", "100;w=18446744073709551616"),
     ("RateLimit-Remaining", "18446744073709551616"),
-    ("RateLimit-Reset", "1\0"),
+    ("RateLimit-Reset", "1, 2"),
   ];
   for (name, value) in cases {
     let response = response_with_values(name, &[value]);

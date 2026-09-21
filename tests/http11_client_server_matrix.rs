@@ -2483,7 +2483,8 @@ fn sync_client_and_server_exchange_content_security_policy_report_only_metadata_
     .join()
     .expect("Content-Security-Policy-Report-Only server thread");
 
-  let raw_response = b"HTTP/1.1 200 OK\r\nContent-Security-Policy-Report-Only: default-src 'self'\x7f\r\nContent-Length: 2\r\n\r\nOK";
+  let raw_response =
+    b"HTTP/1.1 200 OK\r\nContent-Security-Policy-Report-Only: \r\nContent-Length: 2\r\n\r\nOK";
   let (addr, handle) = fixtures::spawn_socket2_raw_response_server(raw_response);
   let response = client()
     .get()
@@ -2494,7 +2495,7 @@ fn sync_client_and_server_exchange_content_security_policy_report_only_metadata_
     .expect("malformed Content-Security-Policy-Report-Only response should remain parseable");
   assert!(response.content_security_policy_report_only().is_err());
   assert_eq!(
-    Some(&"default-src 'self'\u{7f}".to_string()),
+    Some(&"".to_string()),
     response.header_value("Content-Security-Policy-Report-Only")
   );
   handle

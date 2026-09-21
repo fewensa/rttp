@@ -1045,7 +1045,7 @@ fn live_http11_response_helpers_reject_malformed_metadata_while_preserving_raw_h
       .header("Accept-Post", "application/json,")
       .header("RateLimit-Limit", "100, (50)")
       .header("RateLimit-Remaining", "1, 2")
-      .header("RateLimit-Reset", "1\0")
+      .header("RateLimit-Reset", "1, 2")
       .header("WWW-Authenticate", "Basic realm=\"unterminated")
       .header("Authentication-Info", "nextnonce")
       .header("Proxy-Authenticate", "Basic @")
@@ -1087,7 +1087,7 @@ fn live_http11_response_helpers_reject_malformed_metadata_while_preserving_raw_h
   );
   assert!(response.rate_limit_reset().is_err());
   assert_eq!(
-    Some("1\0"),
+    Some("1, 2"),
     response.header_value("RateLimit-Reset").map(String::as_str)
   );
   assert!(response.www_authenticate().is_err());
