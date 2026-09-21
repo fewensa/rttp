@@ -5,7 +5,8 @@ use std::fmt;
 
 use crate::http1::is_token;
 
-pub const MAX_PREFER_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_PREFER_FIELD_BYTES: usize = 64 * 1024;
+pub const MAX_PREFER_VALUE_BYTES: usize = 8 * 1024;
 pub const MAX_PREFERENCES: usize = 32;
 pub const MAX_PREFERENCE_PARAMETERS: usize = 256;
 
@@ -201,7 +202,7 @@ where
 {
   let mut preferences = Vec::new();
   for value in values {
-    if value.len() > MAX_PREFER_VALUE_BYTES {
+    if value.len() > MAX_PREFER_FIELD_BYTES {
       return Err(PreferParseError::new(format!(
         "{header_name} header value is too large"
       )));
@@ -256,7 +257,13 @@ fn parse_preference(
   skip_ows(value, position);
   let preference_value = if take_if(value, position, b'=') {
     skip_ows(value, position);
-    Some(parse_value(value, position, header_name)?)
+    let preference_value = parse_value(value, position, header_name)?;
+    if preference_value.value.len() > MAX_PREFER_VALUE_BYTES {
+      return Err(PreferParseError::new(format!(
+        "{header_name} preference value is too large"
+      )));
+    }
+    Some(preference_value)
   } else {
     None
   };
