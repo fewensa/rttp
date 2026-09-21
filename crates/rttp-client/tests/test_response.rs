@@ -83,7 +83,7 @@ fn origin_agent_cluster_response_metadata_preserves_raw_invalid_headers() {
   assert_eq!(OriginAgentCluster::Boolean(true), value);
   assert_eq!("?1", value.header_value());
 
-  for raw_value in ["true", "?1, ?0", "?1\0"] {
+  for raw_value in ["true", "?1, ?0", "?1?"] {
     let raw =
       format!("HTTP/1.1 200 OK\r\nOrigin-Agent-Cluster: {raw_value}\r\nContent-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test/"), raw.into_bytes())
@@ -724,7 +724,7 @@ fn content_security_policy_metadata_preserves_layered_policy_fields() {
 
 #[test]
 fn content_security_policy_metadata_rejects_invalid_values_without_hiding_raw_headers() {
-  for value in ["", "default-src 'self'\u{7f}"] {
+  for value in [""] {
     let response = Response::new(
       RoUrl::with("https://example.test"),
       format!("HTTP/1.1 200 OK\r\nContent-Security-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
@@ -827,7 +827,7 @@ fn content_security_policy_report_only_metadata_preserves_layered_policy_fields(
 #[test]
 fn content_security_policy_report_only_metadata_rejects_invalid_values_without_hiding_raw_headers()
 {
-  for value in ["", "default-src 'self'\u{7f}"] {
+  for value in [""] {
     let response = Response::new(
       RoUrl::with("https://example.test"),
       format!(
@@ -2266,6 +2266,57 @@ fn test_parse_response_preserves_non_ows_obs_text_header_value_edges() {
     Some(&"\u{00a0}value\u{00a0}".to_string()),
     response.header_value("X-Obs")
   );
+}
+
+#[test]
+fn test_parse_response_rejects_invalid_header_field_names_and_values_before_body_decoding() {
+  for header in [
+    b": value\r\n".as_slice(),
+    b"Bad Name: value\r\n".as_slice(),
+    b"Bad\x7fName: value\r\n".as_slice(),
+    b"Bad\x00Name: value\r\n".as_slice(),
+    b"X-Test: bad\x7fvalue\r\n".as_slice(),
+    b"X-Test: bad\x00value\r\n".as_slice(),
+  ] {
+    let mut raw = b"HTTP/1.1 200 OK\r\n".to_vec();
+    raw.extend_from_slice(header);
+    raw.extend_from_slice(b"Content-Encoding: gzip\r\nContent-Length: 8\r\n\r\nnot-gzip");
+
+    let error = Response::new(RoUrl::with("https://example.test"), raw)
+      .expect_err("invalid response header should be rejected before body decoding");
+    assert!(
+      error.to_string().contains("Invalid response header"),
+      "unexpected error: {error}"
+    );
+  }
+}
+
+#[test]
+fn test_parse_response_preserves_legal_header_field_syntax() {
+  let raw = b"HTTP/1.1 200 OK\r\n\
+X-Token_~: \t value \t\r\n\
+X-Empty:\r\n\
+X-Obs: \x80value\xff\r\n\
+Set-Cookie: first=one\r\n\
+set-cookie: second=two\r\n\
+Content-Length: 0\r\n\
+\r\n";
+  let response = Response::new(RoUrl::with("https://example.test"), raw.to_vec())
+    .expect("legal response header syntax should remain accepted");
+
+  assert_eq!(
+    Some("value"),
+    response.header_value("X-Token_~").map(String::as_str)
+  );
+  assert_eq!(
+    Some(""),
+    response.header_value("X-Empty").map(String::as_str)
+  );
+  assert_eq!(
+    Some("\u{0080}value\u{00ff}"),
+    response.header_value("X-Obs").map(String::as_str)
+  );
+  assert_eq!(2, response.header_values("Set-Cookie").len());
 }
 
 #[test]
@@ -4027,7 +4078,7 @@ fn test_proxy_status_rejects_malformed_and_oversized_values_without_hiding_heade
     "",
     "(ExampleCDN)",
     "ExampleCDN; error=timeout; error=reset",
-    "ExampleCDN;\x01bad",
+    "ExampleCDN; =bad",
   ] {
     let raw = format!(
       "HTTP/1.1 504 Gateway Timeout\r\nProxy-Status: {value}\r\nContent-Length: 7\r\n\r\ntimeout"
@@ -5806,7 +5857,7 @@ fn test_parse_content_location_response_helper_trims_outer_whitespace_and_allows
 
 #[test]
 fn test_parse_content_location_rejects_invalid_helper_values_without_rejecting_response() {
-  let invalid_values = ["", "http://[::1", "not valid", "/bad path", "ok\u{7f}"];
+  let invalid_values = ["", "http://[::1", "not valid", "/bad path", "/bad%zz"];
 
   for value in invalid_values {
     let raw =
@@ -6349,7 +6400,13 @@ fn test_parse_location_response_helper_trims_outer_whitespace() {
 
 #[test]
 fn test_parse_location_rejects_invalid_values_without_rejecting_response() {
-  let invalid_values = ["", "http://[::1", "/bad path", "/bad%zz", "ok\u{7f}"];
+  let invalid_values = [
+    "",
+    "http://[::1",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test:bad",
+  ];
 
   for value in invalid_values {
     let raw = format!("HTTP/1.1 302 Found\r\nLocation: {value}\r\nContent-Length: 2\r\n\r\nOK");
@@ -8015,7 +8072,7 @@ fn access_control_allow_private_network_response_helper_preserves_raw_parse_fail
     "True".to_string(),
     "false".to_string(),
     "true, true".to_string(),
-    "true\0".to_string(),
+    "truee".to_string(),
     "x".repeat(64 * 1024 + 1),
   ] {
     let raw = format!(
