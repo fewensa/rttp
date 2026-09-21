@@ -51,9 +51,9 @@ use rttp_client::{
   Ect, EctParseError, Expect, ExpectParseError, From, FromParseError, HttpClient, If, IfCondition,
   IfList, IfParseError, IfPredicate, IfResourceTag, IfScheduleTagMatch,
   IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective, NegotiateParseError,
-  Overwrite, OverwriteParseError, SecChViewportHeight, SecChViewportHeightParseError, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose,
-  SecRequiredDocumentPolicy, SecRequiredDocumentPolicyDirective,
+  Overwrite, OverwriteParseError, SecChDpr, SecChDprParseError, SecChViewportHeight,
+  SecChViewportHeightParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc,
+  SecGpcParseError, SecPurpose, SecRequiredDocumentPolicy, SecRequiredDocumentPolicyDirective,
   SecRequiredDocumentPolicyParseError, SecRequiredDocumentPolicyValue, SecWebSocketKey,
   SecWebSocketKeyParseError, Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError,
   TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
@@ -118,6 +118,14 @@ fn client_facade_exports_dpr_metadata_types() {
   assert_eq!(1.5, dpr.ratio());
   assert_eq!("1.5", dpr.header_value());
   let _: DprParseError = Dpr::parse("0").expect_err("zero DPR should fail");
+}
+
+#[test]
+fn client_facade_exports_sec_ch_dpr_metadata_types() {
+  let sec_ch_dpr = SecChDpr::parse("1.5").expect("Sec-CH-DPR metadata should parse");
+  assert_eq!(1.5, sec_ch_dpr.ratio());
+  assert_eq!("1.5", sec_ch_dpr.header_value());
+  let _: SecChDprParseError = SecChDpr::parse("0").expect_err("zero Sec-CH-DPR should fail");
 }
 
 #[test]

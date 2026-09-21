@@ -507,6 +507,16 @@ return `HttpDprParseError` while `Request::header("DPR")` preserves the raw
 value. This is metadata-only: the server does not negotiate content or emit
 Client Hints automatically.
 
+`Request::sec_ch_dpr()` and `HttpRequest::sec_ch_dpr()` parse a singleton
+`Sec-CH-DPR` request Client Hint into `HttpSecChDpr`, exposing its finite
+positive ratio through `ratio()` and canonical Structured Fields decimal text
+through `header_value()`. The `sf-decimal` grammar requires a decimal point,
+at most 12 integer digits, and at most 3 fractional digits. Malformed or
+duplicate fields return `HttpSecChDprParseError` while
+`Request::header("Sec-CH-DPR")` preserves the raw value. This is
+metadata-only: the server does not negotiate content, emit Client Hints
+automatically, infer viewport size, retry, or adapt representations.
+
 `Request::downlink()` and `HttpRequest::downlink()` parse a singleton
 `Downlink` request Client Hint into `HttpDownlink`, exposing its non-negative
 finite decimal Mbps value through `mbps()` and the trimmed wire value through

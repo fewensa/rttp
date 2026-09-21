@@ -18,8 +18,8 @@ use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::cdn_loop::{CdnLoop, CdnLoopParseError};
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, SecChUaBitness, SecChUaFormFactors, SecChUaModel, SecChUaPlatformVersion,
-  SecChUaWow64,
+  AcceptCh, CriticalCh, Dpr, SecChDpr, SecChUaBitness, SecChUaFormFactors, SecChUaModel,
+  SecChUaPlatformVersion, SecChUaWow64,
 };
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_disposition::ContentDisposition;
@@ -142,6 +142,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let accept_language =
     AcceptLanguage::parse("en-US, fr-CA; q=0.8, *;q=0").expect("Accept-Language should parse");
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
+  let dpr = Dpr::parse("1.5").expect("DPR should parse");
+  let sec_ch_dpr = SecChDpr::parse("1.5").expect("Sec-CH-DPR should parse");
   let allow_credentials = AccessControlAllowCredentials::parse("true")
     .expect("Access-Control-Allow-Credentials should parse");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
@@ -431,6 +433,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(save_data.header_value(), "on");
+  assert_eq!(dpr.ratio(), 1.5);
+  assert_eq!(dpr.header_value(), "1.5");
+  assert_eq!(sec_ch_dpr.ratio(), 1.5);
+  assert_eq!(sec_ch_dpr.header_value(), "1.5");
   let media_range: &AcceptMediaRange = &accept.media_ranges()[0];
   assert_eq!("text/html", media_range.media_type());
   assert_eq!(Some(800), media_range.quality());

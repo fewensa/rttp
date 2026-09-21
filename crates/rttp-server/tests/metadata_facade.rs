@@ -53,12 +53,13 @@ use rttp_server::server::{
   HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
   HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
   HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
-  HttpSaveDataParseError, HttpScheduleTag, HttpSecChUa, HttpSecChUaBitness,
-  HttpSecChUaBitnessParseError, HttpSecChUaFormFactors, HttpSecChUaFormFactorsParseError,
-  HttpSecChUaFullVersionList, HttpSecChUaFullVersionListParseError, HttpSecChUaModel,
-  HttpSecChUaModelParseError, HttpSecChUaParseError, HttpSecChUaPlatformVersion,
-  HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError,
-  HttpSecChViewportHeight, HttpSecChViewportHeightParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSaveDataParseError, HttpScheduleTag, HttpSecChDpr, HttpSecChDprParseError, HttpSecChUa,
+  HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaFormFactors,
+  HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersionList,
+  HttpSecChUaFullVersionListParseError, HttpSecChUaModel, HttpSecChUaModelParseError,
+  HttpSecChUaParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
+  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecChViewportHeight,
+  HttpSecChViewportHeightParseError, HttpSecGpc, HttpSecGpcParseError,
   HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
   HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
@@ -2009,6 +2010,48 @@ fn request_facade_parses_dpr_metadata_without_negotiation() {
   assert_eq!(Some("1"), duplicate.header("DPR"));
 
   let _: HttpDprParseError = HttpDpr::parse("").expect_err("empty DPR should fail");
+}
+
+#[test]
+fn request_facade_parses_sec_ch_dpr_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-DPR: \t1.5 \t\r\n\r\n",
+  )
+  .expect("Sec-CH-DPR request should parse");
+  let sec_ch_dpr: HttpSecChDpr = request
+    .sec_ch_dpr()
+    .expect("Sec-CH-DPR should parse")
+    .expect("Sec-CH-DPR should be present");
+  assert_eq!(1.5, sec_ch_dpr.ratio());
+  assert_eq!("1.5", sec_ch_dpr.header_value());
+  assert_eq!(Some("1.5"), request.header("Sec-CH-DPR"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-DPR should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_dpr()
+      .expect("missing Sec-CH-DPR should be valid")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-DPR: 1e1\r\n\r\n")
+      .expect("malformed Sec-CH-DPR request should retain raw metadata");
+  assert!(malformed.sec_ch_dpr().is_err());
+  assert_eq!(Some("1e1"), malformed.header("Sec-CH-DPR"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-DPR: 1\r\nSec-CH-DPR: 2\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-DPR request should retain raw metadata");
+  let _: HttpSecChDprParseError = duplicate
+    .sec_ch_dpr()
+    .expect_err("duplicate Sec-CH-DPR should fail");
+  assert_eq!(Some("1"), duplicate.header("Sec-CH-DPR"));
+
+  let _: HttpSecChDprParseError =
+    HttpSecChDpr::parse("").expect_err("empty Sec-CH-DPR should fail");
 }
 
 #[test]
