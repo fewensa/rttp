@@ -761,6 +761,13 @@ pub(crate) fn assert_valid_header_component(component: &str) {
   );
 }
 
+pub(crate) fn assert_valid_header_name(name: &str) {
+  assert!(
+    is_http_token(name),
+    "response headers must use valid field names"
+  );
+}
+
 pub(crate) fn validate_early_hints_link_value(value: &str) -> Result<&str, HttpEarlyHintsError> {
   let value = validate_early_hints_header_value(value)?;
   if value.trim().is_empty() {
