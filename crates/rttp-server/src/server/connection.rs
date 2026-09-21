@@ -888,24 +888,14 @@ impl HttpServer {
           && !streams.is_empty()
           && last_accepted_stream_id != 0
         {
-          self.normalize_connection_error(write_http2_goaway(
-            &mut stream,
-            last_accepted_stream_id,
-            HTTP2_ERROR_NO_ERROR,
-          ))?;
-          self.normalize_connection_error(stream.flush())?;
+          self.write_http2_goaway_best_effort(&mut stream, last_accepted_stream_id)?;
           graceful_goaway_sent = true;
         }
       }
     }
 
     if served == request_limit && last_processed_stream_id != 0 && !graceful_goaway_sent {
-      self.normalize_connection_error(write_http2_goaway(
-        &mut stream,
-        last_processed_stream_id,
-        HTTP2_ERROR_NO_ERROR,
-      ))?;
-      self.normalize_connection_error(stream.flush())?;
+      self.write_http2_goaway_best_effort(&mut stream, last_processed_stream_id)?;
     }
 
     Ok(served)
@@ -921,5 +911,25 @@ impl HttpServer {
         err
       }
     })
+  }
+
+  fn write_http2_goaway_best_effort<S: Write>(
+    &self,
+    stream: &mut S,
+    last_stream_id: u32,
+  ) -> io::Result<()> {
+    let result =
+      write_http2_goaway(stream, last_stream_id, HTTP2_ERROR_NO_ERROR).and_then(|_| stream.flush());
+    match self.normalize_connection_error(result) {
+      Err(err)
+        if matches!(
+          err.kind(),
+          io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset | io::ErrorKind::NotConnected
+        ) =>
+      {
+        Ok(())
+      }
+      result => result,
+    }
   }
 }
