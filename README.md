@@ -2966,11 +2966,12 @@ Hints automatically, retry, replay, redirect, or apply browser policy from
 `Sec-CH-UA-Full-Version` request Client Hint through the shared
 `SecChUaFullVersion` type. `Request::sec_ch_ua_full_version()` and
 `HttpRequest::sec_ch_ua_full_version()` parse received fields into
-`HttpSecChUaFullVersion`, accepting one Structured Fields string after trimming
-optional SP or HTAB and exposing canonical quoted-string text through
-`header_value()`. Empty, non-string, comma-list, parameterized, duplicate,
-non-ASCII, forbidden-control, invalid-escape, and oversized values return
-parser errors while raw headers remain available;
+`HttpSecChUaFullVersion`, accepting one Structured Fields string including the
+quoted empty string `""` after trimming optional SP or HTAB and exposing
+canonical quoted-string text through `header_value()`. Blank, whitespace-only,
+non-string, comma-list, parameterized, duplicate, non-ASCII, forbidden-control,
+invalid-escape, and oversized values return parser errors while raw headers
+remain available;
 `header(("Sec-CH-UA-Full-Version", "..."))` remains an escape hatch.
 
 These helpers are metadata-only. RTTP does not infer browser or platform
