@@ -21,8 +21,8 @@ fn expect_parses_continue_and_unsupported_extension_names() {
 
 #[test]
 fn expect_preserves_unsupported_extension_names_with_values_and_parameters() {
-  let expect =
-    Expect::parse("preview=sha256; chunk=1").expect("parameterized Expect extension should parse");
+  let expect = Expect::parse("\tpreview \t= \tsha256 \t; \tchunk=1\t ")
+    .expect("parameterized Expect extension should parse");
 
   assert!(!expect.expects_continue());
   assert_eq!(["preview"], expect.unsupported());
@@ -31,11 +31,40 @@ fn expect_preserves_unsupported_extension_names_with_values_and_parameters() {
 
 #[test]
 fn expect_accepts_http_optional_whitespace_padding() {
-  let expect = Expect::parse(" 100-continue , preview ").expect("OWS-padded Expect should parse");
+  for value in [" 100-continue , preview ", "\t100-continue\t,\tpreview\t"] {
+    let expect = Expect::parse(value).expect("OWS-padded Expect should parse");
 
-  assert!(expect.expects_continue());
-  assert_eq!(["preview"], expect.unsupported());
-  assert_eq!(expect.header_value(), "100-continue, preview");
+    assert!(expect.expects_continue());
+    assert_eq!(["preview"], expect.unsupported());
+    assert_eq!(expect.header_value(), "100-continue, preview");
+  }
+}
+
+#[test]
+fn expect_rejects_non_ows_whitespace_at_members_and_separators() {
+  for value in [
+    "\u{00a0}preview",
+    "preview\u{00a0}",
+    "\u{3000}preview",
+    "preview\u{3000}",
+    "\rpreview",
+    "preview\r",
+    "\npreview",
+    "preview\n",
+  ] {
+    assert!(Expect::parse(value).is_err(), "{value:?} must be rejected");
+  }
+
+  for whitespace in ["\u{00a0}", "\u{3000}", "\r", "\n"] {
+    for value in [
+      format!("preview{whitespace}=value"),
+      format!("preview={whitespace}value"),
+      format!("preview{whitespace};parameter"),
+      format!("preview;{whitespace}parameter"),
+    ] {
+      assert!(Expect::parse(&value).is_err(), "{value:?} must be rejected");
+    }
+  }
 }
 
 #[test]
