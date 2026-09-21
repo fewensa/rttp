@@ -26,6 +26,7 @@ const PREFERS_REDUCED_DATA_CANONICAL: &str = "reduce";
 const PREFERS_CONTRAST_CANONICAL: &str = "custom";
 const RTT_CANONICAL: &str = "150";
 const SEC_CH_VIEWPORT_HEIGHT_CANONICAL: &str = "900";
+const SEC_CH_VIEWPORT_WIDTH_CANONICAL: &str = "1440";
 const ORIGIN_AGENT_CLUSTER_CANONICAL: &str = "?1";
 const ACCEPT_PATCH_WIRE: &str = r#"Text/Plain; title="a,b\"c", application/json"#;
 const ACCEPT_POST_WIRE: &str = "application/json, text/plain; charset=utf-8";
@@ -83,6 +84,8 @@ struct ObservedRequestMetadata {
   raw_rtt: Option<String>,
   sec_ch_viewport_height: Result<Option<String>, String>,
   raw_sec_ch_viewport_height: Option<String>,
+  sec_ch_viewport_width: Result<Option<String>, String>,
+  raw_sec_ch_viewport_width: Option<String>,
 }
 
 fn client() -> HttpClient {
@@ -191,6 +194,11 @@ fn observe_request(request: &Request) -> ObservedRequestMetadata {
       .map(|height| height.map(|height| height.header_value()))
       .map_err(|error| error.to_string()),
     raw_sec_ch_viewport_height: request.header("Sec-CH-Viewport-Height").map(str::to_string),
+    sec_ch_viewport_width: request
+      .sec_ch_viewport_width()
+      .map(|width| width.map(|width| width.header_value()))
+      .map_err(|error| error.to_string()),
+    raw_sec_ch_viewport_width: request.header("Sec-CH-Viewport-Width").map(str::to_string),
   }
 }
 
@@ -272,6 +280,8 @@ fn attach_valid_client_metadata(client: &mut HttpClient) -> &mut HttpClient {
     .expect("RTT should be accepted")
     .sec_ch_viewport_height("\t900\t")
     .expect("Sec-CH-Viewport-Height should be accepted")
+    .sec_ch_viewport_width("\t1440\t")
+    .expect("Sec-CH-Viewport-Width should be accepted")
 }
 
 fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
@@ -348,6 +358,14 @@ fn assert_valid_request_metadata(observed: &ObservedRequestMetadata) {
   assert_eq!(
     Some(SEC_CH_VIEWPORT_HEIGHT_CANONICAL.to_string()),
     observed.raw_sec_ch_viewport_height
+  );
+  assert_eq!(
+    Ok(Some(SEC_CH_VIEWPORT_WIDTH_CANONICAL.to_string())),
+    observed.sec_ch_viewport_width
+  );
+  assert_eq!(
+    Some(SEC_CH_VIEWPORT_WIDTH_CANONICAL.to_string()),
+    observed.raw_sec_ch_viewport_width
   );
 }
 
@@ -733,6 +751,8 @@ fn http11_absent_metadata_returns_ok_none() {
   assert_eq!(None, observed.raw_rtt);
   assert_eq!(Ok(None), observed.sec_ch_viewport_height);
   assert_eq!(None, observed.raw_sec_ch_viewport_height);
+  assert_eq!(Ok(None), observed.sec_ch_viewport_width);
+  assert_eq!(None, observed.raw_sec_ch_viewport_width);
 
   assert!(response
     .accept_patch()
@@ -932,6 +952,27 @@ fn typed_request_helpers_reject_malformed_values_before_connect() {
   reject_before_connect("oversized Sec-CH-Viewport-Height", |client| {
     client.sec_ch_viewport_height("1".repeat(64 * 1024 + 1))
   });
+  reject_before_connect("malformed Sec-CH-Viewport-Width", |client| {
+    client.sec_ch_viewport_width("1.0")
+  });
+  reject_before_connect("signed Sec-CH-Viewport-Width", |client| {
+    client.sec_ch_viewport_width("-1")
+  });
+  reject_before_connect("parameterized Sec-CH-Viewport-Width", |client| {
+    client.sec_ch_viewport_width("900;foo=bar")
+  });
+  reject_before_connect("comma-list Sec-CH-Viewport-Width", |client| {
+    client.sec_ch_viewport_width("900, 1440")
+  });
+  reject_before_connect("Sec-CH-Viewport-Width with control byte", |client| {
+    client.sec_ch_viewport_width("1440\0")
+  });
+  reject_before_connect("Sec-CH-Viewport-Width with non-ASCII", |client| {
+    client.sec_ch_viewport_width("1440\u{0080}")
+  });
+  reject_before_connect("oversized Sec-CH-Viewport-Width", |client| {
+    client.sec_ch_viewport_width("1".repeat(64 * 1024 + 1))
+  });
 }
 
 #[test]
@@ -999,6 +1040,7 @@ Sec-CH-Prefers-Reduced-Data: auto\r\n\
 Sec-CH-Prefers-Contrast: auto\r\n\
 RTT: 1.0\r\n\
 Sec-CH-Viewport-Height: 1.0\r\n\
+Sec-CH-Viewport-Width: 1.0\r\n\
 Connection: close\r\n\
 \r\n",
     )
@@ -1040,6 +1082,8 @@ Connection: close\r\n\
   assert_eq!(Some("1.0".to_string()), observed.raw_rtt);
   assert!(observed.sec_ch_viewport_height.is_err());
   assert_eq!(Some("1.0".to_string()), observed.raw_sec_ch_viewport_height);
+  assert!(observed.sec_ch_viewport_width.is_err());
+  assert_eq!(Some("1.0".to_string()), observed.raw_sec_ch_viewport_width);
   assert!(
     response.starts_with("HTTP/1.1 200 "),
     "malformed typed metadata must not fail the HTTP exchange: {response}"
@@ -1083,6 +1127,8 @@ RTT: 1\r\n\
 rtt: 2\r\n\
 Sec-CH-Viewport-Height: 1\r\n\
 sec-ch-viewport-height: 2\r\n\
+Sec-CH-Viewport-Width: 1\r\n\
+sec-ch-viewport-width: 2\r\n\
 Connection: close\r\n\
 \r\n",
     )
@@ -1122,6 +1168,8 @@ Connection: close\r\n\
   assert_eq!(Some("1".to_string()), observed.raw_rtt);
   assert!(observed.sec_ch_viewport_height.is_err());
   assert_eq!(Some("1".to_string()), observed.raw_sec_ch_viewport_height);
+  assert!(observed.sec_ch_viewport_width.is_err());
+  assert_eq!(Some("1".to_string()), observed.raw_sec_ch_viewport_width);
   handle.join().expect("duplicate request server thread");
 }
 

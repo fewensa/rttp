@@ -954,6 +954,18 @@ canonical values. Parse errors leave the raw header available. These helpers
 only expose metadata: RTTP does not negotiate content, emit `Accept-CH`, retry,
 track viewport size, or adapt representations.
 
+## Bounded Sec-CH-Viewport-Width request Client Hint metadata
+
+With the client feature, `HttpClient::sec_ch_viewport_width(value)` validates
+and emits one singleton `Sec-CH-Viewport-Width` request field through
+`rttp::SecChViewportWidth`, replacing any existing case-insensitive field. On
+the server facade, `Request::sec_ch_viewport_width()` and
+`HttpRequest::sec_ch_viewport_width()` parse received fields into
+`HttpSecChViewportWidth`; `value()` and `header_value()` expose the typed and
+canonical values. Parse errors leave the raw header available. These helpers
+only expose metadata: RTTP does not negotiate content, emit `Accept-CH`, retry,
+track viewport size, or adapt representations.
+
 ## Bounded RTT request Client Hint metadata
 
 With the client feature, `HttpClient::rtt(value)` validates and emits one

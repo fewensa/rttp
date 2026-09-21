@@ -40,7 +40,8 @@ use rttp::server::{
   HttpSecChUaMobileParseError, HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaParseError,
   HttpSecChUaPlatform, HttpSecChUaPlatformParseError, HttpSecChUaPlatformVersion,
   HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError,
-  HttpSecChViewportHeight, HttpSecChViewportHeightParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecChViewportHeight, HttpSecChViewportHeightParseError, HttpSecChViewportWidth,
+  HttpSecChViewportWidthParseError, HttpSecGpc, HttpSecGpcParseError,
   HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
   HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
@@ -144,6 +145,29 @@ fn compatibility_facade_exports_sec_ch_viewport_height_request_metadata() {
     .sec_ch_viewport_height()
     .expect_err("malformed Sec-CH-Viewport-Height should fail");
   assert_eq!(Some("1.0"), malformed.header("Sec-CH-Viewport-Height"));
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_viewport_width_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Width: \t1440 \t\r\n\r\n",
+  )
+  .expect("Sec-CH-Viewport-Width request should parse");
+  let viewport_width: HttpSecChViewportWidth = request
+    .sec_ch_viewport_width()
+    .expect("Sec-CH-Viewport-Width should parse")
+    .expect("Sec-CH-Viewport-Width should be present");
+  assert_eq!(1440, viewport_width.value());
+  assert_eq!("1440", viewport_width.header_value());
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Width: 1.0\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-Viewport-Width should remain available");
+  let _: HttpSecChViewportWidthParseError = malformed
+    .sec_ch_viewport_width()
+    .expect_err("malformed Sec-CH-Viewport-Width should fail");
+  assert_eq!(Some("1.0"), malformed.header("Sec-CH-Viewport-Width"));
 }
 
 #[test]

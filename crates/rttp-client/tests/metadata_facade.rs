@@ -52,8 +52,9 @@ use rttp_client::{
   IfList, IfParseError, IfPredicate, IfResourceTag, IfScheduleTagMatch,
   IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective, NegotiateParseError,
   Overwrite, OverwriteParseError, SecChDpr, SecChDprParseError, SecChViewportHeight,
-  SecChViewportHeightParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc,
-  SecGpcParseError, SecPurpose, SecRequiredDocumentPolicy, SecRequiredDocumentPolicyDirective,
+  SecChViewportHeightParseError, SecChViewportWidth, SecChViewportWidthParseError, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose,
+  SecRequiredDocumentPolicy, SecRequiredDocumentPolicyDirective,
   SecRequiredDocumentPolicyParseError, SecRequiredDocumentPolicyValue, SecWebSocketKey,
   SecWebSocketKeyParseError, Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError,
   TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
@@ -151,6 +152,16 @@ fn client_facade_exports_sec_ch_viewport_height_metadata_types() {
   assert_eq!("900", viewport_height.header_value());
   let _: SecChViewportHeightParseError = SecChViewportHeight::parse("not-an-integer")
     .expect_err("invalid Sec-CH-Viewport-Height should fail");
+}
+
+#[test]
+fn client_facade_exports_sec_ch_viewport_width_metadata_types() {
+  let viewport_width =
+    SecChViewportWidth::parse("1440").expect("Sec-CH-Viewport-Width metadata should parse");
+  assert_eq!(1440, viewport_width.value());
+  assert_eq!("1440", viewport_width.header_value());
+  let _: SecChViewportWidthParseError = SecChViewportWidth::parse("not-an-integer")
+    .expect_err("invalid Sec-CH-Viewport-Width should fail");
 }
 
 #[test]

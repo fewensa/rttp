@@ -59,7 +59,8 @@ use rttp_server::server::{
   HttpSecChUaFullVersionListParseError, HttpSecChUaFullVersionParseError, HttpSecChUaModel,
   HttpSecChUaModelParseError, HttpSecChUaParseError, HttpSecChUaPlatformVersion,
   HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError,
-  HttpSecChViewportHeight, HttpSecChViewportHeightParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecChViewportHeight, HttpSecChViewportHeightParseError, HttpSecChViewportWidth,
+  HttpSecChViewportWidthParseError, HttpSecGpc, HttpSecGpcParseError,
   HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
   HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
@@ -3052,6 +3053,82 @@ fn request_facade_parses_sec_ch_viewport_height_metadata_without_negotiation() {
 
   let _: HttpSecChViewportHeightParseError =
     HttpSecChViewportHeight::parse("").expect_err("empty Sec-CH-Viewport-Height should fail");
+}
+
+#[test]
+fn request_facade_parses_sec_ch_viewport_width_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Width: \t1440 \t\r\n\r\n",
+  )
+  .expect("Sec-CH-Viewport-Width request should parse");
+  let viewport_width: HttpSecChViewportWidth = request
+    .sec_ch_viewport_width()
+    .expect("Sec-CH-Viewport-Width should parse")
+    .expect("Sec-CH-Viewport-Width should be present");
+  assert_eq!(1440, viewport_width.value());
+  assert_eq!("1440", viewport_width.header_value());
+  assert_eq!(Some("1440"), request.header("Sec-CH-Viewport-Width"));
+
+  let zero = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Width: 0\r\n\r\n",
+  )
+  .expect("zero Sec-CH-Viewport-Width request should parse");
+  assert_eq!(
+    0,
+    zero
+      .sec_ch_viewport_width()
+      .expect("zero Sec-CH-Viewport-Width should parse")
+      .expect("zero Sec-CH-Viewport-Width should be present")
+      .value()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-Viewport-Width should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_viewport_width()
+      .expect("missing Sec-CH-Viewport-Width should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Width: 1.0\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-Viewport-Width request should retain raw metadata");
+  assert!(malformed.sec_ch_viewport_width().is_err());
+  assert_eq!(Some("1.0"), malformed.header("Sec-CH-Viewport-Width"));
+
+  let overflow = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Width: 18446744073709551616\r\n\r\n",
+  )
+  .expect("overflow Sec-CH-Viewport-Width request should retain raw metadata");
+  assert!(overflow.sec_ch_viewport_width().is_err());
+  assert_eq!(
+    Some("18446744073709551616"),
+    overflow.header("Sec-CH-Viewport-Width")
+  );
+
+  let out_of_range = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Width: 1000000000000000\r\n\r\n",
+  )
+  .expect("out-of-range Sec-CH-Viewport-Width request should retain raw metadata");
+  assert!(out_of_range.sec_ch_viewport_width().is_err());
+  assert_eq!(
+    Some("1000000000000000"),
+    out_of_range.header("Sec-CH-Viewport-Width")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Width: 1\r\nsec-ch-viewport-width: 2\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-Viewport-Width request should retain raw metadata");
+  let _: HttpSecChViewportWidthParseError = duplicate
+    .sec_ch_viewport_width()
+    .expect_err("duplicate Sec-CH-Viewport-Width should fail");
+  assert_eq!(Some("1"), duplicate.header("Sec-CH-Viewport-Width"));
+
+  let _: HttpSecChViewportWidthParseError =
+    HttpSecChViewportWidth::parse("").expect_err("empty Sec-CH-Viewport-Width should fail");
 }
 
 #[test]
