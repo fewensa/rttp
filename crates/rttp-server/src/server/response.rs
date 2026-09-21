@@ -1212,6 +1212,7 @@ impl HttpResponse {
     let name = name.as_ref();
     let value = value.as_ref();
     assert_valid_header_component(name);
+    assert_valid_header_name(name);
     assert_valid_header_component(value);
     self.headers.push(HttpHeader::new(name, value));
     self

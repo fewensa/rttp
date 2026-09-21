@@ -5893,6 +5893,22 @@ fn rejects_response_headers_with_crlf() {
 }
 
 #[test]
+fn rejects_response_headers_with_malformed_names() {
+  for name in ["", "Bad Name", "Bad:Name"] {
+    let result = std::panic::catch_unwind(|| {
+      let _response = HttpResponse::new(200, "OK").header(name, "safe value");
+    });
+
+    assert!(result.is_err(), "{name:?} header should be rejected");
+  }
+
+  let response = HttpResponse::new(200, "OK").header("X-Trace", "safe value");
+  assert!(String::from_utf8(response.to_bytes())
+    .expect("response should serialize")
+    .contains("X-Trace: safe value\r\n"));
+}
+
+#[test]
 fn rejects_response_trailers_with_crlf() {
   let result = std::panic::catch_unwind(|| {
     let _response = HttpResponse::new(200, "OK").trailer("X-Trace", "safe\r\nX-Evil: true");
