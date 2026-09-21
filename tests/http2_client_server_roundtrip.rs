@@ -1852,7 +1852,7 @@ fn h2c_non_ascii_prefers_contrast_reaches_server_accessor_with_raw_header() {
         (":scheme", "http"),
         (":path", "/asset"),
         (":authority", authority.as_str()),
-        ("Sec-CH-Prefers-Contrast", value),
+        ("sec-ch-prefers-contrast", value),
       ],
     );
 
