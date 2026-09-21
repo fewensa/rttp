@@ -311,7 +311,7 @@ impl SecChDpr {
   {
     let value = parse_sec_ch_dpr_singleton(values)?;
     let value = value.trim_matches([' ', '\t']);
-    parse_sec_ch_dpr_ratio(value)?;
+    let value = parse_sec_ch_dpr_decimal(value)?;
     Ok(Self {
       value: value.to_string(),
     })
@@ -1252,15 +1252,26 @@ fn validate_bounded_sec_ch_dpr_value(value: &str) -> Result<(), SecChDprParseErr
   Ok(())
 }
 
-fn parse_sec_ch_dpr_ratio(value: &str) -> Result<f64, SecChDprParseError> {
-  if !matches_decimal_grammar(value) {
+fn parse_sec_ch_dpr_decimal(value: &str) -> Result<sfv::Decimal, SecChDprParseError> {
+  let item = Parser::new(value)
+    .with_version(Version::Rfc8941)
+    .parse::<sfv::Item>()
+    .map_err(|_| invalid_sec_ch_dpr_value())?;
+  if !item.params.is_empty() {
     return Err(invalid_sec_ch_dpr_value());
   }
-  let ratio: f64 = value.parse().map_err(|_| invalid_sec_ch_dpr_value())?;
+  let BareItem::Decimal(decimal) = item.bare_item else {
+    return Err(invalid_sec_ch_dpr_value());
+  };
+  let ratio = f64::from(decimal);
   if !ratio.is_finite() || ratio <= 0.0 {
     return Err(invalid_sec_ch_dpr_value());
   }
-  Ok(ratio)
+  Ok(decimal)
+}
+
+fn parse_sec_ch_dpr_ratio(value: &str) -> Result<f64, SecChDprParseError> {
+  Ok(f64::from(parse_sec_ch_dpr_decimal(value)?))
 }
 
 fn parse_downlink_singleton<'a, I>(values: I) -> Result<&'a str, DownlinkParseError>

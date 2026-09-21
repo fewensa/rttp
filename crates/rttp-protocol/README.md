@@ -629,10 +629,12 @@ metadata only; it does not negotiate content or emit Client Hints.
 ## Sec-CH-DPR
 
 `client_hints::SecChDpr` parses a singleton HTTP `Sec-CH-DPR` request Client
-Hint as a finite positive decimal ratio. The field value is bounded to 64 KiB,
-optional outer SP and HTAB are trimmed, and the accepted decimal text is
-preserved by `header_value()`. Empty, malformed, duplicate, non-finite,
-non-positive, control-byte, and oversized values are errors. This parser
+Hint as a finite positive Structured Fields decimal (`sf-decimal`) ratio. The
+field value is bounded to 64 KiB, optional outer SP and HTAB are trimmed, and
+the accepted value is serialized canonically by `header_value()`. Empty,
+malformed, duplicate, non-finite, non-positive, control-byte, and oversized
+values are errors; the Structured Fields decimal grammar requires a decimal
+point, at most 12 integer digits, and at most 3 fractional digits. This parser
 reports request metadata only; it does not negotiate content, emit Client
 Hints, infer viewport size, retry, or adapt representations. The header
 identity is distinct from `DPR`.

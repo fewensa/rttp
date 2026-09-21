@@ -624,10 +624,12 @@ With the client feature, `HttpClient::sec_ch_dpr(value)` validates and emits
 one singleton `Sec-CH-DPR` request field through `rttp::SecChDpr`, replacing
 any existing case-insensitive field. On the server facade, `Request::sec_ch_dpr()`
 and `HttpRequest::sec_ch_dpr()` parse received fields into `HttpSecChDpr`;
-`ratio()` and `header_value()` expose the typed and preserved values. Parse
-errors leave the raw header available. These helpers only expose metadata:
-RTTP does not negotiate content, emit `Accept-CH`, infer viewport size, retry,
-adapt representations, or generate Client Hints automatically.
+`ratio()` exposes the finite positive ratio and `header_value()` returns
+canonical Structured Fields decimal text. The `sf-decimal` grammar requires a
+decimal point, at most 12 integer digits, and at most 3 fractional digits.
+Parse errors leave the raw header available. These helpers only expose
+metadata: RTTP does not negotiate content, emit `Accept-CH`, infer viewport
+size, retry, adapt representations, or generate Client Hints automatically.
 
 ## Bounded Downlink request Client Hint metadata
 

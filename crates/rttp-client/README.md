@@ -1409,12 +1409,14 @@ available through `header(("DPR", "..."))`.
 `HttpClient::sec_ch_dpr(value)` validates and emits one bounded `Sec-CH-DPR`
 request field through the shared `SecChDpr` type, replacing any existing
 same-name field. `SecChDpr::ratio()` exposes the finite positive ratio and
-`SecChDpr::header_value()` returns the trimmed decimal text. Invalid,
-non-positive, non-finite, control-byte, duplicate, and oversized values are
-rejected before connecting. This helper declares metadata only; it does not
-negotiate content, emit `Accept-CH`, infer viewport size, retry, adapt
-representations, or generate Client Hints automatically. Raw values remain
-available through `header(("Sec-CH-DPR", "..."))`.
+`SecChDpr::header_value()` returns canonical Structured Fields decimal text.
+The `sf-decimal` grammar requires a decimal point, at most 12 integer digits,
+and at most 3 fractional digits. Invalid, non-positive, non-finite,
+control-byte, duplicate, and oversized values are rejected before connecting.
+This helper declares metadata only; it does not negotiate content, emit
+`Accept-CH`, infer viewport size, retry, adapt representations, or generate
+Client Hints automatically. Raw values remain available through
+`header(("Sec-CH-DPR", "..."))`.
 
 ## Bounded Downlink request Client Hint metadata
 

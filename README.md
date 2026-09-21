@@ -2789,10 +2789,11 @@ change transport from `DPR`.
 `HttpClient::sec_ch_dpr(value)` validates and emits one singleton `Sec-CH-DPR`
 request Client Hint through the shared `SecChDpr` type. `Request::sec_ch_dpr()`
 and `HttpRequest::sec_ch_dpr()` parse received fields into `HttpSecChDpr`,
-exposing the finite positive ratio with `ratio()` and the trimmed decimal text
-with `header_value()`. Invalid, duplicate, non-finite, non-positive,
-control-byte, and oversized values return parser errors while raw headers
-remain available.
+exposing the finite positive ratio with `ratio()` and canonical Structured
+Fields decimal text with `header_value()`. The `sf-decimal` grammar requires a
+decimal point, at most 12 integer digits, and at most 3 fractional digits.
+Invalid, duplicate, non-finite, non-positive, control-byte, and oversized
+values return parser errors while raw headers remain available.
 
 These helpers are metadata-only. RTTP does not negotiate content, emit
 `Accept-CH`, generate Client Hints automatically, infer viewport size, retry,

@@ -845,7 +845,7 @@ fn h2c_malformed_sec_ch_dpr_reaches_server_accessor_with_raw_header() {
 
 #[test]
 fn h2c_control_sec_ch_dpr_reaches_server_accessor_with_raw_header() {
-  for value in ["1{0001}", "1{7f}"] {
+  for value in ["1\u{0001}", "1\u{007f}"] {
     let server = HttpServer::bind("127.0.0.1:0")
       .expect("bind h2c control Sec-CH-DPR server")
       .with_read_timeout(Some(Duration::from_secs(2)))
@@ -917,13 +917,13 @@ fn h2c_duplicate_sec_ch_dpr_reaches_server_accessor_with_raw_header() {
       (":scheme", "http"),
       (":path", "/asset"),
       (":authority", authority.as_str()),
-      ("Sec-CH-DPR", "1"),
-      ("sec-ch-dpr", "2"),
+      ("Sec-CH-DPR", "1.0"),
+      ("sec-ch-dpr", "2.0"),
     ],
   );
 
   assert_eq!(
-    (Some("1".to_string()), true),
+    (Some("1.0".to_string()), true),
     rx.recv_timeout(Duration::from_secs(2))
       .expect("recorded duplicate Sec-CH-DPR")
   );

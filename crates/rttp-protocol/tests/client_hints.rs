@@ -135,11 +135,17 @@ fn dpr_rejects_non_finite_oversized_digits() {
 }
 
 #[test]
-fn sec_ch_dpr_parses_positive_finite_decimal_and_round_trips() {
-  for (value, ratio) in [("1", 1.0), ("2.0", 2.0), ("1.5", 1.5)] {
+fn sec_ch_dpr_parses_positive_structured_decimal_and_round_trips() {
+  for (value, serialized, ratio) in [
+    ("1.0", "1.0", 1.0),
+    ("2.0", "2.0", 2.0),
+    ("1.5", "1.5", 1.5),
+    ("1.00", "1.0", 1.0),
+    ("1.230", "1.23", 1.23),
+  ] {
     let sec_ch_dpr = SecChDpr::parse(value).expect("valid Sec-CH-DPR");
     assert_eq!(ratio, sec_ch_dpr.ratio());
-    assert_eq!(value, sec_ch_dpr.header_value());
+    assert_eq!(serialized, sec_ch_dpr.header_value());
     assert_eq!(
       sec_ch_dpr,
       SecChDpr::parse(sec_ch_dpr.header_value()).expect("Sec-CH-DPR roundtrip")
@@ -156,11 +162,29 @@ fn sec_ch_dpr_trims_outer_optional_whitespace() {
 
 #[test]
 fn sec_ch_dpr_rejects_malformed_duplicate_empty_non_finite_and_non_positive_values() {
-  assert!(SecChDpr::parse_values(["1", "2"]).is_err());
+  assert!(SecChDpr::parse_values(["1.0", "2.0"]).is_err());
   assert!(SecChDpr::parse_values([]).is_err());
 
   for value in [
-    "", " ", "0", "0.0", "00", "2.", ".5", "+1", "-1", "1e1", "1E1", "1.5.0", "1, 2", "1 5", "inf",
+    "",
+    " ",
+    "0",
+    "0.0",
+    "1",
+    "00",
+    "2.",
+    ".5",
+    "+1",
+    "-1",
+    "1e1",
+    "1E1",
+    "1.5.0",
+    "1.2345",
+    "1234567890123.0",
+    "1, 2",
+    "1 5",
+    "1.5;foo",
+    "inf",
     "nan",
   ] {
     assert!(
