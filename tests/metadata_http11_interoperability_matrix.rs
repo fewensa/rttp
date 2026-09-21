@@ -846,12 +846,16 @@ fn typed_request_helpers_reject_malformed_values_before_connect() {
   reject_before_connect("Prefers-Contrast with control byte", |client| {
     client.prefers_contrast("custom\0")
   });
+  reject_before_connect("Prefers-Contrast with non-ASCII", |client| {
+    client.prefers_contrast("custom\u{0080}")
+  });
   reject_before_connect("oversized Prefers-Contrast", |client| {
     client.prefers_contrast("a".repeat(64 * 1024 + 1))
   });
   reject_before_connect("malformed ECT", |client| client.ect("5g"));
   reject_before_connect("ECT comma list", |client| client.ect("3g, 4g"));
   reject_before_connect("ECT with control byte", |client| client.ect("3g\0"));
+  reject_before_connect("ECT with non-ASCII", |client| client.ect("4g\u{0080}"));
   reject_before_connect("oversized ECT", |client| {
     client.ect("4".repeat(64 * 1024 + 1))
   });
