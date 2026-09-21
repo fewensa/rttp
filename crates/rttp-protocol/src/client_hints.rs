@@ -35,6 +35,9 @@ pub const MAX_VIEWPORT_WIDTH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SEC_CH_VIEWPORT_HEIGHT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_RTT_VALUE_BYTES: usize = 64 * 1024;
 
+const MAX_SEC_CH_VIEWPORT_HEIGHT_INTEGER: u64 = 999_999_999_999_999;
+const MAX_SEC_CH_VIEWPORT_HEIGHT_INTEGER_DIGITS: usize = 15;
+
 /// Parsed, bounded `DPR` request Client Hint metadata.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Dpr {
@@ -988,6 +991,7 @@ impl ViewportWidth {
 
 impl SecChViewportHeight {
   pub const fn new(value: u64) -> Self {
+    assert!(value <= MAX_SEC_CH_VIEWPORT_HEIGHT_INTEGER);
     Self(value)
   }
 
@@ -2281,12 +2285,19 @@ where
   }
 
   let value = value.trim_matches([' ', '\t']);
-  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+  if value.is_empty()
+    || value.len() > MAX_SEC_CH_VIEWPORT_HEIGHT_INTEGER_DIGITS
+    || !value.bytes().all(|byte| byte.is_ascii_digit())
+  {
     return Err(invalid_sec_ch_viewport_height_value());
   }
-  value
-    .parse()
-    .map_err(|_| invalid_sec_ch_viewport_height_value())
+  let value = value
+    .parse::<u64>()
+    .map_err(|_| invalid_sec_ch_viewport_height_value())?;
+  if value > MAX_SEC_CH_VIEWPORT_HEIGHT_INTEGER {
+    return Err(invalid_sec_ch_viewport_height_value());
+  }
+  Ok(value)
 }
 
 fn validate_bounded_sec_ch_viewport_height_value(

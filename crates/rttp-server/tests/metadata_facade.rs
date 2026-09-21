@@ -2925,6 +2925,16 @@ fn request_facade_parses_sec_ch_viewport_height_metadata_without_negotiation() {
     overflow.header("Sec-CH-Viewport-Height")
   );
 
+  let out_of_range = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Height: 1000000000000000\r\n\r\n",
+  )
+  .expect("out-of-range Sec-CH-Viewport-Height request should retain raw metadata");
+  assert!(out_of_range.sec_ch_viewport_height().is_err());
+  assert_eq!(
+    Some("1000000000000000"),
+    out_of_range.header("Sec-CH-Viewport-Height")
+  );
+
   let duplicate = HttpRequest::parse(
     b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Height: 1\r\nsec-ch-viewport-height: 2\r\n\r\n",
   )

@@ -836,12 +836,13 @@ viewport size, or adapt representations.
 ## Sec-CH-Viewport-Height
 
 `client_hints::SecChViewportHeight` parses a singleton HTTP
-`Sec-CH-Viewport-Height` request Client Hint as a non-negative unsigned
-integer. The field value is bounded to 64 KiB, optional outer SP and HTAB are
-trimmed, and `header_value()` emits canonical decimal text. Empty, malformed,
-duplicate, signed, fractional, overflowing, control-byte, and oversized values
-are errors. This parser reports request metadata only; it does not negotiate
-content, emit Client Hints, track viewport size, or adapt representations.
+`Sec-CH-Viewport-Height` request Client Hint as a non-negative Structured
+Fields integer from 0 through 999999999999999. The field value is bounded to 64
+KiB, optional outer SP and HTAB are trimmed, and `header_value()` emits
+canonical decimal text. Empty, malformed, duplicate, signed, fractional,
+out-of-range, overflowing, control-byte, and oversized values are errors. This
+parser reports request metadata only; it does not negotiate content, emit
+Client Hints, track viewport size, or adapt representations.
 
 ## RTT
 

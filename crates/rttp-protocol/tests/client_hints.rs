@@ -1242,7 +1242,7 @@ fn sec_ch_viewport_height_parses_non_negative_integer_and_round_trips() {
     ("1", 1),
     ("900", 900),
     ("4294967296", 4294967296),
-    ("18446744073709551615", u64::MAX),
+    ("999999999999999", 999999999999999),
   ] {
     let viewport_height = SecChViewportHeight::parse(value).expect("valid Sec-CH-Viewport-Height");
     assert_eq!(expected, viewport_height.value());
@@ -1270,7 +1270,19 @@ fn sec_ch_viewport_height_rejects_malformed_duplicate_empty_and_overflow_values(
   assert!(SecChViewportHeight::parse_values([]).is_err());
 
   for value in [
-    "", " ", "-0", "-1", "+1", "1.0", "1e1", "1E1", "1, 2", "1 5", "1\0",
+    "",
+    " ",
+    "-0",
+    "-1",
+    "+1",
+    "1.0",
+    "1e1",
+    "1E1",
+    "1, 2",
+    "1 5",
+    "1\0",
+    "1000000000000000",
+    "00000000000000000",
   ] {
     assert!(
       SecChViewportHeight::parse(value).is_err(),
@@ -1278,6 +1290,12 @@ fn sec_ch_viewport_height_rejects_malformed_duplicate_empty_and_overflow_values(
     );
   }
   assert!(SecChViewportHeight::parse("18446744073709551616").is_err());
+}
+
+#[test]
+#[should_panic]
+fn sec_ch_viewport_height_constructor_rejects_out_of_range_values() {
+  SecChViewportHeight::new(1_000_000_000_000_000);
 }
 
 #[test]
