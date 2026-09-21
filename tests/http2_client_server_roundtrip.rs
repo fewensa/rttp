@@ -1071,6 +1071,76 @@ fn h2c_oversized_prefers_color_scheme_reaches_server_accessor_with_raw_header() 
 }
 
 #[test]
+fn h2c_non_ascii_prefers_color_scheme_reaches_server_accessor_with_raw_header() {
+  for value in ["dark🍎", "dark\u{0080}"] {
+    let server = HttpServer::bind("127.0.0.1:0")
+      .expect("bind h2c non-ASCII Prefers-Color-Scheme server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("h2c server address");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((
+            request
+              .header("Sec-CH-Prefers-Color-Scheme")
+              .map(str::to_string),
+            request
+              .prefers_color_scheme()
+              .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+              .map_err(|error| error.to_string()),
+          ))
+          .expect("record non-ASCII Prefers-Color-Scheme");
+          HttpResponse::ok("ok")
+        })
+        .expect("serve non-ASCII h2c Prefers-Color-Scheme request");
+    });
+
+    let authority = addr.to_string();
+    let mut stream = send_h2c_prior_knowledge_headers(
+      addr,
+      &[
+        (":method", "GET"),
+        (":scheme", "http"),
+        (":path", "/asset"),
+        (":authority", authority.as_str()),
+        ("sec-ch-prefers-color-scheme", value),
+      ],
+    );
+
+    let (frame_type, flags, stream_id, payload) = read_http2_frame(&mut stream);
+    assert_eq!(0x1, frame_type, "h2c response should start with HEADERS");
+    assert_eq!(
+      0x4, flags,
+      "h2c response headers should end the header block"
+    );
+    assert_eq!(1, stream_id);
+    assert_eq!(
+      Some(&0x88),
+      payload.first(),
+      "h2c response should be 200 OK"
+    );
+
+    let (raw, parsed) = rx
+      .recv_timeout(Duration::from_secs(2))
+      .expect("recorded non-ASCII Prefers-Color-Scheme");
+    assert_eq!(Some(value.to_string()), raw);
+    let error = parsed
+      .as_ref()
+      .expect_err("non-ASCII Prefers-Color-Scheme must fail closed");
+    assert!(
+      error.contains("Sec-CH-Prefers-Color-Scheme"),
+      "non-ASCII Prefers-Color-Scheme error should identify the field: {error}"
+    );
+    handle
+      .join()
+      .expect("non-ASCII h2c Prefers-Color-Scheme server thread");
+  }
+}
+
+#[test]
 fn h2c_prefers_reduced_motion_helper_reaches_server_accessor() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c Prefers-Reduced-Motion server")
