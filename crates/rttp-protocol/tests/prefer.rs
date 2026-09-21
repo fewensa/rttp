@@ -218,11 +218,7 @@ fn enforces_field_value_preference_and_parameter_bounds() {
     Some(8 * 1024)
   );
   assert!(
-    Prefer::parse(format!(
-      "extension={}x",
-      "x".repeat(MAX_PREFER_VALUE_BYTES)
-    ))
-    .is_err(),
+    Prefer::parse(format!("extension={}x", "x".repeat(MAX_PREFER_VALUE_BYTES))).is_err(),
     "a preference value over 8 KiB should be rejected"
   );
 
@@ -305,11 +301,7 @@ fn preference_applied_validates_response_restrictions_and_bounds() {
     "an 8 KiB Preference-Applied value should parse"
   );
   assert!(
-    PreferenceApplied::parse(format!(
-      "extension={}x",
-      "x".repeat(MAX_PREFER_VALUE_BYTES)
-    ))
-    .is_err(),
+    PreferenceApplied::parse(format!("extension={}x", "x".repeat(MAX_PREFER_VALUE_BYTES))).is_err(),
     "an oversized Preference-Applied value should be rejected"
   );
 
