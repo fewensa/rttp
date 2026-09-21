@@ -1067,6 +1067,99 @@ fn sync_client_and_server_exchange_canonical_rtt_metadata() {
   handle.join().expect("RTT server thread");
 }
 
+#[test]
+fn sync_client_and_server_exchange_canonical_sec_ch_viewport_height_metadata() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Sec-CH-Viewport-Height server");
+  let addr = server
+    .local_addr()
+    .expect("Sec-CH-Viewport-Height server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request.header("Sec-CH-Viewport-Height").map(str::to_string),
+          request
+            .sec_ch_viewport_height()
+            .map(|height| height.map(|height| height.header_value()))
+            .map_err(|error| error.to_string()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Sec-CH-Viewport-Height metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Sec-CH-Viewport-Height metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .sec_ch_viewport_height("\t900 ")
+    .expect("Sec-CH-Viewport-Height should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (Some("900".to_string()), Ok(Some("900".to_string()))),
+    observed_rx
+      .recv()
+      .expect("server should observe Sec-CH-Viewport-Height metadata")
+  );
+  handle.join().expect("Sec-CH-Viewport-Height server thread");
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_client_and_server_exchange_canonical_sec_ch_viewport_height_metadata() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind async Sec-CH-Viewport-Height server");
+  let addr = server
+    .local_addr()
+    .expect("async Sec-CH-Viewport-Height server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request.header("Sec-CH-Viewport-Height").map(str::to_string),
+          request
+            .sec_ch_viewport_height()
+            .map(|height| height.map(|height| height.header_value()))
+            .map_err(|error| error.to_string()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed async Sec-CH-Viewport-Height metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve async Sec-CH-Viewport-Height metadata request");
+  });
+
+  let response = block_on(
+    client()
+      .get()
+      .url(format!("http://{addr}/asset"))
+      .sec_ch_viewport_height("\t900 ")
+      .expect("Sec-CH-Viewport-Height should be accepted")
+      .rasync(),
+  )
+  .expect("async request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (Some("900".to_string()), Ok(Some("900".to_string()))),
+    observed_rx
+      .recv()
+      .expect("server should observe async Sec-CH-Viewport-Height metadata")
+  );
+  handle
+    .join()
+    .expect("async Sec-CH-Viewport-Height server thread");
+}
+
 #[derive(Debug, PartialEq)]
 struct ObservedAcceptMetadata {
   raw_accept: Option<String>,

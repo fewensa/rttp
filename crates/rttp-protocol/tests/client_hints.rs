@@ -2,7 +2,7 @@ use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, DeviceMemory, Downlink, Dpr, Ect, PrefersColorScheme, PrefersContrast,
   PrefersReducedData, PrefersReducedMotion, PrefersReducedTransparency, Rtt, SecChUa, SecChUaArch,
   SecChUaBitness, SecChUaFormFactors, SecChUaFullVersionList, SecChUaMobile, SecChUaModel,
-  SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, ViewportWidth, Width,
+  SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, SecChViewportHeight, ViewportWidth, Width,
   MAX_CLIENT_HINT_NAMES, MAX_CLIENT_HINT_VALUE_BYTES, MAX_DEVICE_MEMORY_VALUE_BYTES,
   MAX_DOWNLINK_VALUE_BYTES, MAX_DPR_VALUE_BYTES, MAX_ECT_VALUE_BYTES,
   MAX_PREFERS_COLOR_SCHEME_VALUE_BYTES, MAX_PREFERS_CONTRAST_VALUE_BYTES,
@@ -15,7 +15,7 @@ use rttp_protocol::client_hints::{
   MAX_SEC_CH_UA_MOBILE_VALUE_BYTES, MAX_SEC_CH_UA_MODEL_VALUE_BYTES,
   MAX_SEC_CH_UA_PLATFORM_VALUE_BYTES, MAX_SEC_CH_UA_PLATFORM_VERSION_VALUE_BYTES,
   MAX_SEC_CH_UA_TOTAL_BYTES, MAX_SEC_CH_UA_VALUE_BYTES, MAX_SEC_CH_UA_WOW64_VALUE_BYTES,
-  MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
+  MAX_SEC_CH_VIEWPORT_HEIGHT_VALUE_BYTES, MAX_VIEWPORT_WIDTH_VALUE_BYTES, MAX_WIDTH_VALUE_BYTES,
 };
 
 #[test]
@@ -1233,6 +1233,84 @@ fn viewport_width_rejects_oversized_and_control_byte_values() {
 fn viewport_width_checks_duplicate_values_against_the_bound() {
   let oversized = "1".repeat(MAX_VIEWPORT_WIDTH_VALUE_BYTES + 1);
   assert!(ViewportWidth::parse_values(["1440", oversized.as_str()]).is_err());
+}
+
+#[test]
+fn sec_ch_viewport_height_parses_non_negative_integer_and_round_trips() {
+  for (value, expected) in [
+    ("0", 0),
+    ("1", 1),
+    ("900", 900),
+    ("4294967296", 4294967296),
+    ("999999999999999", 999999999999999),
+  ] {
+    let viewport_height = SecChViewportHeight::parse(value).expect("valid Sec-CH-Viewport-Height");
+    assert_eq!(expected, viewport_height.value());
+    assert_eq!(value, viewport_height.header_value());
+    assert_eq!(
+      viewport_height,
+      SecChViewportHeight::parse(viewport_height.header_value())
+        .expect("Sec-CH-Viewport-Height roundtrip")
+    );
+    assert_eq!(viewport_height, SecChViewportHeight::new(expected));
+  }
+}
+
+#[test]
+fn sec_ch_viewport_height_trims_outer_optional_whitespace() {
+  let viewport_height =
+    SecChViewportHeight::parse("\t 900 \t").expect("OWS-padded Sec-CH-Viewport-Height");
+  assert_eq!(900, viewport_height.value());
+  assert_eq!("900", viewport_height.header_value());
+}
+
+#[test]
+fn sec_ch_viewport_height_rejects_malformed_duplicate_empty_and_overflow_values() {
+  assert!(SecChViewportHeight::parse_values(["1", "2"]).is_err());
+  assert!(SecChViewportHeight::parse_values([]).is_err());
+
+  for value in [
+    "",
+    " ",
+    "-0",
+    "-1",
+    "+1",
+    "1.0",
+    "1e1",
+    "1E1",
+    "1, 2",
+    "1 5",
+    "1\0",
+    "1000000000000000",
+    "00000000000000000",
+  ] {
+    assert!(
+      SecChViewportHeight::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+  assert!(SecChViewportHeight::parse("18446744073709551616").is_err());
+}
+
+#[test]
+#[should_panic]
+fn sec_ch_viewport_height_constructor_rejects_out_of_range_values() {
+  SecChViewportHeight::new(1_000_000_000_000_000);
+}
+
+#[test]
+fn sec_ch_viewport_height_rejects_oversized_and_control_byte_values() {
+  assert!(
+    SecChViewportHeight::parse("1".repeat(MAX_SEC_CH_VIEWPORT_HEIGHT_VALUE_BYTES + 1)).is_err()
+  );
+  assert!(SecChViewportHeight::parse("1\r\nInjected: yes").is_err());
+  assert!(SecChViewportHeight::parse("1\u{7f}").is_err());
+}
+
+#[test]
+fn sec_ch_viewport_height_checks_duplicate_values_against_the_bound() {
+  let oversized = "1".repeat(MAX_SEC_CH_VIEWPORT_HEIGHT_VALUE_BYTES + 1);
+  assert!(SecChViewportHeight::parse_values(["900", oversized.as_str()]).is_err());
 }
 
 #[test]

@@ -87,6 +87,8 @@ pub use rttp_protocol::client_hints::{
   SecChUaPlatformVersion as HttpSecChUaPlatformVersion,
   SecChUaPlatformVersionParseError as HttpSecChUaPlatformVersionParseError,
   SecChUaWow64 as HttpSecChUaWow64, SecChUaWow64ParseError as HttpSecChUaWow64ParseError,
+  SecChViewportHeight as HttpSecChViewportHeight,
+  SecChViewportHeightParseError as HttpSecChViewportHeightParseError,
   ViewportWidth as HttpViewportWidth, ViewportWidthParseError as HttpViewportWidthParseError,
   Width as HttpWidth, WidthParseError as HttpWidthParseError,
 };
@@ -780,6 +782,18 @@ impl Request {
       return Ok(None);
     }
     HttpViewportWidth::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Viewport-Height` request Client Hint
+  /// metadata without negotiating content or emitting Client Hints.
+  pub fn sec_ch_viewport_height(
+    &self,
+  ) -> Result<Option<HttpSecChViewportHeight>, HttpSecChViewportHeightParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-CH-Viewport-Height").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChViewportHeight::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `RTT` request Client Hint metadata without
@@ -3490,6 +3504,23 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpViewportWidth::parse_values(values).map(Some)
+  }
+
+  /// Parses received bounded `Sec-CH-Viewport-Height` request Client Hint
+  /// metadata without negotiating content or emitting Client Hints.
+  pub fn sec_ch_viewport_height(
+    &self,
+  ) -> Result<Option<HttpSecChViewportHeight>, HttpSecChViewportHeightParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-CH-Viewport-Height"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecChViewportHeight::parse_values(values).map(Some)
   }
 
   /// Parses received bounded `RTT` request Client Hint metadata without

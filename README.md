@@ -1933,6 +1933,7 @@ gain additional HTTP/2 header-block handling.
 | ECT request Client Hint | `HttpClient::ect` emits bounded singleton `ECT` request metadata through `Ect` using tokens `slow-2g`, `2g`, `3g`, and `4g`; server `Request::ect()` and `HttpRequest::ect()` parse received fields as `HttpEct` while preserving raw values on errors | No network-condition inference, `Accept-CH` emission, Client Hints policy persistence, automatic Client Hints generation, retry, or transport changes |
 | Width request Client Hint | `HttpClient::width` emits bounded singleton `Width` request metadata through `Width`; server `Request::width()` and `HttpRequest::width()` parse received fields as `HttpWidth` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or content adaptation |
 | Viewport-Width request Client Hint | `HttpClient::viewport_width` emits bounded singleton `Viewport-Width` request metadata through `ViewportWidth`; server `Request::viewport_width()` and `HttpRequest::viewport_width()` parse received fields as `HttpViewportWidth` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, viewport tracking, or content adaptation |
+| Sec-CH-Viewport-Height request Client Hint | `HttpClient::sec_ch_viewport_height` emits bounded singleton `Sec-CH-Viewport-Height` request metadata through `SecChViewportHeight`; server `Request::sec_ch_viewport_height()` and `HttpRequest::sec_ch_viewport_height()` parse received fields as `HttpSecChViewportHeight` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, viewport tracking, or content adaptation |
 | RTT request Client Hint | `HttpClient::rtt` emits bounded singleton `RTT` request metadata through `Rtt`; server `Request::rtt()` and `HttpRequest::rtt()` parse received fields as `HttpRtt` while preserving raw values on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, network-delay measurement, or content adaptation |
 | Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
 | Access-Control-Allow-Private-Network | Client `Response::access_control_allow_private_network` and server `HttpAccessControlAllowPrivateNetwork`, `HttpResponse::with_access_control_allow_private_network`, and `HttpResponse::access_control_allow_private_network` parse or declare bounded singleton `Access-Control-Allow-Private-Network` `true`-token metadata while preserving raw headers on parse failures | No private-network access grant, preflight decision, CORS policy, or Private Network Access policy |
@@ -1972,6 +1973,7 @@ gain additional HTTP/2 header-block handling.
 | ECT | `Ect::parse`, `HttpClient::ect`, `Request::ect`, and `HttpRequest::ect` validate, emit, or parse bounded singleton `slow-2g`/`2g`/`3g`/`4g` request Client Hint metadata while preserving raw headers on errors | No network-condition inference, `Accept-CH` emission, Client Hints policy persistence, automatic Client Hints generation, retry, or transport changes |
 | Width | `Width::parse`, `HttpClient::width`, `Request::width`, and `HttpRequest::width` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, or content adaptation |
 | Viewport-Width | `ViewportWidth::parse`, `HttpClient::viewport_width`, `Request::viewport_width`, and `HttpRequest::viewport_width` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, viewport tracking, or content adaptation |
+| Sec-CH-Viewport-Height | `SecChViewportHeight::parse`, `HttpClient::sec_ch_viewport_height`, `Request::sec_ch_viewport_height`, and `HttpRequest::sec_ch_viewport_height` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, viewport tracking, or content adaptation |
 | RTT | `Rtt::parse`, `HttpClient::rtt`, `Request::rtt`, and `HttpRequest::rtt` validate, emit, or parse bounded singleton request Client Hint metadata while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, retry, network-delay measurement, or content adaptation |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
@@ -3049,6 +3051,21 @@ headers remain available.
 These helpers are metadata-only. RTTP does not negotiate content, emit
 `Accept-CH`, generate Client Hints automatically, retry, replay, redirect,
 track viewport size, or adapt representations from `Viewport-Width`.
+
+### Bounded Sec-CH-Viewport-Height request Client Hint metadata
+
+`HttpClient::sec_ch_viewport_height(value)` validates and emits one singleton
+`Sec-CH-Viewport-Height` request Client Hint through the shared
+`SecChViewportHeight` type. `Request::sec_ch_viewport_height()` and
+`HttpRequest::sec_ch_viewport_height()` parse received fields into
+`HttpSecChViewportHeight`, exposing the non-negative integer with `value()` and
+canonical text with `header_value()`. Invalid, duplicate, overflowing,
+control-byte, and oversized values return parser errors while raw headers
+remain available.
+
+These helpers are metadata-only. RTTP does not negotiate content, emit
+`Accept-CH`, generate Client Hints automatically, retry, replay, redirect,
+track viewport size, or adapt representations from `Sec-CH-Viewport-Height`.
 
 ### Bounded RTT request Client Hint metadata
 

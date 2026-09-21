@@ -38,7 +38,8 @@ use rttp::server::{
   HttpSecChUaFullVersionListParseError, HttpSecChUaMobile, HttpSecChUaMobileParseError,
   HttpSecChUaModel, HttpSecChUaModelParseError, HttpSecChUaParseError, HttpSecChUaPlatform,
   HttpSecChUaPlatformParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
-  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecChViewportHeight,
+  HttpSecChViewportHeightParseError, HttpSecGpc, HttpSecGpcParseError,
   HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
   HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
@@ -119,6 +120,29 @@ fn compatibility_facade_exports_viewport_width_request_metadata() {
     .viewport_width()
     .expect_err("malformed Viewport-Width should fail");
   assert_eq!(Some("1.0"), malformed.header("Viewport-Width"));
+}
+
+#[test]
+fn compatibility_facade_exports_sec_ch_viewport_height_request_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Height: \t900 \t\r\n\r\n",
+  )
+  .expect("Sec-CH-Viewport-Height request should parse");
+  let viewport_height: HttpSecChViewportHeight = request
+    .sec_ch_viewport_height()
+    .expect("Sec-CH-Viewport-Height should parse")
+    .expect("Sec-CH-Viewport-Height should be present");
+  assert_eq!(900, viewport_height.value());
+  assert_eq!("900", viewport_height.header_value());
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-Viewport-Height: 1.0\r\n\r\n",
+  )
+  .expect("malformed Sec-CH-Viewport-Height should remain available");
+  let _: HttpSecChViewportHeightParseError = malformed
+    .sec_ch_viewport_height()
+    .expect_err("malformed Sec-CH-Viewport-Height should fail");
+  assert_eq!(Some("1.0"), malformed.header("Sec-CH-Viewport-Height"));
 }
 
 #[test]

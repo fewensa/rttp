@@ -710,6 +710,15 @@ fields return `HttpViewportWidthParseError` while the raw `Viewport-Width`
 field remains available. These helpers do not negotiate content, emit Client
 Hints, retry, track viewport size, or adapt representations.
 
+`Request::sec_ch_viewport_height()` and `HttpRequest::sec_ch_viewport_height()`
+parse a singleton `Sec-CH-Viewport-Height` request Client Hint into
+`HttpSecChViewportHeight`, exposing its non-negative integer through `value()`
+and canonical text through `header_value()`. Malformed, duplicate, overflowing,
+control-byte, or oversized fields return `HttpSecChViewportHeightParseError`
+while the raw `Sec-CH-Viewport-Height` field remains available. These helpers
+do not negotiate content, emit Client Hints, retry, track viewport size, or
+adapt representations.
+
 `Request::rtt()` and `HttpRequest::rtt()` parse a singleton `RTT` request Client
 Hint into `HttpRtt`, exposing its non-negative millisecond integer through
 `value()` and canonical text through `header_value()`. Malformed, duplicate,

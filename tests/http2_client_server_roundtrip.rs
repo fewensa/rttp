@@ -527,6 +527,230 @@ fn h2c_rtt_helper_reaches_server_accessor() {
 }
 
 #[test]
+fn h2c_sec_ch_viewport_height_helper_reaches_server_accessor() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c Sec-CH-Viewport-Height server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.target().to_string(),
+          request.header("Sec-CH-Viewport-Height").map(str::to_string),
+          request
+            .sec_ch_viewport_height()
+            .map(|metadata| metadata.map(|metadata| metadata.header_value()))
+            .map_err(|error| error.to_string()),
+        ))
+        .expect("record Sec-CH-Viewport-Height");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve h2c Sec-CH-Viewport-Height request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .sec_ch_viewport_height("\t900\t")
+    .expect("Sec-CH-Viewport-Height should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (
+      "/asset".to_string(),
+      Some("900".to_string()),
+      Ok(Some("900".to_string()))
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded Sec-CH-Viewport-Height")
+  );
+  handle
+    .join()
+    .expect("h2c Sec-CH-Viewport-Height server thread");
+}
+
+#[test]
+fn h2c_malformed_sec_ch_viewport_height_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c malformed Sec-CH-Viewport-Height server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("Sec-CH-Viewport-Height").map(str::to_string),
+          request.sec_ch_viewport_height().is_err(),
+        ))
+        .expect("record malformed Sec-CH-Viewport-Height");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve malformed h2c Sec-CH-Viewport-Height request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Sec-CH-Viewport-Height", "1.0"))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some("1.0".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded malformed Sec-CH-Viewport-Height")
+  );
+  handle
+    .join()
+    .expect("malformed h2c Sec-CH-Viewport-Height server thread");
+}
+
+#[test]
+fn h2c_control_sec_ch_viewport_height_reaches_server_accessor_with_raw_header() {
+  for value in ["900\u{0001}", "900\u{7f}"] {
+    let server = HttpServer::bind("127.0.0.1:0")
+      .expect("bind h2c control Sec-CH-Viewport-Height server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("h2c server address");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((
+            request.header("Sec-CH-Viewport-Height").map(str::to_string),
+            request.sec_ch_viewport_height().is_err(),
+          ))
+          .expect("record control Sec-CH-Viewport-Height");
+          HttpResponse::ok("ok")
+        })
+        .expect("serve control h2c Sec-CH-Viewport-Height request");
+    });
+
+    let authority = addr.to_string();
+    let _stream = send_h2c_prior_knowledge_headers(
+      addr,
+      &[
+        (":method", "GET"),
+        (":scheme", "http"),
+        (":path", "/asset"),
+        (":authority", authority.as_str()),
+        ("Sec-CH-Viewport-Height", value),
+      ],
+    );
+
+    assert_eq!(
+      (Some(value.to_string()), true),
+      rx.recv_timeout(Duration::from_secs(2))
+        .expect("recorded control Sec-CH-Viewport-Height")
+    );
+    handle
+      .join()
+      .expect("control h2c Sec-CH-Viewport-Height server thread");
+  }
+}
+
+#[test]
+fn h2c_duplicate_sec_ch_viewport_height_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c duplicate Sec-CH-Viewport-Height server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("Sec-CH-Viewport-Height").map(str::to_string),
+          request.sec_ch_viewport_height().is_err(),
+        ))
+        .expect("record duplicate Sec-CH-Viewport-Height");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve duplicate h2c Sec-CH-Viewport-Height request");
+  });
+
+  let authority = addr.to_string();
+  let _stream = send_h2c_prior_knowledge_headers(
+    addr,
+    &[
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", "/asset"),
+      (":authority", authority.as_str()),
+      ("Sec-CH-Viewport-Height", "1"),
+      ("sec-ch-viewport-height", "2"),
+    ],
+  );
+
+  assert_eq!(
+    (Some("1".to_string()), true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded duplicate Sec-CH-Viewport-Height")
+  );
+  handle
+    .join()
+    .expect("duplicate h2c Sec-CH-Viewport-Height server thread");
+}
+
+#[test]
+fn h2c_oversized_sec_ch_viewport_height_reaches_server_accessor_with_raw_header() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c oversized Sec-CH-Viewport-Height server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)))
+    .with_http2_policy(Http2ServerPolicy::new().with_max_header_list_size(256 * 1024));
+  let addr = server.local_addr().expect("h2c server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let raw = request.header("Sec-CH-Viewport-Height").map(str::to_string);
+        tx.send((
+          raw.as_ref().map(String::len),
+          request.sec_ch_viewport_height().is_err(),
+          raw.is_some(),
+        ))
+        .expect("record oversized Sec-CH-Viewport-Height");
+        HttpResponse::ok("ok")
+      })
+      .expect("serve oversized h2c Sec-CH-Viewport-Height request");
+  });
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .header(("Sec-CH-Viewport-Height", oversized.as_str()))
+    .emit_http2_prior_knowledge()
+    .expect("receive h2c response");
+
+  assert_eq!("ok", response.body().string().expect("h2c response body"));
+  assert_eq!(
+    (Some(64 * 1024 + 1), true, true),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded oversized Sec-CH-Viewport-Height")
+  );
+  handle
+    .join()
+    .expect("oversized h2c Sec-CH-Viewport-Height server thread");
+}
+
+#[test]
 fn h2c_downlink_helper_reaches_server_accessor() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c Downlink server")
