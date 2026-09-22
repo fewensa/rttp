@@ -1961,11 +1961,11 @@ impl HttpClient {
   }
 
   fn a_im_member(&mut self, token: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
-    let token = token.trim();
+    let token = trim_http_ows(token);
     if !is_http_token(token) {
       return Err(error::builder_with_message("invalid A-IM token"));
     }
-    let qvalue = qvalue.map(str::trim);
+    let qvalue = qvalue.map(trim_http_ows);
     if let Some(qvalue) = qvalue {
       validate_a_im_qvalue(qvalue)?;
     }

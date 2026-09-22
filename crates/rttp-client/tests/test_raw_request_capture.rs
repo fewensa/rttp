@@ -1033,6 +1033,85 @@ fn a_im_helpers_emit_validated_tokens_q_values_and_parameters() {
 }
 
 #[test]
+fn a_im_helpers_accept_http_ows_padding_and_canonicalize_values() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im("\t diffe \t")
+      .expect("OWS-padded A-IM token should be accepted")
+      .a_im_with_q(" gzip ", "\t0.3\t")
+      .expect("OWS-padded A-IM q-value should be accepted")
+      .a_im_value("\t identity ; q = 0 ; profile = compact \t")
+      .expect("OWS-padded A-IM value should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("diffe, gzip;q=0.3, identity;q=0;profile=compact"),
+    header_value(&request, "A-IM")
+  );
+}
+
+#[test]
+fn a_im_helpers_reject_non_ows_whitespace_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let token = format!("{whitespace}diffe{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .a_im(token)
+        .expect_err("non-OWS whitespace around an A-IM token should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace around an A-IM token opened a socket"
+    );
+
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let qvalue = format!("{whitespace}0.5{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .a_im_with_q("gzip", qvalue)
+        .expect_err("non-OWS whitespace around an A-IM q-value should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace around an A-IM q-value opened a socket"
+    );
+  }
+}
+
+#[test]
+fn a_im_helpers_reject_non_ows_whitespace_in_existing_headers_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let existing = format!("{whitespace}diffe{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .header(("A-IM", existing.as_str()))
+        .a_im("gzip")
+        .expect_err("non-OWS existing A-IM header should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace in an existing A-IM header opened a socket"
+    );
+  }
+}
+
+#[test]
 fn a_im_helpers_reject_invalid_members_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
