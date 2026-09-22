@@ -1656,6 +1656,46 @@ mod tests {
   }
 
   #[test]
+  fn async_streaming_response_transfer_encoding_requires_http_ows_padding() {
+    block_on(async {
+      for transfer_encoding in [" chunked ", "\tchunked\t", " \tchunked\t "] {
+        let raw =
+          format!("HTTP/1.1 200 OK\r\nTransfer-Encoding:{transfer_encoding}\r\n\r\n0\r\n\r\n");
+        let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+        let head = async_read_response_head(&mut cursor).await.unwrap();
+        let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+          .await
+          .expect("HTTP OWS should be accepted around the transfer coding");
+        let mut body = Vec::new();
+
+        response.body_mut().read_to_end(&mut body).await.unwrap();
+        assert!(body.is_empty());
+      }
+
+      for transfer_encoding in [
+        "\u{000b}chunked\u{000b}",
+        "\u{000c}chunked\u{000c}",
+        "\u{00a0}chunked\u{00a0}",
+      ] {
+        let raw = format!("HTTP/1.1 200 OK\r\nTransfer-Encoding:{transfer_encoding}\r\n\r\n");
+        let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+        let head = async_read_response_head(&mut cursor).await.unwrap();
+        let error = match async_streaming_response_after_header(&mut cursor, false, head).await {
+          Ok(_) => panic!("non-OWS whitespace should not pad a transfer coding"),
+          Err(error) => error,
+        };
+
+        assert!(
+          error
+            .to_string()
+            .contains("Unsupported Transfer-Encoding response body"),
+          "unexpected error for {transfer_encoding:?}: {error}"
+        );
+      }
+    });
+  }
+
+  #[test]
   fn async_streaming_response_rejects_malformed_header_without_colon() {
     block_on(async {
       let raw = concat!(
