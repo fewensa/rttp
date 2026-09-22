@@ -1502,6 +1502,16 @@ available.
 These helpers only declare or parse request metadata. RTTP does not infer or
 enforce consent, tracking, legal, or serving policy.
 
+## Bounded request-security metadata
+
+With the `client` feature, users can import `SecGpc`, `SecGpcParseError`,
+`UpgradeInsecureRequests`, and `UpgradeInsecureRequestsParseError` directly
+from `rttp` and parse typed request metadata.
+
+These are bounded, policy-free metadata helpers. Callers retain
+responsibility for privacy signaling and for HTTPS, redirect, and
+Content-Security-Policy enforcement.
+
 ## Bounded Early-Data request metadata
 
 `HttpClient::early_data()` emits `Early-Data: 1` through the shared protocol
