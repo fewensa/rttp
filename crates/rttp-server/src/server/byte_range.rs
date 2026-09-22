@@ -136,9 +136,9 @@ where
     return Err(HttpByteRangeError::MultipleRanges);
   }
 
-  let value = values[0].trim();
+  let value = values[0].trim_matches([' ', '\t']);
   if let Some((unit, _)) = value.split_once('=') {
-    if !unit.trim().eq_ignore_ascii_case("bytes") {
+    if !unit.trim_matches([' ', '\t']).eq_ignore_ascii_case("bytes") {
       return Err(HttpByteRangeError::UnsupportedUnit);
     }
   }
@@ -307,6 +307,40 @@ mod tests {
     assert_eq!(vec![HttpByteRange::new(2, 5)], ranges("bytes=2-5", 10));
     assert_eq!(vec![HttpByteRange::new(7, 9)], ranges("bytes=7-", 10));
     assert_eq!(vec![HttpByteRange::new(6, 9)], ranges("bytes=-4", 10));
+  }
+
+  #[test]
+  fn accepts_only_http_ows_around_field_and_unit() {
+    for header in [
+      " bytes=0-1 ",
+      "\tbytes=0-1\t",
+      " \t BYTES \t = \t 0-1 \t ",
+      "bytes \t=0-1",
+    ] {
+      assert_eq!(
+        vec![HttpByteRange::new(0, 1)],
+        ranges(header, 10),
+        "{header:?} should accept HTTP OWS"
+      );
+    }
+    assert_eq!(
+      Err(HttpByteRangeError::UnsupportedUnit),
+      parse(" \t ITEMS \t = \t 0-1 \t ", 10)
+    );
+
+    for whitespace in ["\u{00a0}", "\u{2003}", "\u{000b}", "\u{000c}", "\r", "\n"] {
+      for header in [
+        format!("{whitespace}bytes=0-1"),
+        format!("bytes=0-1{whitespace}"),
+        format!("bytes{whitespace}=0-1"),
+        format!("bytes={whitespace}0-1"),
+      ] {
+        assert!(
+          parse(&header, 10).is_err(),
+          "{header:?} should reject non-OWS whitespace"
+        );
+      }
+    }
   }
 
   #[test]
