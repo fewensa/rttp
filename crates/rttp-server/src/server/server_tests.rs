@@ -4068,6 +4068,107 @@ fn access_control_max_age_helpers_validate_replace_and_parse_response_metadata()
 }
 
 #[test]
+fn age_response_helpers_accept_only_http_ows_padding() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .age()
+      .expect("absent Age should parse")
+  );
+
+  for value in ["120", " 120 ", "\t120\t", " \t120\t "] {
+    let response = HttpResponse::ok([]).header("Age", value);
+    assert_eq!(
+      Some(120),
+      response
+        .age()
+        .unwrap_or_else(|error| panic!("{value:?} should accept HTTP OWS: {error}")),
+      "{value:?} should accept HTTP OWS"
+    );
+    assert_eq!(
+      vec![("Age", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>(),
+      "raw Age header {value:?} must be preserved"
+    );
+  }
+
+  let serialized = HttpResponse::ok([]).with_age(120);
+  assert_eq!(
+    Some(120),
+    serialized.age().expect("with_age serialization should parse")
+  );
+  assert_eq!(
+    vec![("Age", "120")],
+    serialized
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Age", "60")
+    .header("age", "120");
+  assert!(duplicate.age().is_err());
+  assert_eq!(
+    vec![("Age", "60"), ("age", "120")],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  for whitespace in ["\r", "\n", "\u{000b}", "\u{000c}", "\u{00a0}", "\u{2003}"] {
+    for value in [
+      format!("{whitespace}120"),
+      format!("120{whitespace}"),
+    ] {
+      // Construct the raw message directly when needed: `HttpResponse::header` asserts on
+      // CR/LF values, but non-OWS padding must still reach the typed Age accessor.
+      let response = HttpResponse {
+        version: "HTTP/1.1".to_string(),
+        status_code: 200,
+        reason: "OK".to_string(),
+        headers: vec![HttpHeader::new("Age", value.as_str())],
+        trailers: Vec::new(),
+        body: Vec::new(),
+      };
+      assert!(
+        response.age().is_err(),
+        "{value:?} should reject non-OWS whitespace"
+      );
+      assert_eq!(
+        vec![("Age", value.as_str())],
+        response
+          .headers
+          .iter()
+          .map(|header| (header.name.as_str(), header.value.as_str()))
+          .collect::<Vec<_>>(),
+        "raw Age header {value:?} must be preserved"
+      );
+    }
+  }
+
+  assert!(
+    parse_http_age("18446744073709551616").is_err(),
+    "Age overflow must be rejected"
+  );
+  assert!(
+    parse_http_age("").is_err() && parse_http_age(" \t ").is_err(),
+    "empty Age after OWS trim must be rejected"
+  );
+  assert!(
+    parse_http_age("-1").is_err() && parse_http_age("+120").is_err(),
+    "signed Age delta-seconds must be rejected"
+  );
+}
+
+#[test]
 fn access_control_allow_headers_helpers_preserve_raw_metadata_and_report_parse_errors() {
   let malformed = HttpResponse::ok([]).header("Access-Control-Allow-Headers", "X-Request Id");
   assert!(malformed.access_control_allow_headers().is_err());
