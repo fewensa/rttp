@@ -122,6 +122,7 @@ fn parse_field(
   value: &str,
   entries: &mut Vec<WantReprDigestEntry>,
 ) -> Result<(), WantReprDigestParseError> {
+  let value = trim_http_ows(value);
   reject_noncanonical_preference_integers(value)?;
   let dictionary = Parser::new(value)
     .parse::<Dictionary>()
@@ -203,16 +204,20 @@ fn top_level_member_count(value: &str) -> usize {
     } else if byte == b'"' {
       quoted = true;
     } else if byte == b',' {
-      if !value[start..index].trim_matches([' ', '\t']).is_empty() {
+      if !trim_http_ows(&value[start..index]).is_empty() {
         count += 1;
       }
       start = index + 1;
     }
   }
-  if !value[start..].trim_matches([' ', '\t']).is_empty() {
+  if !trim_http_ows(&value[start..]).is_empty() {
     count += 1;
   }
   count
+}
+
+fn trim_http_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
 }
 
 fn invalid_member() -> WantReprDigestParseError {

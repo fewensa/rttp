@@ -1663,6 +1663,125 @@ fn want_digest_helpers_reject_invalid_or_excessive_values_before_connecting() {
 }
 
 #[test]
+fn want_digest_helpers_accept_http_ows_and_reject_non_ows_whitespace_before_connecting() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .want_content_digest(" \tsha-256\t ")
+      .expect("HTTP OWS around content digest algorithms should be accepted")
+      .want_content_digest_with_q("\tsha-512\t", " \t8\t ")
+      .expect("HTTP OWS around content digest preferences should be accepted")
+      .want_repr_digest(" \tsha-256\t ")
+      .expect("HTTP OWS around representation digest algorithms should be accepted")
+      .want_repr_digest_with_q("\tsha-512\t", "\t0\t")
+      .expect("HTTP OWS around representation digest preferences should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("sha-256=10, sha-512=8"),
+    header_value(&request, "Want-Content-Digest")
+  );
+  assert_eq!(
+    Some("sha-256=10, sha-512=0"),
+    header_value(&request, "Want-Repr-Digest")
+  );
+
+  for whitespace in ["\u{0b}", "\u{0c}", "\u{00a0}", "\u{2003}"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      assert!(
+        client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .want_content_digest(format!("{whitespace}sha-256"))
+          .expect_err("non-OWS whitespace around digest algorithms should be rejected")
+          .is_builder(),
+        "{whitespace:?} around content digest algorithms must be rejected"
+      );
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS digest algorithm padding should not open a socket"
+    );
+
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      assert!(
+        client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .want_repr_digest(format!("sha-256{whitespace}"))
+          .expect_err("non-OWS whitespace around digest algorithms should be rejected")
+          .is_builder(),
+        "{whitespace:?} around representation digest algorithms must be rejected"
+      );
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS digest algorithm padding should not open a socket"
+    );
+
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      assert!(
+        client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .want_content_digest_with_q("sha-256", format!("{whitespace}8"))
+          .expect_err("non-OWS whitespace around digest preferences should be rejected")
+          .is_builder(),
+        "{whitespace:?} around content digest preferences must be rejected"
+      );
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS digest preference padding should not open a socket"
+    );
+
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      assert!(
+        client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .want_repr_digest_with_q("sha-256", format!("0{whitespace}"))
+          .expect_err("non-OWS whitespace around digest preferences should be rejected")
+          .is_builder(),
+        "{whitespace:?} around representation digest preferences must be rejected"
+      );
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS digest preference padding should not open a socket"
+    );
+
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let existing = format!("sha-256=10{whitespace},sha-512=3");
+      client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .header(("Want-Content-Digest", existing.as_str()));
+      assert!(
+        client
+          .want_content_digest("unixsum")
+          .expect_err("non-OWS whitespace in existing digest members should be rejected")
+          .is_builder(),
+        "{whitespace:?} in existing Want-Content-Digest members must be rejected"
+      );
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace in existing digest headers should not open a socket"
+    );
+  }
+}
+
+#[test]
 fn signature_helpers_emit_canonical_fields_and_reject_malformed_input_before_connecting() {
   let request = capture_request(|base_url| {
     client()
