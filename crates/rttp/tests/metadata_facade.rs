@@ -1186,6 +1186,41 @@ fn compatibility_facade_exports_top_level_response_companion_types() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_exports_content_companion_types() {
+  let content_type: rttp::ContentType = rttp::ContentType::parse("application/json; charset=utf-8")
+    .expect("Content-Type should parse through the facade");
+  let parameter: &rttp::ContentTypeParameter = &content_type.parameters()[0];
+  assert_eq!("charset", parameter.name());
+  assert_eq!("utf-8", parameter.value());
+
+  let content_disposition: rttp::ContentDisposition =
+    rttp::ContentDisposition::parse("attachment; filename=\"report.txt\"")
+      .expect("Content-Disposition should parse through the facade");
+  let disposition_parameter: &rttp::ContentDispositionParameter =
+    &content_disposition.parameters()[0];
+  assert_eq!("filename", disposition_parameter.name());
+  assert_eq!("report.txt", disposition_parameter.value());
+
+  let content_digest: rttp::ContentDigest = rttp::ContentDigest::parse("sha-256=:YWJj:")
+    .expect("Content-Digest should parse through the facade");
+  let content_digest_entry: &rttp::ContentDigestEntry = &content_digest.entries()[0];
+  assert_eq!(b"abc", content_digest_entry.value());
+
+  let repr_digest: rttp::ReprDigest =
+    rttp::ReprDigest::parse("sha-512=:ZGVm:").expect("Repr-Digest should parse through the facade");
+  let repr_digest_entry: &rttp::ReprDigestEntry = &repr_digest.entries()[0];
+  assert_eq!(b"def", repr_digest_entry.value());
+
+  let digest: rttp::Digest =
+    rttp::Digest::parse("sha-256=:YWJj:").expect("Digest should parse through the facade");
+  let digest_entry: &rttp::DigestEntry = &digest.entries()[0];
+  assert_eq!("sha-256", digest_entry.algorithm());
+  let _: rttp::DigestParseError =
+    rttp::Digest::parse("").expect_err("empty Digest should fail through the facade");
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn compatibility_facade_exports_client_metadata_types() {
   let dav: rttp::Dav =
     rttp_client::response::Dav::parse("1, 2, extended-mkcol, <https://dav.example.test/ns>")
