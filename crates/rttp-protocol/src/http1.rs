@@ -31,9 +31,7 @@ pub fn parse_chunk_size(line: &[u8]) -> Result<usize, ChunkSizeError> {
     .map_or((line, None), |index| {
       (&line[..index], Some(&line[index + 1..]))
     });
-  let size = std::str::from_utf8(size)
-    .map_err(|_| ChunkSizeError::NotUtf8)?
-    .trim();
+  let size = std::str::from_utf8(trim_bws(size)).map_err(|_| ChunkSizeError::NotUtf8)?;
   if size.is_empty() {
     return Err(ChunkSizeError::Empty);
   }
@@ -157,7 +155,11 @@ fn trim_bws(bytes: &[u8]) -> &[u8] {
     .iter()
     .position(|byte| *byte != b' ' && *byte != b'\t')
     .unwrap_or(bytes.len());
-  &bytes[start..]
+  let end = bytes
+    .iter()
+    .rposition(|byte| *byte != b' ' && *byte != b'\t')
+    .map_or(start, |index| index + 1);
+  &bytes[start..end]
 }
 
 #[cfg(test)]
@@ -167,8 +169,29 @@ mod tests {
   #[test]
   fn parses_plain_chunk_sizes_and_valid_extensions() {
     assert_eq!(parse_chunk_size(b"4\r\n"), Ok(4));
+    assert_eq!(parse_chunk_size(b"  4\t\r\n"), Ok(4));
     assert_eq!(parse_chunk_size(b"4;foo=bar;flag\r\n"), Ok(4));
     assert_eq!(parse_chunk_size(b"A;foo=bar;quoted=\"a\\\"b\"\r\n"), Ok(10));
+  }
+
+  #[test]
+  fn rejects_non_sp_htab_whitespace_in_chunk_size() {
+    for line in [
+      b"\r4\r\n".as_slice(),
+      b"4\r\r\n",
+      b"\n4\r\n",
+      b"4\n\r\n",
+      b"4\x0b\r\n",
+      b"4\x0c\r\n",
+      "4\u{00a0}\r\n".as_bytes(),
+      "\u{00a0}4\r\n".as_bytes(),
+      "4\u{2003}\r\n".as_bytes(),
+      "\u{00a0}\r\n".as_bytes(),
+    ] {
+      assert_eq!(parse_chunk_size(line), Err(ChunkSizeError::Invalid));
+    }
+
+    assert_eq!(parse_chunk_size(b"  \t  \r\n"), Err(ChunkSizeError::Empty));
   }
 
   #[test]
