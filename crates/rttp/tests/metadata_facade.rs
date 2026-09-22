@@ -3895,6 +3895,64 @@ fn compatibility_facade_keeps_signature_metadata_in_the_server_module() {
   );
 }
 
+#[cfg(feature = "client")]
+#[test]
+fn compatibility_facade_exports_signature_and_signature_input_types() {
+  use rttp::{
+    Signature, SignatureCoveredComponent, SignatureDecimal, SignatureEntry, SignatureInput,
+    SignatureInputBareItem, SignatureInputComponent, SignatureInputEntry, SignatureInputMember,
+    SignatureInputParameter, SignatureInputParseError, SignatureParameter, SignatureParameterValue,
+    SignatureParseError,
+  };
+
+  let signature: Signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
+  let signature_entry: &SignatureEntry = &signature.entries()[0];
+  assert_eq!(signature_entry.label(), "sig1");
+  assert_eq!(signature_entry.value(), b"abc");
+  assert_eq!(signature.header_value(), "sig1=:YWJj:");
+
+  let signature_input: SignatureInput = SignatureInput::parse(
+    r#"sig1=("@method" "@path");created=1618884473;keyid="test-key";weight=1.5"#,
+  )
+  .expect("Signature-Input should parse");
+  let input_entry: &SignatureInputEntry = &signature_input.entries()[0];
+  let member: &SignatureInputMember = &signature_input.members()[0];
+  let component: &SignatureInputComponent = &input_entry.components()[0];
+  let covered: &SignatureCoveredComponent = &input_entry.covered_components()[0];
+  let created: &SignatureInputParameter = input_entry
+    .parameter("created")
+    .expect("created parameter should be present");
+  let created_alias: &SignatureParameter = created;
+  let created_value: &SignatureInputBareItem = created.value();
+  let created_alias_value: &SignatureParameterValue = created_value;
+  let decimal: &SignatureDecimal = match input_entry
+    .parameter("weight")
+    .map(SignatureInputParameter::value)
+  {
+    Some(SignatureInputBareItem::Decimal(value)) => value,
+    other => panic!("weight should parse as a decimal, got {other:?}"),
+  };
+
+  assert_eq!(member.label(), "sig1");
+  assert_eq!(component.identifier(), "@method");
+  assert_eq!(covered.identifier(), "@method");
+  assert!(matches!(
+    created_alias_value,
+    SignatureInputBareItem::Integer(1_618_884_473)
+  ));
+  assert_eq!(created_alias.name(), "created");
+  assert_eq!(decimal, "1.5");
+  assert_eq!(
+    signature_input.header_value(),
+    r#"sig1=("@method" "@path");created=1618884473;keyid="test-key";weight=1.5"#
+  );
+
+  let _: SignatureParseError =
+    Signature::parse("").expect_err("empty Signature should be rejected");
+  let _: SignatureInputParseError =
+    SignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
+}
+
 #[test]
 fn compatibility_facade_exposes_content_dpr_response_metadata() {
   let response = HttpResponse::ok("")
