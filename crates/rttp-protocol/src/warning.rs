@@ -25,7 +25,8 @@ use std::error::Error;
 use std::fmt;
 use std::time::SystemTime;
 
-use crate::http1::{is_qdtext, is_quoted_pair_char};
+use crate::host::Host;
+use crate::http1::{is_qdtext, is_quoted_pair_char, is_token};
 
 /// Maximum bytes accepted in a `Warning` field value.
 pub const MAX_WARNING_VALUE_BYTES: usize = 64 * 1024;
@@ -257,7 +258,23 @@ fn parse_agent<'a>(value: &'a str, position: &mut usize) -> Result<&'a str, Warn
   if *position == start {
     return Err(WarningParseError::new("invalid Warning agent"));
   }
-  Ok(&value[start..*position])
+  let agent = &value[start..*position];
+  if !is_valid_agent(agent) {
+    return Err(WarningParseError::new("invalid Warning agent"));
+  }
+  Ok(agent)
+}
+
+fn is_valid_agent(agent: &str) -> bool {
+  Host::parse(agent).is_ok() || is_token(agent) || is_uri_host_with_empty_port(agent)
+}
+
+/// RFC 7234 warn-agent is `uri-host [ ":" port ]` with RFC 3986 `port = *DIGIT`.
+/// `Host::parse` rejects empty ports, and a token cannot contain `:`.
+fn is_uri_host_with_empty_port(agent: &str) -> bool {
+  agent
+    .strip_suffix(':')
+    .is_some_and(|host| Host::parse(host).is_ok_and(|parsed| parsed.port().is_none()))
 }
 
 fn parse_quoted_http_date(

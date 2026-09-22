@@ -56,18 +56,33 @@ fn warning_unescapes_quoted_text_and_keeps_commas_inside_quotes() {
 }
 
 #[test]
-fn warning_accepts_empty_quoted_text_ows_and_opaque_ipv6_agents() {
+fn warning_accepts_empty_quoted_text_ows_and_rfc7234_agents() {
   let warning = Warning::parse(
-    "110\t-\t\"\" , 299 [2001:db8::1]:443 \"Deprecated API\"\t\"Wed, 21 Oct 2015 07:28:00 GMT\"",
+    "110\t-\t\"\" , 111 cache \"Revalidation Failed\", 299 example.com:80 \"host port\", 199 [2001:db8::1]:443 \"Deprecated API\"\t\"Wed, 21 Oct 2015 07:28:00 GMT\"",
   )
-  .expect("empty text, OWS, and IPv6 agents should parse");
+  .expect("empty text, OWS, and RFC 7234 agents should parse");
 
   assert_eq!(warning.items()[0].text(), "");
-  assert_eq!(warning.items()[1].agent(), "[2001:db8::1]:443");
+  assert_eq!(warning.items()[0].agent(), "-");
+  assert_eq!(warning.items()[1].agent(), "cache");
+  assert_eq!(warning.items()[2].agent(), "example.com:80");
+  assert_eq!(warning.items()[3].agent(), "[2001:db8::1]:443");
   assert_eq!(
-    warning.items()[1].date(),
+    warning.items()[3].date(),
     Some(UNIX_EPOCH + Duration::from_secs(1_445_412_480))
   );
+}
+
+#[test]
+fn warning_accepts_rfc3986_empty_ports_on_warn_agents() {
+  for (value, agent) in [
+    (r#"110 example.com: "text""#, "example.com:"),
+    (r#"110 [::1]: "text""#, "[::1]:"),
+  ] {
+    let warning = Warning::parse(value).expect("empty-port warn-agent should parse");
+    assert_eq!(warning.items()[0].agent(), agent, "{value:?}");
+    assert_eq!(warning.items()[0].text(), "text", "{value:?}");
+  }
 }
 
 #[test]
@@ -120,6 +135,29 @@ fn warning_rejects_malformed_quoting_invalid_codes_and_empty_members() {
     Warning::parse_values([]).is_err(),
     "empty field sets must be rejected"
   );
+}
+
+#[test]
+fn warning_rejects_malformed_agents_with_controls_and_invalid_syntax() {
+  for value in [
+    "110 foo@bar \"text\"",
+    "110 foo/bar \"text\"",
+    "110 foo?bar \"text\"",
+    "110 foo:bar:baz \"text\"",
+    "110 [2001:db8::1 \"text\"",
+    "110 agent\r \"text\"",
+    "110 agent\n \"text\"",
+    "110 agent\r\nX-Injected:1 \"text\"",
+    "110 agent\u{7f} \"text\"",
+    "110 agent\u{0} \"text\"",
+    "110 \u{1b}agent \"text\"",
+    "110 foo\u{80}bar \"text\"",
+  ] {
+    assert!(
+      Warning::parse(value).is_err(),
+      "{value:?} must be rejected as an invalid warn-agent"
+    );
+  }
 }
 
 #[test]

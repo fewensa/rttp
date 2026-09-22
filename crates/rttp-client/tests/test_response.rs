@@ -4951,6 +4951,9 @@ fn test_warning_rejects_malformed_invalid_code_and_bounds_without_hiding_headers
     r#"11 - "too short""#,
     r#"110 - "ok",,"#,
     "",
+    r#"110 foo@bar "text""#,
+    r#"110 foo/bar "text""#,
+    r#"110 foo?bar "text""#,
   ] {
     let raw = format!("HTTP/1.1 200 OK\r\nWarning: {value}\r\nContent-Length: 2\r\n\r\nOK");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
