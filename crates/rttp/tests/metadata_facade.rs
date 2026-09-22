@@ -1873,6 +1873,27 @@ fn compatibility_facade_exports_content_length_metadata_type() {
 }
 
 #[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_exports_clear_site_data_metadata_types() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nClear-Site-Data: \"cache\", \"storage\"\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("client response should parse");
+  let clear_site_data: rttp::HttpClearSiteData = response
+    .clear_site_data()
+    .expect("Clear-Site-Data should parse")
+    .expect("Clear-Site-Data should be present");
+  let directive: rttp::HttpClearSiteDataDirective = clear_site_data.directives()[0];
+  assert_eq!(rttp::HttpClearSiteDataDirective::Cache, directive);
+  assert!(clear_site_data.clears_storage());
+
+  let _: rttp::HttpClearSiteDataParseError =
+    rttp::HttpClearSiteData::parse("cache").expect_err("unquoted directive should fail");
+}
+
+#[test]
 fn compatibility_facade_exports_server_accept_metadata_types() {
   let accept: HttpAccept =
     HttpAccept::parse("text/html; level=1; q=0.8").expect("Accept should parse");
