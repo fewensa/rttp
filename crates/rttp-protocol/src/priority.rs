@@ -61,7 +61,7 @@ impl Priority {
           "Priority header value is too large",
         ));
       }
-      if value.trim().is_empty() {
+      if trim_ows(value).is_empty() {
         return Err(PriorityParseError::new("invalid Priority parameter"));
       }
       for member in split_members(value)? {
@@ -164,6 +164,12 @@ impl PriorityExtension {
   }
 }
 
+fn trim_ows(value: &str) -> &str {
+  value
+    .trim_start_matches([' ', '\t'])
+    .trim_end_matches([' ', '\t'])
+}
+
 fn split_members(value: &str) -> Result<Vec<&str>, PriorityParseError> {
   let mut members = Vec::new();
   let mut start = 0usize;
@@ -181,7 +187,7 @@ fn split_members(value: &str) -> Result<Vec<&str>, PriorityParseError> {
     } else if byte == b'"' {
       quoted = true;
     } else if byte == b',' {
-      let member = value[start..index].trim();
+      let member = trim_ows(&value[start..index]);
       if member.is_empty() {
         return Err(PriorityParseError::new("invalid Priority parameter"));
       }
@@ -192,7 +198,7 @@ fn split_members(value: &str) -> Result<Vec<&str>, PriorityParseError> {
   if quoted || escaped {
     return Err(PriorityParseError::new("invalid Priority parameter"));
   }
-  let member = value[start..].trim();
+  let member = trim_ows(&value[start..]);
   if member.is_empty() {
     return Err(PriorityParseError::new("invalid Priority parameter"));
   }
