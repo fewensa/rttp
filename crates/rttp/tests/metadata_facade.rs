@@ -1055,6 +1055,18 @@ fn spawn_representation_metadata_response_server(
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_exports_sec_gpc_and_upgrade_insecure_requests_metadata_types() {
+  let _: rttp::SecGpc = rttp::SecGpc::parse("1").expect("Sec-GPC should parse");
+  let _: rttp::SecGpcParseError =
+    rttp::SecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
+  let _: rttp::UpgradeInsecureRequests =
+    rttp::UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
+  let _: rttp::UpgradeInsecureRequestsParseError = rttp::UpgradeInsecureRequests::parse("0")
+    .expect_err("malformed Upgrade-Insecure-Requests should be rejected");
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn compatibility_facade_exports_from_metadata_types() {
   let from = rttp::From::parse("Ops Team <ops@example.test>").expect("From metadata should parse");
   assert_eq!("Ops Team <ops@example.test>", from.header_value());
