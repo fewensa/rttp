@@ -254,23 +254,18 @@ fn parse_parameter(
 ) -> Result<(), AltSvcParseError> {
   let name = parse_token(value, position, "invalid Alt-Svc parameter name")?.to_ascii_lowercase();
   skip_ows(value.as_bytes(), position);
-  let (quoted_value, parameter_value) = if value.as_bytes().get(*position) == Some(&b'=') {
-    *position += 1;
-    skip_ows(value.as_bytes(), position);
-    let quoted_value = value.as_bytes().get(*position) == Some(&b'"');
-    let parameter_value = if quoted_value {
-      parse_quoted_string(value, position)?
-    } else {
-      parse_token(value, position, "invalid Alt-Svc parameter value")?.to_string()
-    };
-    (quoted_value, Some(parameter_value))
+  if value.as_bytes().get(*position) != Some(&b'=') {
+    return Err(AltSvcParseError::new("invalid Alt-Svc parameter"));
+  }
+  *position += 1;
+  skip_ows(value.as_bytes(), position);
+  let quoted_value = value.as_bytes().get(*position) == Some(&b'"');
+  let parameter_value = if quoted_value {
+    parse_quoted_string(value, position)?
   } else {
-    (false, None)
+    parse_token(value, position, "invalid Alt-Svc parameter value")?.to_string()
   };
-  if parameter_value
-    .as_ref()
-    .is_some_and(|parameter| parameter.len() > MAX_ALT_SVC_PARAMETER_VALUE_BYTES)
-  {
+  if parameter_value.len() > MAX_ALT_SVC_PARAMETER_VALUE_BYTES {
     return Err(AltSvcParseError::new(
       "Alt-Svc parameter value is too large",
     ));
@@ -281,7 +276,6 @@ fn parse_parameter(
         return Err(AltSvcParseError::new("invalid Alt-Svc ma parameter"));
       }
       let max_age = parameter_value
-        .ok_or_else(|| AltSvcParseError::new("invalid Alt-Svc ma parameter"))?
         .parse::<u64>()
         .map_err(|_| AltSvcParseError::new("invalid Alt-Svc ma parameter"))?;
       if alternative.max_age.replace(max_age).is_some() {
@@ -292,9 +286,9 @@ fn parse_parameter(
       if quoted_value {
         return Err(AltSvcParseError::new("invalid Alt-Svc persist parameter"));
       }
-      let persist = match parameter_value.as_deref() {
-        Some("0") => false,
-        Some("1") => true,
+      let persist = match parameter_value.as_str() {
+        "0" => false,
+        "1" => true,
         _ => return Err(AltSvcParseError::new("invalid Alt-Svc persist parameter")),
       };
       if alternative.persist.replace(persist).is_some() {
@@ -311,7 +305,7 @@ fn parse_parameter(
       }
       alternative.parameters.push(AltSvcParameter {
         name,
-        value: parameter_value,
+        value: Some(parameter_value),
       });
     }
   }

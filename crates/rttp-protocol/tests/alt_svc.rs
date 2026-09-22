@@ -115,16 +115,14 @@ fn validates_ma_persist_and_duplicate_parameters() {
 }
 
 #[test]
-fn preserves_extension_token_quoted_and_valueless_forms() {
-  let alt_svc =
-    AltSvc::parse(r#"h3=":443"; token=abc; quoted="two words, \"quoted\""; flag; empty="""#)
-      .expect("extension parameter forms should parse");
+fn preserves_extension_token_and_quoted_forms() {
+  let alt_svc = AltSvc::parse(r#"h3=":443"; token=abc; quoted="two words, \"quoted\""; empty="""#)
+    .expect("extension parameter forms should parse");
 
   assert_eq!(
     vec![
       ("token", Some("abc")),
       ("quoted", Some("two words, \"quoted\"")),
-      ("flag", None),
       ("empty", Some("")),
     ],
     alt_svc.alternatives()[0]
@@ -134,7 +132,7 @@ fn preserves_extension_token_quoted_and_valueless_forms() {
       .collect::<Vec<_>>()
   );
   assert_eq!(
-    r#"h3=":443"; token=abc; quoted="two words, \"quoted\""; flag; empty="""#,
+    r#"h3=":443"; token=abc; quoted="two words, \"quoted\""; empty="""#,
     alt_svc.header_value()
   );
   assert_eq!(
@@ -155,6 +153,7 @@ fn rejects_malformed_separators_protocol_ids_and_authorities() {
     "h3=\":443\",, h2=\":8443\"",
     "h3=\":443\";",
     "h3=\":443\";;flag",
+    "h3=\":443\"; flag",
     "h3=\":443\" x=1",
     "h3=\":443\"; x=1 y=2",
     "=\":443\"",
