@@ -2983,6 +2983,132 @@ fn test_content_type_parse_rejects_crlf_injection() {
 }
 
 #[test]
+fn test_content_type_parse_accepts_sp_htab_ows_and_quoted_escapes() {
+  let content_type = ContentType::parse(
+    "\t text \t/\t Plain \t;\t CHARSET \t=\t \"utf-8\" \t;\t title \t=\t \"say \\\"hi\\\"; C:\\\\tmp\" \t",
+  )
+  .expect("SP/HTAB OWS and quoted-string escapes should parse");
+
+  assert_eq!("text", content_type.type_());
+  assert_eq!("plain", content_type.subtype());
+  assert_eq!("text/plain", content_type.essence());
+  assert_eq!(Some("utf-8"), content_type.parameter("charset"));
+  assert_eq!(Some("say \"hi\"; C:\\tmp"), content_type.parameter("title"));
+  assert_eq!(
+    vec![("charset", "utf-8"), ("title", "say \"hi\"; C:\\tmp")],
+    content_type
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn test_content_type_parse_rejects_cr_lf_vt_ff_and_unicode_padding() {
+  let invalid_values = [
+    "text/plain; charset=\"bad\rvalue\"",
+    "text/plain; charset=\"bad\nvalue\"",
+    "text\u{000b}/plain",
+    "text/\u{000c}plain",
+    "text/plain;\u{000b}charset=utf-8",
+    "text/plain; charset\u{000c}=utf-8",
+    "text/plain; charset=\u{000b}utf-8",
+    "text/plain; charset=\"utf-8\"\u{000c}",
+    "\u{00a0}text/plain",
+    "text\u{00a0}/plain",
+    "text/\u{0085}plain",
+    "text/plain\u{00a0}",
+    "text/plain;\u{00a0}charset=utf-8",
+    "text/plain; charset\u{0085}=utf-8",
+    "text/plain; charset=\u{00a0}utf-8",
+    "text/plain; charset=\"utf-8\"\u{00a0}",
+  ];
+
+  for value in invalid_values {
+    let error =
+      ContentType::parse(value).expect_err("content-type helper should reject non-OWS padding");
+    assert!(
+      error.to_string().contains("Content-Type"),
+      "unexpected error for {value:?}: {error}"
+    );
+  }
+}
+
+#[test]
+fn test_parse_content_type_response_helper_accepts_ows_padding_and_quoted_escapes() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Type: Text \t/\t Plain;\t charset \t=\t utf-8 ;\t title \t=\t \"say \\\"hi\\\"; C:\\\\tmp\"\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response with OWS-padded content-type");
+
+  let content_type = response
+    .content_type()
+    .expect("valid content-type should parse")
+    .expect("content-type header should be present");
+
+  assert_eq!("text", content_type.type_());
+  assert_eq!("plain", content_type.subtype());
+  assert_eq!("text/plain", content_type.essence());
+  assert_eq!(Some("utf-8"), content_type.parameter("charset"));
+  assert_eq!(Some("say \"hi\"; C:\\tmp"), content_type.parameter("title"));
+  assert_eq!(
+    vec![("charset", "utf-8"), ("title", "say \"hi\"; C:\\tmp")],
+    content_type
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    Some(
+      &"Text \t/\t Plain;\t charset \t=\t utf-8 ;\t title \t=\t \"say \\\"hi\\\"; C:\\\\tmp\""
+        .to_string()
+    ),
+    response.header_value("Content-Type")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
+fn test_parse_content_type_rejects_non_ows_padding_without_hiding_headers() {
+  let invalid_values: &[&[u8]] = &[
+    b"\xa0text/plain",
+    b"text\xa0/plain",
+    b"text/\x85plain",
+    b"text/plain\xa0",
+    b"text/plain;\xa0charset=utf-8",
+    b"text/plain; charset\x85=utf-8",
+    b"text/plain; charset=\xa0utf-8",
+    b"text/plain; charset=\"utf-8\"\xa0",
+  ];
+
+  for value in invalid_values {
+    let mut raw = b"HTTP/1.1 200 OK\r\nContent-Type: ".to_vec();
+    raw.extend_from_slice(value);
+    raw.extend_from_slice(b"\r\nContent-Length: 2\r\n\r\nOK");
+    let response =
+      Response::new(RoUrl::with("https://example.test"), raw).expect("raw response remains usable");
+
+    assert!(
+      response.content_type().is_err(),
+      "content-type helper should reject {:?}",
+      String::from_utf8_lossy(value)
+    );
+    assert_eq!(
+      Some(&value.iter().copied().map(char::from).collect::<String>()),
+      response.header_value("Content-Type")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+}
+
+#[test]
 fn test_parse_conditional_response_metadata() {
   let s = concat!(
     "HTTP/1.1 304 Not Modified\r\n",
