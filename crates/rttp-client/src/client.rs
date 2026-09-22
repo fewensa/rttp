@@ -2211,7 +2211,7 @@ impl HttpClient {
   }
 
   fn cache_control_member(&mut self, name: &str, value: Option<&str>) -> error::Result<&mut Self> {
-    let name = name.trim();
+    let name = trim_http_ows(name);
     if !is_http_token(name) || value.is_some_and(|value| !is_http_token(value)) {
       return Err(error::builder_with_message(
         "invalid Cache-Control directive",
@@ -2263,7 +2263,7 @@ impl HttpClient {
   ) -> error::Result<&mut Self> {
     if ["no-cache", "no-store", "max-age"]
       .iter()
-      .any(|directive| directive.eq_ignore_ascii_case(name.trim()))
+      .any(|directive| directive.eq_ignore_ascii_case(trim_http_ows(name)))
     {
       return Err(error::builder_with_message(
         "Cache-Control directive must use a dedicated helper",
@@ -2716,11 +2716,11 @@ fn parse_cache_control_directive_names(value: &str) -> error::Result<Vec<&str>> 
   }
   let mut names = Vec::new();
   for directive in value.split(',') {
+    let directive = trim_http_ows(directive);
     let (name, directive_value) = directive
-      .trim()
       .split_once('=')
-      .map_or((directive.trim(), None), |(name, value)| {
-        (name.trim(), Some(value.trim()))
+      .map_or((directive, None), |(name, value)| {
+        (trim_http_ows(name), Some(trim_http_ows(value)))
       });
     if !is_http_token(name) || directive_value.is_some_and(|value| !is_http_token(value)) {
       return Err(error::builder_with_message(
