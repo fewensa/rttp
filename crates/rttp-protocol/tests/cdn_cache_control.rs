@@ -30,6 +30,10 @@ fn rejects_malformed_or_empty_cdn_cache_control_values() {
   for value in [
     "",
     "max-age=",
+    "max-age =60",
+    "max-age= 60",
+    "max-age = 60",
+    "custom= \"quoted\"",
     "max-age=not a token",
     "custom=\"unterminated",
     "max-age=60\r\nno-store",
