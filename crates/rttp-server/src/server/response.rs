@@ -4447,7 +4447,7 @@ impl fmt::Display for HttpAgeParseError {
 impl Error for HttpAgeParseError {}
 
 pub(crate) fn parse_http_age(value: &str) -> Result<u64, HttpAgeParseError> {
-  let value = value.trim();
+  let value = value.trim_matches([' ', '\t']);
   if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
     return Err(HttpAgeParseError::new("invalid Age delta-seconds"));
   }
