@@ -603,7 +603,7 @@ pub(crate) fn response_body_kind(
     };
 
     if name.eq_ignore_ascii_case("Transfer-Encoding") {
-      for token in value.split(',').map(str::trim) {
+      for token in value.split(',').map(trim_http_ows) {
         if token.is_empty() {
           return Err(error::bad_response(
             "Unsupported Transfer-Encoding response body",
@@ -653,6 +653,10 @@ pub(crate) fn response_body_kind(
   } else {
     Ok(ResponseBodyKind::UntilEof)
   }
+}
+
+fn trim_http_ows(value: &str) -> &str {
+  value.trim_matches(|character| character == ' ' || character == '\t')
 }
 
 fn is_supported_chunked_transfer_coding_path(transfer_codings: &[&str]) -> bool {
@@ -1047,6 +1051,37 @@ mod tests {
         .contains("Unsupported Transfer-Encoding response body"),
       "unexpected error: {error}"
     );
+  }
+
+  #[test]
+  fn test_transfer_encoding_accepts_http_ows_padding() {
+    for transfer_encoding in [" chunked ", "\tchunked\t", " \tchunked\t "] {
+      let raw = format!("HTTP/1.1 200 OK\r\nTransfer-Encoding:{transfer_encoding}\r\n\r\n");
+      let kind = super::response_body_kind(raw.as_bytes(), false)
+        .expect("HTTP OWS should be accepted around the transfer coding");
+
+      assert_eq!(ResponseBodyKind::Chunked, kind);
+    }
+  }
+
+  #[test]
+  fn test_transfer_encoding_rejects_non_http_ows_padding() {
+    for transfer_encoding in [
+      "\u{000b}chunked\u{000b}",
+      "\u{000c}chunked\u{000c}",
+      "\u{00a0}chunked\u{00a0}",
+    ] {
+      let raw = format!("HTTP/1.1 200 OK\r\nTransfer-Encoding:{transfer_encoding}\r\n\r\n");
+      let error = super::response_body_kind(raw.as_bytes(), false)
+        .expect_err("non-OWS whitespace should not pad a transfer coding");
+
+      assert!(
+        error
+          .to_string()
+          .contains("Unsupported Transfer-Encoding response body"),
+        "unexpected error for {transfer_encoding:?}: {error}"
+      );
+    }
   }
 
   #[test]
