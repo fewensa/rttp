@@ -1161,6 +1161,31 @@ fn compatibility_facade_exports_origin_agent_cluster_metadata() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_exports_top_level_response_companion_types() {
+  let charsets = rttp::AcceptCharset::parse("utf-8, iso-8859-1;q=0.5")
+    .expect("Accept-Charset should parse through the facade");
+  let charset_range: &rttp::AcceptCharsetRange = &charsets.ranges()[0];
+  assert_eq!("utf-8", charset_range.charset());
+  let _: rttp::AcceptCharsetParseError = rttp::AcceptCharset::parse("utf-8, UTF-8")
+    .expect_err("duplicate Accept-Charset ranges should fail");
+
+  let encodings = rttp::AcceptEncoding::parse("gzip, br;q=0.8")
+    .expect("Accept-Encoding should parse through the facade");
+  let encoding_coding: &rttp::AcceptEncodingCoding = &encodings.codings()[0];
+  assert_eq!("gzip", encoding_coding.coding());
+  let _: rttp::AcceptEncodingParseError = rttp::AcceptEncoding::parse("gzip, GZIP")
+    .expect_err("duplicate Accept-Encoding codings should fail");
+
+  let _: rttp::AcceptRangesParseError = rttp::AcceptRanges::parse("bytes, bytes")
+    .expect_err("duplicate Accept-Ranges units should fail");
+  let _: rttp::AcceptChParseError =
+    rttp::AcceptCh::parse("").expect_err("empty Accept-CH should fail");
+  let _: rttp::CriticalChParseError =
+    rttp::CriticalCh::parse("").expect_err("empty Critical-CH should fail");
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn compatibility_facade_exports_client_metadata_types() {
   let dav: rttp::Dav =
     rttp_client::response::Dav::parse("1, 2, extended-mkcol, <https://dav.example.test/ns>")
