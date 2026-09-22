@@ -29,6 +29,41 @@ fn reporting_endpoints_parses_valid_multi_field_dictionaries() {
 }
 
 #[test]
+fn reporting_endpoints_accepts_only_http_ows_at_member_boundaries() {
+  let first = r#"default="https://reports.example/default""#;
+  let second = r#"csp="https://reports.example/csp""#;
+  let endpoints = ReportingEndpoints::parse(format!(" \t{first}\t ,\t {second} \t"))
+    .expect("SP and HTAB padding should be accepted");
+
+  assert_eq!(
+    vec![
+      ("default", "https://reports.example/default"),
+      ("csp", "https://reports.example/csp"),
+    ],
+    endpoints.endpoints()
+  );
+
+  for whitespace in ["\r", "\n", "\u{000b}", "\u{000c}", "\u{00a0}", "\u{2003}"] {
+    assert!(
+      ReportingEndpoints::parse(format!("{whitespace}{first}")).is_err(),
+      "non-OWS leading padding {whitespace:?} must be rejected"
+    );
+    assert!(
+      ReportingEndpoints::parse(format!("{first}{whitespace},{second}")).is_err(),
+      "non-OWS padding before a comma {whitespace:?} must be rejected"
+    );
+    assert!(
+      ReportingEndpoints::parse(format!("{first},{whitespace}{second}")).is_err(),
+      "non-OWS padding before a member {whitespace:?} must be rejected"
+    );
+    assert!(
+      ReportingEndpoints::parse(format!("{first}{whitespace}")).is_err(),
+      "non-OWS trailing padding {whitespace:?} must be rejected"
+    );
+  }
+}
+
+#[test]
 fn reporting_endpoints_unescapes_quoted_urls_and_round_trips() {
   let endpoints = ReportingEndpoints::parse(r#"default="https://reports.example/a\"b\\c""#)
     .expect("escaped Reporting-Endpoints URL should parse");

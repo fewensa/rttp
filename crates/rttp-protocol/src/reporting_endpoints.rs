@@ -10,7 +10,8 @@
 //! member must use `name="url"` form. Quoted URLs unescape only `\\` and `\"`
 //! and reject ASCII controls and obs-text. Duplicate names, empty dictionaries,
 //! too many members, oversized field values, and oversized cumulative input
-//! are errors.
+//! are errors. Optional padding around members accepts only HTTP OWS (SP and
+//! HTAB).
 //!
 //! ```
 //! use rttp_protocol::reporting_endpoints::ReportingEndpoints;
@@ -149,7 +150,7 @@ fn parse_reporting_endpoints_value(
   let bytes = value.as_bytes();
   let mut position = 0;
   while position < bytes.len() {
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
+    while position < bytes.len() && is_reporting_endpoints_ows(bytes[position]) {
       position += 1;
     }
     let name_start = position;
@@ -219,7 +220,7 @@ fn parse_reporting_endpoints_value(
       ));
     }
     endpoints.push((name.to_string(), url));
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
+    while position < bytes.len() && is_reporting_endpoints_ows(bytes[position]) {
       position += 1;
     }
     if position == bytes.len() {
@@ -238,6 +239,10 @@ fn parse_reporting_endpoints_value(
     }
   }
   Ok(())
+}
+
+fn is_reporting_endpoints_ows(byte: u8) -> bool {
+  matches!(byte, b' ' | b'\t')
 }
 
 fn is_reporting_endpoint_key_byte(byte: u8, first: bool) -> bool {
