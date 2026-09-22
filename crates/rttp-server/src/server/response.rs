@@ -744,6 +744,9 @@ impl HttpLinkValues {
       if value.len() > MAX_LINK_VALUE_BYTES {
         return Err(HttpLinkParseError::new("Link header value is too large"));
       }
+      if value.bytes().any(is_invalid_http_link_control_byte) {
+        return Err(HttpLinkParseError::new("invalid Link control byte"));
+      }
       for member in split_http_link_members(value, b',')? {
         if parsed.len() >= MAX_LINK_VALUES {
           return Err(HttpLinkParseError::new("too many Link values"));
@@ -778,7 +781,7 @@ pub struct HttpLinkValue {
 
 impl HttpLinkValue {
   fn parse_member(member: &str) -> Result<Self, HttpLinkParseError> {
-    let member = member.trim();
+    let member = trim_http_link_ows(member);
     let Some(target_and_tail) = member.strip_prefix('<') else {
       return Err(HttpLinkParseError::new("invalid Link target"));
     };
@@ -789,7 +792,7 @@ impl HttpLinkValue {
     validate_http_link_target(target)?;
 
     let mut parameters = Vec::new();
-    let tail = target_and_tail[target_end + 1..].trim();
+    let tail = trim_http_link_ows(&target_and_tail[target_end + 1..]);
     if !tail.is_empty() {
       if !tail.starts_with(';') {
         return Err(HttpLinkParseError::new("invalid Link parameter"));
@@ -941,7 +944,7 @@ fn split_http_link_members(value: &str, delimiter: u8) -> Result<Vec<String>, Ht
       b'<' if !quoted => in_target = true,
       b'>' if !quoted => in_target = false,
       byte if byte == delimiter && !quoted && !in_target => {
-        let member = value[start..index].trim();
+        let member = trim_http_link_ows(&value[start..index]);
         if member.is_empty() {
           return Err(HttpLinkParseError::new("invalid Link value"));
         }
@@ -954,7 +957,7 @@ fn split_http_link_members(value: &str, delimiter: u8) -> Result<Vec<String>, Ht
   if quoted || escaped || in_target {
     return Err(HttpLinkParseError::new("invalid Link value"));
   }
-  let member = value[start..].trim();
+  let member = trim_http_link_ows(&value[start..]);
   if member.is_empty() {
     return Err(HttpLinkParseError::new("invalid Link value"));
   }
@@ -964,10 +967,10 @@ fn split_http_link_members(value: &str, delimiter: u8) -> Result<Vec<String>, Ht
 
 fn parse_http_link_parameter(value: &str) -> Result<(String, String), HttpLinkParseError> {
   let (name, value) = match value.split_once('=') {
-    Some((name, value)) => (name, Some(value.trim())),
+    Some((name, value)) => (name, Some(trim_http_link_ows(value))),
     None => (value, None),
   };
-  let name = name.trim();
+  let name = trim_http_link_ows(name);
   if !is_http_token(name) {
     return Err(HttpLinkParseError::new("invalid Link parameter name"));
   }
@@ -993,33 +996,51 @@ fn parse_http_link_parameter(value: &str) -> Result<(String, String), HttpLinkPa
 }
 
 fn parse_http_link_quoted_string(value: &str) -> Result<String, HttpLinkParseError> {
-  if !value.ends_with('"') || value.len() < 2 {
+  let Some(inner) = value.strip_prefix('"') else {
     return Err(HttpLinkParseError::new("invalid Link quoted-string"));
-  }
-
-  let inner = &value[1..value.len() - 1];
+  };
+  let mut chars = inner.chars();
   let mut parsed = String::new();
-  let mut escaped = false;
-  for ch in inner.chars() {
-    if escaped {
-      if !is_http_link_quoted_pair_char(ch) {
+  let mut closed = false;
+
+  while let Some(ch) = chars.next() {
+    match ch {
+      '"' => {
+        closed = true;
+        break;
+      }
+      '\\' => {
+        let Some(escaped) = chars.next() else {
+          return Err(HttpLinkParseError::new("invalid Link quoted-string"));
+        };
+        if !is_http_link_quoted_pair_char(escaped) {
+          return Err(HttpLinkParseError::new("invalid Link quoted-string"));
+        }
+        parsed.push(escaped);
+      }
+      _ if is_http_link_quoted_text_char(ch) => parsed.push(ch),
+      _ => {
         return Err(HttpLinkParseError::new("invalid Link quoted-string"));
       }
-      parsed.push(ch);
-      escaped = false;
-    } else if ch == '\\' {
-      escaped = true;
-    } else if ch == '"' || !is_http_link_quoted_text_char(ch) {
-      return Err(HttpLinkParseError::new("invalid Link quoted-string"));
-    } else {
-      parsed.push(ch);
     }
   }
 
-  if escaped {
+  if !closed || chars.any(|ch| !is_http_link_ows_char(ch)) {
     return Err(HttpLinkParseError::new("invalid Link quoted-string"));
   }
   Ok(parsed)
+}
+
+fn trim_http_link_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
+}
+
+fn is_http_link_ows_char(ch: char) -> bool {
+  matches!(ch, ' ' | '\t')
+}
+
+fn is_invalid_http_link_control_byte(byte: u8) -> bool {
+  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }
 
 fn is_http_link_quoted_text_char(ch: char) -> bool {

@@ -3965,6 +3965,31 @@ fn response_link_metadata_parses_multiple_values_and_preserves_unknown_parameter
 }
 
 #[test]
+fn response_link_metadata_accepts_ows_quoted_commas_and_relative_targets() {
+  let response = HttpResponse::ok("body")
+    .header(
+      "Link",
+      " \t</a.css>; rel=\"preload\" \t,\t</b.css>; title=\"x,y\"; rel=prefetch ",
+    )
+    .header("link", "<../images/logo.png?size=small#v1>");
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(3, links.len());
+  assert_eq!("/a.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!("/b.css", links.values()[1].target());
+  assert_eq!(Some("x,y"), links.values()[1].parameter("title"));
+  assert_eq!(
+    "../images/logo.png?size=small#v1",
+    links.values()[2].target()
+  );
+}
+
+#[test]
 fn response_link_metadata_preserves_valueless_extensions_and_empty_quoted_values() {
   let response =
     HttpResponse::ok("body").header("Link", "</style.css>; rel=preload; nopush; title=\"\"");
@@ -4018,6 +4043,13 @@ fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_head
     "</style.css>; rel= ",
     "</style.css>; rel =",
     "</style.css>; rel = ",
+    r#"</style.css>; rel="preload"extra"#,
+    r#"</style.css>; rel="preload" extra"#,
+    "</style.css>; rel=preload\u{0b}",
+    "</style.css>; rel=preload\u{0c}",
+    "</style.css>; rel=preload\u{7f}",
+    "\u{00a0}</style.css>; rel=preload",
+    "</a.css>,\u{00a0}</b.css>",
   ] {
     let response = HttpResponse::ok("body").header("Link", value);
     assert!(
@@ -4025,9 +4057,10 @@ fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_head
       "Link parser should reject {value:?}"
     );
     assert!(
-      String::from_utf8(response.to_bytes())
-        .expect("response should remain UTF-8")
-        .contains(&format!("\r\nLink: {value}\r\n")),
+      response
+        .to_bytes()
+        .windows(value.len())
+        .any(|window| window == value.as_bytes()),
       "raw Link header should remain available"
     );
   }
@@ -6081,6 +6114,8 @@ fn early_hints_rejects_links_that_links_parser_rejects() {
     "<caf\u{e9}>",
     "</style.css>; rel=",
     "</style.css>; rel= ",
+    r#"</style.css>; rel="preload"extra"#,
+    "\u{00a0}</style.css>; rel=preload",
   ] {
     assert!(
       HttpResponse::early_hints([value]).is_err(),

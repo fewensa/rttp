@@ -5371,6 +5371,38 @@ fn test_parse_link_response_metadata_preserves_valueless_extensions() {
 }
 
 #[test]
+fn test_parse_link_response_metadata_accepts_ows_quoted_commas_and_relative_targets() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Link: </a.css>; rel=\"preload\" \t,\t</b.css>; title=\"x,y\"; rel=prefetch\r\n",
+    "link: <../images/logo.png?size=small#v1>\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/app/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("raw response with OWS and quoted Link metadata remains usable");
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(3, links.len());
+  assert_eq!("/a.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!("/b.css", links.values()[1].target());
+  assert_eq!(Some("x,y"), links.values()[1].parameter("title"));
+  assert_eq!(
+    "../images/logo.png?size=small#v1",
+    links.values()[2].target()
+  );
+}
+
+#[test]
 fn test_link_response_metadata_rejects_invalid_and_bounded_values_without_losing_headers() {
   for value in [
     "style.css; rel=preload",
@@ -5389,6 +5421,33 @@ fn test_link_response_metadata_rejects_invalid_and_bounded_values_without_losing
     );
     assert_eq!(Some(&value.to_string()), response.header_value("Link"));
   }
+
+  for value in [
+    r#"</style.css>; rel="preload"extra"#,
+    r#"</style.css>; rel="preload" extra"#,
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nLink: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+    assert!(
+      response.links().is_err(),
+      "Link parser should reject {value:?}"
+    );
+    assert_eq!(Some(&value.to_string()), response.header_value("Link"));
+  }
+
+  let raw =
+    b"HTTP/1.1 200 OK\r\nLink: </a.css>,\xA0</b.css>\r\nContent-Length: 2\r\n\r\nOK".to_vec();
+  let response = Response::new(RoUrl::with("https://example.test"), raw)
+    .expect("raw response with non-OWS Link whitespace remains usable");
+  assert!(
+    response.links().is_err(),
+    "Link parser should reject non-OWS list whitespace"
+  );
+  assert_eq!(
+    Some(&"</a.css>,\u{a0}</b.css>".to_string()),
+    response.header_value("Link")
+  );
 
   let oversized = format!("</{}>", "a".repeat(64 * 1024));
   assert!(LinkValues::parse(oversized).is_err());
