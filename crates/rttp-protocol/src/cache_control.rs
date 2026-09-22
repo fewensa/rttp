@@ -53,6 +53,10 @@ mod tests {
   fn rejects_invalid_syntax_and_control_bytes() {
     for value in [
       "max-age=",
+      "max-age =60",
+      "max-age= 60",
+      "max-age = 60",
+      "custom= \"quoted\"",
       "max-age=not a token",
       "custom=\"unterminated",
       "custom=\"invalid\\\x01\"",
@@ -236,10 +240,8 @@ fn parse_directive(
   position: &mut usize,
 ) -> Result<CacheControlDirective, CacheControlParseError> {
   let name = parse_token(value, position, "invalid Cache-Control directive")?.to_string();
-  skip_ows(value.as_bytes(), position);
   let value = if value.as_bytes().get(*position) == Some(&b'=') {
     *position += 1;
-    skip_ows(value.as_bytes(), position);
     Some(parse_directive_value(value, position)?)
   } else {
     None
