@@ -1172,6 +1172,24 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::AccessControlAllowCredentialsParseError =
     rttp_client::response::AccessControlAllowCredentials::parse("false")
       .expect_err("invalid Access-Control-Allow-Credentials should fail");
+  let allow_headers: rttp::AccessControlAllowHeaders =
+    rttp_client::response::AccessControlAllowHeaders::parse("X-Request-Id, ETag")
+      .expect("Access-Control-Allow-Headers should parse");
+  let _: rttp::AccessControlAllowHeadersParseError =
+    rttp_client::response::AccessControlAllowHeaders::parse("")
+      .expect_err("invalid Access-Control-Allow-Headers should fail");
+  let allow_methods: rttp::AccessControlAllowMethods =
+    rttp_client::response::AccessControlAllowMethods::parse("GET, POST")
+      .expect("Access-Control-Allow-Methods should parse");
+  let _: rttp::AccessControlAllowMethodsParseError =
+    rttp_client::response::AccessControlAllowMethods::parse("")
+      .expect_err("invalid Access-Control-Allow-Methods should fail");
+  let allow_origin: rttp::AccessControlAllowOrigin =
+    rttp_client::response::AccessControlAllowOrigin::parse("*")
+      .expect("Access-Control-Allow-Origin should parse");
+  let _: rttp::AccessControlAllowOriginParseError =
+    rttp_client::response::AccessControlAllowOrigin::parse("")
+      .expect_err("invalid Access-Control-Allow-Origin should fail");
   let allow_private_network: rttp::AccessControlAllowPrivateNetwork =
     rttp_client::response::AccessControlAllowPrivateNetwork::parse(" true ")
       .expect("Access-Control-Allow-Private-Network should parse");
@@ -1179,6 +1197,17 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::AccessControlAllowPrivateNetworkParseError =
     rttp_client::response::AccessControlAllowPrivateNetwork::parse("false")
       .expect_err("invalid Access-Control-Allow-Private-Network should fail");
+  let expose_headers: rttp::AccessControlExposeHeaders =
+    rttp_client::response::AccessControlExposeHeaders::parse("X-Request-Id")
+      .expect("Access-Control-Expose-Headers should parse");
+  let _: rttp::AccessControlExposeHeadersParseError =
+    rttp_client::response::AccessControlExposeHeaders::parse("")
+      .expect_err("invalid Access-Control-Expose-Headers should fail");
+  let max_age: rttp::AccessControlMaxAge = rttp_client::response::AccessControlMaxAge::parse("60")
+    .expect("Access-Control-Max-Age should parse");
+  let _: rttp::AccessControlMaxAgeParseError =
+    rttp_client::response::AccessControlMaxAge::parse("")
+      .expect_err("invalid Access-Control-Max-Age should fail");
   let client_sec_websocket_key =
     HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
   let client_sec_websocket_accept: rttp::SecWebSocketAccept =
@@ -1601,6 +1630,11 @@ fn compatibility_facade_exports_client_metadata_types() {
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_credentials.header_value(), "true");
+  assert_eq!(allow_headers.field_names(), ["x-request-id", "etag"]);
+  assert_eq!(allow_methods.methods(), ["GET", "POST"]);
+  assert_eq!(allow_origin.header_value(), "*");
+  assert_eq!(expose_headers.field_names(), ["x-request-id"]);
+  assert_eq!(max_age.seconds(), 60);
   assert_eq!(
     client_sec_websocket_accept.as_str(),
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
