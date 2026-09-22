@@ -2095,11 +2095,13 @@ impl HttpClient {
     algorithm: &str,
     qvalue: Option<&str>,
   ) -> error::Result<&mut Self> {
-    let algorithm = algorithm.trim();
+    let algorithm = trim_http_ows(algorithm);
     if !is_http_token(algorithm) {
       return Err(error::builder_with_message("invalid digest algorithm"));
     }
-    let preference = qvalue.map(validate_digest_qvalue).transpose()?;
+    let preference = qvalue
+      .map(|qvalue| validate_digest_qvalue(trim_http_ows(qvalue)))
+      .transpose()?;
     let member = preference.map_or_else(
       || format!("{algorithm}=10"),
       |preference| format!("{algorithm}={preference}"),
@@ -2617,9 +2619,9 @@ fn append_unique_metadata_member(
 
 fn parse_digest_algorithms(value: &str) -> error::Result<Vec<&str>> {
   parse_metadata_members(value, "invalid digest algorithm", |member| {
-    let (algorithm, preference) = member.trim().split_once('=')?;
-    let algorithm = algorithm.trim();
-    (is_http_token(algorithm) && validate_digest_qvalue(preference.trim()).is_ok())
+    let (algorithm, preference) = trim_http_ows(member).split_once('=')?;
+    let algorithm = trim_http_ows(algorithm);
+    (is_http_token(algorithm) && validate_digest_qvalue(trim_http_ows(preference)).is_ok())
       .then_some(algorithm)
   })
 }
@@ -2684,7 +2686,7 @@ fn parse_metadata_members<'a>(
   }
   let mut members = Vec::new();
   for member in value.split(',') {
-    let Some(key) = parse(member.trim()) else {
+    let Some(key) = parse(trim_http_ows(member)) else {
       return Err(error::builder_with_message(error_message));
     };
     if members
@@ -2697,6 +2699,10 @@ fn parse_metadata_members<'a>(
     members.push(key);
   }
   Ok(members)
+}
+
+fn trim_http_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
 }
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
