@@ -5391,7 +5391,7 @@ pub(crate) fn push_cache_control_directive(
   directives: &mut Vec<String>,
   directive: &str,
 ) -> Result<(), HttpCacheControlParseError> {
-  let directive = directive.trim();
+  let directive = directive.trim_matches([' ', '\t']);
   if directive.is_empty() {
     return Err(HttpCacheControlParseError::new(
       "invalid Cache-Control directive",
@@ -5411,14 +5411,14 @@ pub(crate) fn parse_cache_control_directive(
 ) -> Result<ParsedCacheControlDirective<'_>, HttpCacheControlParseError> {
   let (name, value, value_was_quoted) = match directive.split_once('=') {
     Some((name, value)) => {
-      let value = value.trim();
+      let value = value.trim_matches([' ', '\t']);
       (
-        name.trim(),
+        name.trim_matches([' ', '\t']),
         Some(parse_cache_control_directive_value(value)?),
         value.starts_with('"'),
       )
     }
-    None => (directive.trim(), None, false),
+    None => (directive.trim_matches([' ', '\t']), None, false),
   };
   if !is_http_token(name) {
     return Err(HttpCacheControlParseError::new(
@@ -5482,7 +5482,7 @@ pub(crate) fn parse_cache_control_quoted_string(
     }
   }
 
-  if !closed || chars.any(|byte| !byte.is_ascii_whitespace()) {
+  if !closed || chars.any(|byte| !matches!(byte, b' ' | b'\t')) {
     return Err(HttpCacheControlParseError::new(
       "malformed Cache-Control quoted-string",
     ));
@@ -5515,7 +5515,7 @@ pub(crate) fn parse_cache_control_delta_seconds(
 pub(crate) fn split_cache_control_field_names(value: &str) -> Vec<String> {
   value
     .split(',')
-    .map(str::trim)
+    .map(|field| field.trim_matches([' ', '\t']))
     .filter(|field| !field.is_empty())
     .map(ToString::to_string)
     .collect()

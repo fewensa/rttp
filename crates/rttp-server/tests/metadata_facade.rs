@@ -50,9 +50,9 @@ use rttp_server::server::{
   HttpRateLimitLimitParseError, HttpRateLimitParseError, HttpRateLimitRemaining,
   HttpRateLimitRemainingParseError, HttpRateLimitReset, HttpRateLimitResetParseError, HttpReferer,
   HttpRefererParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
-  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpRetryAfter,
-  HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
+  HttpResponse, HttpResponseCacheControl, HttpResponseDate, HttpResponseDateParseError,
+  HttpResponseExpires, HttpResponseLastModified, HttpResponseLastModifiedParseError,
+  HttpRetryAfter, HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
   HttpSaveDataParseError, HttpScheduleTag, HttpSecChDpr, HttpSecChDprParseError, HttpSecChUa,
   HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaFormFactors,
   HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersion, HttpSecChUaFullVersionList,
@@ -1307,6 +1307,66 @@ fn response_facade_declares_and_parses_surrogate_control_without_policy() {
     .surrogate_control()
     .expect("missing header should be valid")
     .is_none());
+}
+
+#[test]
+fn response_cache_controls_accept_only_http_ows_padding() {
+  let cache_value =
+    "\t no-cache \t= \t\"X-User \t, \tAuthorization\" \t, \tmax-age \t= \t60 \t, \tcommunity \t= \t\"quoted\\\" value\" \t";
+  let response = HttpResponse::ok("").header("Cache-Control", cache_value);
+  let cache_control = response
+    .cache_control()
+    .expect("Cache-Control should parse with HTTP OWS")
+    .expect("Cache-Control should be present");
+
+  assert_eq!(cache_control.no_cache_fields(), ["X-User", "Authorization"]);
+  assert_eq!(cache_control.max_age(), Some(60));
+  assert_eq!(cache_control.extensions()[0].name(), "community");
+  assert_eq!(
+    cache_control.extensions()[0].value(),
+    Some("quoted\" value")
+  );
+
+  let surrogate_value = "\t max-age \t= \t600 \t, \tcontent \t= \t\"ESI/1.0\" \t";
+  let surrogate_response = HttpResponse::ok("").header("Surrogate-Control", surrogate_value);
+  let surrogate_control = surrogate_response
+    .surrogate_control()
+    .expect("Surrogate-Control should parse with HTTP OWS")
+    .expect("Surrogate-Control should be present");
+  assert_eq!(surrogate_control.directives()[0].name(), "max-age");
+  assert_eq!(surrogate_control.directives()[0].value(), Some("600"));
+  assert_eq!(
+    surrogate_control.header_value(),
+    "max-age=600, content=\"ESI/1.0\""
+  );
+
+  for whitespace in ["\r", "\n", "\u{000b}", "\u{000c}", "\u{00a0}", "\u{2003}"] {
+    for value in [
+      format!("{whitespace}max-age=60"),
+      format!("max-age=60{whitespace}"),
+      format!("max-age{whitespace}=60"),
+      format!("max-age={whitespace}60"),
+      format!("community=\"quoted\"{whitespace}"),
+    ] {
+      assert!(
+        HttpResponseCacheControl::parse(&value).is_err(),
+        "{value:?} should reject non-OWS Cache-Control padding"
+      );
+      assert!(
+        HttpSurrogateControl::parse(&value).is_err(),
+        "{value:?} should reject non-OWS Surrogate-Control padding"
+      );
+    }
+  }
+
+  let malformed = HttpResponse::ok("")
+    .header("Cache-Control", "max-age=")
+    .header("Surrogate-Control", "max-age=");
+  assert!(malformed.cache_control().is_err());
+  assert!(malformed.surrogate_control().is_err());
+  let rendered = String::from_utf8(malformed.to_bytes()).expect("response should serialize");
+  assert!(rendered.contains("\r\nCache-Control: max-age=\r\n"));
+  assert!(rendered.contains("\r\nSurrogate-Control: max-age=\r\n"));
 }
 
 #[test]
