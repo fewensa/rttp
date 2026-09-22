@@ -84,6 +84,19 @@ fn client_facade_exports_alt_svc_metadata_types() {
 }
 
 #[test]
+fn client_facade_accepts_escaped_obs_text_in_alt_svc_quoted_strings() {
+  let alt_svc =
+    AltSvc::parse(r#"h3=":443"; note="\é""#).expect("escaped obs-text Alt-Svc should parse");
+
+  assert_eq!(Some("é"), alt_svc.alternatives()[0].parameters()[0].value());
+  assert_eq!(r#"h3=":443"; note="é""#, alt_svc.header_value());
+  assert_eq!(
+    alt_svc,
+    AltSvc::parse(alt_svc.header_value()).expect("escaped obs-text should round-trip")
+  );
+}
+
+#[test]
 fn client_facade_exports_accept_signature_metadata_types() {
   let metadata = AcceptSignature::parse(
     r#"sig1=("@method" "content-digest");created;nonce="n1";keyid="test-key""#,

@@ -163,7 +163,7 @@ fn parse_authority(value: &str) -> Result<Host, HostParseError> {
   }
 }
 
-fn is_valid_ip_literal(host: &str) -> bool {
+pub(crate) fn is_valid_ip_literal(host: &str) -> bool {
   !host.is_empty()
     && !host.bytes().any(|byte| matches!(byte, b'[' | b']'))
     && (host.parse::<Ipv6Addr>().is_ok() || is_valid_ipvfuture(host))
@@ -184,7 +184,7 @@ fn is_valid_ipvfuture(host: &str) -> bool {
       .all(|byte| is_unreserved(byte) || is_sub_delim(byte) || byte == b':')
 }
 
-fn is_valid_reg_name_or_ipv4(host: &str) -> bool {
+pub(crate) fn is_valid_reg_name_or_ipv4(host: &str) -> bool {
   !host.is_empty() && is_valid_reg_name(host.as_bytes())
 }
 

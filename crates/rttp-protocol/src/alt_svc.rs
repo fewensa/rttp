@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt;
-use std::net::Ipv6Addr;
+
+use crate::host::{is_valid_ip_literal, is_valid_reg_name_or_ipv4};
+use crate::http1::{is_qdtext, is_quoted_pair_char};
 
 pub const MAX_ALT_SVC_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ALT_SVC_ALTERNATIVES: usize = 256;
@@ -326,11 +328,9 @@ fn validate_authority(authority: &str) -> Result<(), AltSvcParseError> {
     return Ok(());
   }
   let valid_host = if host.starts_with('[') && host.ends_with(']') {
-    host[1..host.len() - 1].parse::<Ipv6Addr>().is_ok()
+    is_valid_ip_literal(&host[1..host.len() - 1])
   } else {
-    host
-      .bytes()
-      .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+    is_valid_reg_name_or_ipv4(host)
   };
   if valid_host {
     Ok(())
@@ -340,35 +340,31 @@ fn validate_authority(authority: &str) -> Result<(), AltSvcParseError> {
 }
 
 fn parse_quoted_string(value: &str, position: &mut usize) -> Result<String, AltSvcParseError> {
-  if value.as_bytes().get(*position) != Some(&b'"') {
+  let bytes = value.as_bytes();
+  if bytes.get(*position) != Some(&b'"') {
     return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"));
   }
   *position += 1;
-  let mut parsed = String::new();
-  let mut unescaped_start = *position;
-  let mut escaped = false;
-  while let Some(&byte) = value.as_bytes().get(*position) {
-    if escaped {
-      *position += 1;
-      if !(byte == b'\t' || (0x20..=0x7e).contains(&byte)) {
-        return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"));
+  let mut parsed = Vec::new();
+  while let Some(&byte) = bytes.get(*position) {
+    *position += 1;
+    match byte {
+      b'"' => {
+        return String::from_utf8(parsed)
+          .map_err(|_| AltSvcParseError::new("invalid Alt-Svc quoted-string"));
       }
-      parsed.push(byte as char);
-      escaped = false;
-      unescaped_start = *position;
-    } else if byte == b'\\' {
-      parsed.push_str(&value[unescaped_start..*position]);
-      *position += 1;
-      escaped = true;
-    } else if byte == b'"' {
-      parsed.push_str(&value[unescaped_start..*position]);
-      *position += 1;
-      return Ok(parsed);
-    } else if byte == b'\t' || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e | 0x80..=0xff)
-    {
-      *position += 1;
-    } else {
-      return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"));
+      b'\\' => {
+        let Some(&escaped) = bytes.get(*position) else {
+          return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"));
+        };
+        if !is_quoted_pair_char(escaped) {
+          return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"));
+        }
+        *position += 1;
+        parsed.push(escaped);
+      }
+      _ if is_qdtext(byte) => parsed.push(byte),
+      _ => return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string")),
     }
   }
   Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"))

@@ -142,6 +142,31 @@ fn preserves_extension_token_and_quoted_forms() {
 }
 
 #[test]
+fn accepts_obs_text_in_quoted_pair_escapes() {
+  let alt_svc = AltSvc::parse(r#"h3=":443"; note="\é""#).expect("escaped obs-text should parse");
+
+  assert_eq!(Some("é"), alt_svc.alternatives()[0].parameters()[0].value());
+  assert_eq!(r#"h3=":443"; note="é""#, alt_svc.header_value());
+  assert_eq!(
+    alt_svc,
+    AltSvc::parse(alt_svc.header_value()).expect("escaped obs-text should round-trip")
+  );
+}
+
+#[test]
+fn accepts_uri_host_authority_forms() {
+  for authority in ["foo_bar:443", "foo%2Dbar:443", "[v1.fe80::a]:443"] {
+    let alt_svc = AltSvc::parse(format!(r#"h3="{authority}""#))
+      .unwrap_or_else(|_| panic!("{authority} should parse as an Alt-Svc authority"));
+    assert_eq!(authority, alt_svc.alternatives()[0].authority());
+    assert_eq!(
+      alt_svc,
+      AltSvc::parse(alt_svc.header_value()).expect("uri-host authority should round-trip")
+    );
+  }
+}
+
+#[test]
 fn rejects_malformed_separators_protocol_ids_and_authorities() {
   for value in [
     "",

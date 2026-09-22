@@ -4515,6 +4515,26 @@ fn test_alt_svc_response_helper_parses_and_round_trips_alternatives() {
 }
 
 #[test]
+fn test_alt_svc_response_helper_accepts_escaped_obs_text_parameter_values() {
+  let mut raw = b"HTTP/1.1 200 OK\r\nAlt-Svc: h3=\":443\"; note=\"\\".to_vec();
+  raw.push(0xe9);
+  raw.extend_from_slice(b"\"\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw)
+    .expect("raw response should remain usable");
+  let alt_svc = response
+    .alt_svc()
+    .expect("Alt-Svc should parse")
+    .expect("Alt-Svc should be present");
+
+  assert_eq!(Some("é"), alt_svc.alternatives()[0].parameters()[0].value());
+  assert_eq!(r#"h3=":443"; note="é""#, alt_svc.header_value());
+  assert_eq!(
+    alt_svc,
+    AltSvc::parse(alt_svc.header_value()).expect("escaped obs-text should round-trip")
+  );
+}
+
+#[test]
 fn test_alt_svc_rejects_invalid_or_unbounded_metadata_without_hiding_headers() {
   for value in [
     "h3=:443",
