@@ -73,6 +73,12 @@ pub use rttp_client::response::{
   XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
+pub use rttp_client::response::{
+  LinkParameter, LinkParseError, LinkValue, LinkValues, PreferParseError, Preference,
+  PreferenceApplied, PreferenceAppliedParseError, PreferenceKind, PreferenceParameter, Priority,
+  PriorityExtension, PriorityParseError,
+};
+#[cfg(feature = "client")]
 pub use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, AcceptDatetime, AcceptDatetimeParseError, Baggage,
   BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,

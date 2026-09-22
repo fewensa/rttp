@@ -1221,6 +1221,46 @@ fn compatibility_facade_exports_content_companion_types() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_exports_link_preference_and_priority_metadata_types() {
+  let links = rttp::LinkValues::parse(
+    "</style.css>; rel=preload; as=style, <https://cdn.example.test/app.js>; rel=modulepreload",
+  )
+  .expect("Link should parse through the facade");
+  let link_value: &rttp::LinkValue = &links.values()[0];
+  let link_parameter: &rttp::LinkParameter = &link_value.parameters()[0];
+  assert_eq!("/style.css", link_value.target());
+  assert_eq!("rel", link_parameter.name());
+  assert_eq!(Some("preload"), link_value.parameter("rel"));
+  let _: rttp::LinkParseError =
+    rttp::LinkValues::parse("").expect_err("empty Link should be rejected");
+
+  let preference_applied = rttp::PreferenceApplied::parse("return=representation, wait=10")
+    .expect("Preference-Applied should parse through the facade");
+  let preference: &rttp::Preference = &preference_applied.preferences()[0];
+  let preference_kind: rttp::PreferenceKind = preference.kind();
+  let preference_parameter: Option<&rttp::PreferenceParameter> = preference.parameters().first();
+  assert_eq!(rttp::PreferenceKind::Return, preference_kind);
+  assert_eq!("return", preference.name());
+  assert_eq!(Some("representation"), preference.value());
+  assert!(preference_parameter.is_none());
+  let _: rttp::PreferenceAppliedParseError =
+    rttp::PreferenceApplied::parse("").expect_err("empty Preference-Applied should be rejected");
+  let _: rttp::PreferParseError =
+    rttp::PreferenceApplied::parse("").expect_err("empty preference metadata should be rejected");
+
+  let priority =
+    rttp::Priority::parse("u=3, i, foo=bar").expect("Priority should parse through the facade");
+  let priority_extension: &rttp::PriorityExtension = &priority.extensions()[0];
+  assert_eq!(Some(3), priority.urgency());
+  assert!(priority.incremental());
+  assert_eq!("foo", priority_extension.name());
+  assert_eq!(Some("bar"), priority_extension.value());
+  let _: rttp::PriorityParseError =
+    rttp::Priority::parse("").expect_err("empty Priority should be rejected");
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn compatibility_facade_exports_client_metadata_types() {
   let dav: rttp::Dav =
     rttp_client::response::Dav::parse("1, 2, extended-mkcol, <https://dav.example.test/ns>")
