@@ -523,9 +523,15 @@ pub(crate) fn h2c_upgrade_settings(request: &Request) -> io::Result<Option<Vec<u
   let settings = request
     .header("HTTP2-Settings")
     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP2-Settings header"))?;
-  let payload = decode_base64url_unpadded(settings.trim())?;
+  let payload = decode_base64url_unpadded(trim_http_ows(settings))?;
   validate_http2_settings_payload(&payload)?;
   Ok(Some(payload))
+}
+
+fn trim_http_ows(value: &str) -> &str {
+  value
+    .trim_start_matches([' ', '\t'])
+    .trim_end_matches([' ', '\t'])
 }
 
 pub(crate) fn write_h2c_upgrade_response<S: Write>(stream: &mut S) -> io::Result<()> {
@@ -2440,5 +2446,100 @@ pub(crate) fn http2_static_header(index: usize) -> io::Result<(&'static str, &'s
       io::ErrorKind::InvalidData,
       "unsupported HPACK static table index",
     )),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn h2c_upgrade_request(settings: &str) -> Request {
+    Request {
+      method: "GET".to_string(),
+      target: "/".to_string(),
+      version: "HTTP/1.1".to_string(),
+      headers: vec![
+        (
+          "Connection".to_string(),
+          "Upgrade, HTTP2-Settings".to_string(),
+        ),
+        ("Upgrade".to_string(), "h2c".to_string()),
+        ("HTTP2-Settings".to_string(), settings.to_string()),
+      ],
+      trailers: Vec::new(),
+      body: Vec::new(),
+      content_length: None,
+      extended_connect_protocol: None,
+    }
+  }
+
+  fn setting(id: u16, value: u32) -> [u8; 6] {
+    let mut payload = [0u8; 6];
+    payload[0..2].copy_from_slice(&id.to_be_bytes());
+    payload[2..6].copy_from_slice(&value.to_be_bytes());
+    payload
+  }
+
+  fn encode_base64url_unpadded(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut encoded = String::new();
+    for chunk in bytes.chunks(3) {
+      let first = chunk[0];
+      let second = *chunk.get(1).unwrap_or(&0);
+      let third = *chunk.get(2).unwrap_or(&0);
+      let value = ((first as u32) << 16) | ((second as u32) << 8) | third as u32;
+      encoded.push(ALPHABET[((value >> 18) & 0x3f) as usize] as char);
+      encoded.push(ALPHABET[((value >> 12) & 0x3f) as usize] as char);
+      if chunk.len() >= 2 {
+        encoded.push(ALPHABET[((value >> 6) & 0x3f) as usize] as char);
+      }
+      if chunk.len() == 3 {
+        encoded.push(ALPHABET[(value & 0x3f) as usize] as char);
+      }
+    }
+    encoded
+  }
+
+  #[test]
+  fn h2c_http2_settings_rejects_non_ows_whitespace_around_base64url() {
+    let encoded = encode_base64url_unpadded(&setting(HTTP2_SETTINGS_ENABLE_PUSH, 0));
+    for whitespace in ["\r", "\n", "\u{0b}", "\u{0c}", "\u{00a0}", "\u{2003}"] {
+      for value in [
+        format!("{whitespace}{encoded}"),
+        format!("{encoded}{whitespace}"),
+        format!("{whitespace}{encoded}{whitespace}"),
+      ] {
+        let error = h2c_upgrade_settings(&h2c_upgrade_request(&value))
+          .expect_err("non-OWS whitespace around HTTP2-Settings must be rejected");
+        assert_eq!(
+          "invalid HTTP2-Settings header",
+          error.to_string(),
+          "{value:?}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn h2c_http2_settings_accepts_ows_and_valid_unpadded_payloads() {
+    let empty = encode_base64url_unpadded(&[]);
+    let push_disabled = encode_base64url_unpadded(&setting(HTTP2_SETTINGS_ENABLE_PUSH, 0));
+    let max_frame = encode_base64url_unpadded(&setting(HTTP2_SETTINGS_MAX_FRAME_SIZE, 16_384));
+
+    for value in [
+      empty.as_str(),
+      push_disabled.as_str(),
+      max_frame.as_str(),
+      &format!(" {push_disabled}"),
+      &format!("{push_disabled} "),
+      &format!("\t{push_disabled}\t"),
+      &format!(" \t{max_frame}\t "),
+    ] {
+      let payload = h2c_upgrade_settings(&h2c_upgrade_request(value))
+        .unwrap_or_else(|error| panic!("{value:?} should decode: {error}"))
+        .expect("h2c upgrade should be selected");
+      validate_http2_settings_payload(&payload)
+        .unwrap_or_else(|error| panic!("{value:?} settings payload should validate: {error}"));
+    }
   }
 }
