@@ -29,6 +29,7 @@ use rttp_protocol::client_hints::{
   SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64, SecChViewportHeight,
   SecChViewportWidth, ViewportWidth, Width,
 };
+use rttp_protocol::connection::Connection;
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
 use rttp_protocol::dnt::Dnt;
@@ -2051,8 +2052,8 @@ impl HttpClient {
   }
 
   fn te_member(&mut self, coding: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
-    let coding = coding.trim();
-    let qvalue = qvalue.map(str::trim);
+    let coding = trim_http_ows(coding);
+    let qvalue = qvalue.map(trim_http_ows);
     let member = qvalue.map_or_else(
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),
@@ -2085,7 +2086,7 @@ impl HttpClient {
     } else {
       headers.push(Header::new("TE", member));
     }
-    self.ensure_connection_te_token();
+    self.ensure_connection_te_token()?;
     Ok(self)
   }
 
@@ -2120,22 +2121,21 @@ impl HttpClient {
     Ok(self)
   }
 
-  fn ensure_connection_te_token(&mut self) {
+  fn ensure_connection_te_token(&mut self) -> error::Result<()> {
     let headers = self.request.headers_mut();
     if let Some(header) = headers
       .iter_mut()
       .find(|header| header.name().eq_ignore_ascii_case("Connection"))
     {
-      if !header
-        .value()
-        .split(',')
-        .any(|token| token.trim().eq_ignore_ascii_case("TE"))
-      {
+      let connection = Connection::parse(header.value())
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
+      if !connection.contains("TE") {
         header.replace(Header::new("Connection", format!("{}, TE", header.value())));
       }
     } else {
       headers.push(Header::new("Connection", "Close, TE"));
     }
+    Ok(())
   }
 
   fn prefer_member(&mut self, name: &str, value: Option<&str>) -> error::Result<&mut Self> {

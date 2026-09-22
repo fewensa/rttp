@@ -2965,6 +2965,151 @@ fn te_helpers_reject_cross_call_duplicates_across_inline_and_multi_coding_forms(
 }
 
 #[test]
+fn te_helpers_accept_http_ows_padding_and_preserve_existing_headers() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .te("\t gzip \t")
+      .expect("OWS-padded transfer coding should be accepted")
+      .te_with_q("\tdeflate\t", "\t0.5\t")
+      .expect("OWS-padded q-value should be accepted")
+      .te(" br ,\t compress ")
+      .expect("OWS-padded comma-separated codings should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("gzip, deflate;q=0.5, br ,\t compress"),
+    header_value(&request, "TE")
+  );
+  assert_eq!(Some("Close, TE"), header_value(&request, "Connection"));
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("TE", "\t gzip \t,\t deflate;q=0.5 \t"))
+      .header(("Connection", "\t Close \t"))
+      .te("\t br \t")
+      .expect("OWS-padded existing TE and Connection headers should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("gzip \t,\t deflate;q=0.5 \t, br"),
+    header_value(&request, "TE")
+  );
+  assert_eq!(Some("Close \t, TE"), header_value(&request, "Connection"));
+}
+
+#[test]
+fn te_helpers_reject_non_ows_whitespace_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let coding = format!("{whitespace}gzip{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .te(coding)
+        .expect_err("non-OWS whitespace around a transfer coding should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace around a transfer coding opened a socket"
+    );
+
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let qvalue = format!("{whitespace}0.5{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .te_with_q("gzip", qvalue)
+        .expect_err("non-OWS whitespace around a TE q-value should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace around a TE q-value opened a socket"
+    );
+  }
+}
+
+#[test]
+fn existing_te_and_connection_headers_reject_non_ows_whitespace_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let existing = format!("{whitespace}gzip{whitespace}, deflate");
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .header(("TE", existing.as_str()))
+        .te("br")
+        .expect_err("non-OWS existing TE header should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace in an existing TE header opened a socket"
+    );
+
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let existing = format!("{whitespace}Close{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .header(("Connection", existing.as_str()))
+        .te("gzip")
+        .expect_err("non-OWS existing Connection header should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace in an existing Connection header opened a socket"
+    );
+
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let existing = format!("{whitespace}Close{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .header(("Connection", existing.as_str()))
+        .header(("TE", "gzip"))
+        .emit()
+        .expect_err("non-OWS Connection tokens should be rejected when auto-adding TE");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace in Connection with a raw TE header opened a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_te_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("TE", "legacy value"))
+      .emit()
+      .expect("generic raw TE header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("legacy value"), header_value(&request, "TE"));
+  assert_eq!(Some("Close, TE"), header_value(&request, "Connection"));
+}
+
+#[test]
 fn te_helpers_reject_multi_coding_overflow_beyond_the_member_bound() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
