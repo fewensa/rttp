@@ -74,6 +74,62 @@ fn accept_request_builder_member_rejects_padded_qvalues() {
 }
 
 #[test]
+fn accept_accepts_http_ows_padding() {
+  let accept = Accept::parse(
+    "\t text/HTML \t;\t charset \t=\t utf-8 \t;\t q \t=\t 0.8 \t,\t application/json \t",
+  )
+  .expect("OWS-padded Accept should parse");
+
+  assert_eq!(
+    ["text/html", "application/json"],
+    accept
+      .media_ranges()
+      .iter()
+      .map(AcceptMediaRange::media_type)
+      .collect::<Vec<_>>()
+      .as_slice()
+  );
+  assert_eq!(Some(800), accept.media_ranges()[0].quality());
+  assert_eq!(
+    "text/html; charset=utf-8;q=0.8, application/json",
+    accept.header_value()
+  );
+
+  let member =
+    AcceptMediaRange::request_builder_member("\t text/plain \t;\t charset \t=\t utf-8 \t", None)
+      .expect("OWS-padded request-builder member should parse");
+  assert_eq!("text/plain \t;\t charset \t=\t utf-8", member);
+}
+
+#[test]
+fn accept_rejects_non_ows_padding_at_boundaries() {
+  for whitespace in ["\r", "\n", "\u{0b}", "\u{0c}", "\u{00a0}", "\u{2003}"] {
+    for value in [
+      format!("{whitespace}text/plain"),
+      format!("text/plain{whitespace}"),
+      format!("text/plain{whitespace},application/json"),
+      format!("text/plain,{whitespace}application/json"),
+      format!("text{whitespace}/plain"),
+      format!("text/{whitespace}plain"),
+      format!("text/plain;{whitespace}charset=utf-8"),
+      format!("text/plain; charset{whitespace}=utf-8"),
+      format!("text/plain; charset={whitespace}utf-8"),
+      format!("text/plain; q={whitespace}0.8"),
+      format!("text/plain; q=0.8{whitespace}"),
+    ] {
+      assert!(
+        Accept::parse(&value).is_err(),
+        "{value:?} must reject non-OWS whitespace"
+      );
+      assert!(
+        AcceptMediaRange::request_builder_member(&value, None).is_err(),
+        "{value:?} must reject non-OWS whitespace in request-builder members"
+      );
+    }
+  }
+}
+
+#[test]
 fn accept_allows_empty_quoted_string_parameter_values() {
   let accept = Accept::parse("text/plain; feature=\"\"").expect("Accept should parse");
 
