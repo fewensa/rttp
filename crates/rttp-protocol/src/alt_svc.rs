@@ -1,6 +1,9 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::host::{is_valid_ip_literal, is_valid_reg_name_or_ipv4};
+use crate::http1::{is_qdtext, is_quoted_pair_char};
+
 pub const MAX_ALT_SVC_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ALT_SVC_ALTERNATIVES: usize = 256;
 pub const MAX_ALT_SVC_PARAMETERS: usize = 256;
@@ -259,15 +262,12 @@ fn parse_parameter(
   *position += 1;
   skip_ows(value.as_bytes(), position);
   let quoted_value = value.as_bytes().get(*position) == Some(&b'"');
-  let parameter_value = Some(if quoted_value {
+  let parameter_value = if quoted_value {
     parse_quoted_string(value, position)?
   } else {
     parse_token(value, position, "invalid Alt-Svc parameter value")?.to_string()
-  });
-  if parameter_value
-    .as_ref()
-    .is_some_and(|parameter| parameter.len() > MAX_ALT_SVC_PARAMETER_VALUE_BYTES)
-  {
+  };
+  if parameter_value.len() > MAX_ALT_SVC_PARAMETER_VALUE_BYTES {
     return Err(AltSvcParseError::new(
       "Alt-Svc parameter value is too large",
     ));
@@ -278,7 +278,6 @@ fn parse_parameter(
         return Err(AltSvcParseError::new("invalid Alt-Svc ma parameter"));
       }
       let max_age = parameter_value
-        .ok_or_else(|| AltSvcParseError::new("invalid Alt-Svc ma parameter"))?
         .parse::<u64>()
         .map_err(|_| AltSvcParseError::new("invalid Alt-Svc ma parameter"))?;
       if alternative.max_age.replace(max_age).is_some() {
@@ -289,9 +288,9 @@ fn parse_parameter(
       if quoted_value {
         return Err(AltSvcParseError::new("invalid Alt-Svc persist parameter"));
       }
-      let persist = match parameter_value.as_deref() {
-        Some("0") => false,
-        Some("1") => true,
+      let persist = match parameter_value.as_str() {
+        "0" => false,
+        "1" => true,
         _ => return Err(AltSvcParseError::new("invalid Alt-Svc persist parameter")),
       };
       if alternative.persist.replace(persist).is_some() {
@@ -308,7 +307,7 @@ fn parse_parameter(
       }
       alternative.parameters.push(AltSvcParameter {
         name,
-        value: parameter_value,
+        value: Some(parameter_value),
       });
     }
   }
@@ -329,13 +328,9 @@ fn validate_authority(authority: &str) -> Result<(), AltSvcParseError> {
     return Ok(());
   }
   let valid_host = if host.starts_with('[') && host.ends_with(']') {
-    host[1..host.len() - 1]
-      .bytes()
-      .all(|byte| byte.is_ascii_hexdigit() || matches!(byte, b':' | b'.'))
+    is_valid_ip_literal(&host[1..host.len() - 1])
   } else {
-    host
-      .bytes()
-      .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+    is_valid_reg_name_or_ipv4(host)
   };
   if valid_host {
     Ok(())
@@ -345,35 +340,31 @@ fn validate_authority(authority: &str) -> Result<(), AltSvcParseError> {
 }
 
 fn parse_quoted_string(value: &str, position: &mut usize) -> Result<String, AltSvcParseError> {
-  if value.as_bytes().get(*position) != Some(&b'"') {
+  let bytes = value.as_bytes();
+  if bytes.get(*position) != Some(&b'"') {
     return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"));
   }
   *position += 1;
-  let mut parsed = String::new();
-  let mut unescaped_start = *position;
-  let mut escaped = false;
-  while let Some(&byte) = value.as_bytes().get(*position) {
-    if escaped {
-      *position += 1;
-      if !(byte == b'\t' || (0x20..=0x7e).contains(&byte)) {
-        return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"));
+  let mut parsed = Vec::new();
+  while let Some(&byte) = bytes.get(*position) {
+    *position += 1;
+    match byte {
+      b'"' => {
+        return String::from_utf8(parsed)
+          .map_err(|_| AltSvcParseError::new("invalid Alt-Svc quoted-string"));
       }
-      parsed.push(byte as char);
-      escaped = false;
-      unescaped_start = *position;
-    } else if byte == b'\\' {
-      parsed.push_str(&value[unescaped_start..*position]);
-      *position += 1;
-      escaped = true;
-    } else if byte == b'"' {
-      parsed.push_str(&value[unescaped_start..*position]);
-      *position += 1;
-      return Ok(parsed);
-    } else if byte == b'\t' || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e | 0x80..=0xff)
-    {
-      *position += 1;
-    } else {
-      return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"));
+      b'\\' => {
+        let Some(&escaped) = bytes.get(*position) else {
+          return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"));
+        };
+        if !is_quoted_pair_char(escaped) {
+          return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"));
+        }
+        *position += 1;
+        parsed.push(escaped);
+      }
+      _ if is_qdtext(byte) => parsed.push(byte),
+      _ => return Err(AltSvcParseError::new("invalid Alt-Svc quoted-string")),
     }
   }
   Err(AltSvcParseError::new("invalid Alt-Svc quoted-string"))
@@ -411,7 +402,7 @@ fn escape_quoted(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-  use super::AltSvc;
+  use super::{parse_alternative, AltSvc, MAX_ALT_SVC_PARAMETER_VALUE_BYTES};
 
   #[test]
   fn parses_alternatives_and_clear() {
@@ -426,5 +417,30 @@ mod tests {
   fn preserves_utf8_quoted_extension_values() {
     let alt_svc = AltSvc::parse("h3=\":443\"; note=\"café\"").expect("valid Alt-Svc");
     assert_eq!("h3=\":443\"; note=\"café\"", alt_svc.header_value());
+  }
+
+  #[test]
+  fn enforces_parameter_value_bound_before_field_bound() {
+    let prefix = "h3=\":443\"; note=";
+    let exact = format!("{prefix}{}", "a".repeat(MAX_ALT_SVC_PARAMETER_VALUE_BYTES));
+    let mut alternatives = Vec::new();
+    let mut position = 0;
+    parse_alternative(&exact, &mut position, &mut alternatives)
+      .expect("an exact-size parameter value should parse");
+    assert_eq!(1, alternatives.len());
+
+    let over = format!(
+      "{prefix}{}",
+      "a".repeat(MAX_ALT_SVC_PARAMETER_VALUE_BYTES + 1)
+    );
+    let mut alternatives = Vec::new();
+    let mut position = 0;
+    assert_eq!(
+      "Alt-Svc parameter value is too large",
+      parse_alternative(&over, &mut position, &mut alternatives)
+        .expect_err("an over-size parameter value must be rejected")
+        .to_string()
+    );
+    assert!(alternatives.is_empty());
   }
 }

@@ -4480,6 +4480,7 @@ fn test_alt_svc_response_helper_parses_and_round_trips_alternatives() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
     "Alt-Svc: h3=\":443\"; ma=3600; persist=1; region=\"us-east\", h2=\"alt.example:8443\"; ma=60\r\n",
+    "Alt-Svc: h3-29=\"[2001:db8::1]:443\"; persist=0\r\n",
     "Content-Length: 0\r\n\r\n"
   );
   let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
@@ -4490,7 +4491,7 @@ fn test_alt_svc_response_helper_parses_and_round_trips_alternatives() {
     .expect("Alt-Svc should be present");
 
   assert!(!alt_svc.is_clear());
-  assert_eq!(2, alt_svc.len());
+  assert_eq!(3, alt_svc.len());
   assert_eq!("h3", alt_svc.alternatives()[0].protocol_id());
   assert_eq!(":443", alt_svc.alternatives()[0].authority());
   assert_eq!(Some(3600), alt_svc.alternatives()[0].max_age());
@@ -4504,12 +4505,32 @@ fn test_alt_svc_response_helper_parses_and_round_trips_alternatives() {
       .collect::<Vec<_>>()
   );
   assert_eq!(
-    "h3=\":443\"; ma=3600; persist=1; region=us-east, h2=\"alt.example:8443\"; ma=60",
+    "h3=\":443\"; ma=3600; persist=1; region=us-east, h2=\"alt.example:8443\"; ma=60, h3-29=\"[2001:db8::1]:443\"; persist=0",
     alt_svc.header_value()
   );
   assert_eq!(
     alt_svc,
     AltSvc::parse(alt_svc.header_value()).expect("round-tripped Alt-Svc should parse")
+  );
+}
+
+#[test]
+fn test_alt_svc_response_helper_accepts_escaped_obs_text_parameter_values() {
+  let mut raw = b"HTTP/1.1 200 OK\r\nAlt-Svc: h3=\":443\"; note=\"\\".to_vec();
+  raw.push(0xe9);
+  raw.extend_from_slice(b"\"\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw)
+    .expect("raw response should remain usable");
+  let alt_svc = response
+    .alt_svc()
+    .expect("Alt-Svc should parse")
+    .expect("Alt-Svc should be present");
+
+  assert_eq!(Some("é"), alt_svc.alternatives()[0].parameters()[0].value());
+  assert_eq!(r#"h3=":443"; note="é""#, alt_svc.header_value());
+  assert_eq!(
+    alt_svc,
+    AltSvc::parse(alt_svc.header_value()).expect("escaped obs-text should round-trip")
   );
 }
 
@@ -4522,7 +4543,7 @@ fn test_alt_svc_rejects_invalid_or_unbounded_metadata_without_hiding_headers() {
     "clear, h3=\":443\"",
     "h3=\":443\"; ma=forever",
     "h3=\":443\"; ma=\"60\"",
-    "h3=\":443\"; region",
+    "h3=\":443\"; region=",
   ] {
     let raw = format!("HTTP/1.1 200 OK\r\nAlt-Svc: {value}\r\nContent-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
@@ -4548,6 +4569,15 @@ fn test_alt_svc_clear_is_an_exclusive_sentinel() {
   assert!(alt_svc.is_empty());
   assert_eq!("clear", alt_svc.header_value());
   assert!(AltSvc::parse_values(["clear", "h3=\":443\""]).is_err());
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nAlt-Svc: clear\r\nAlt-Svc: h3=\":443\"\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(response.alt_svc().is_err());
+  assert_eq!(2, response.header_values("Alt-Svc").len());
 }
 
 #[test]
