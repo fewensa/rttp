@@ -180,6 +180,50 @@ fn priority_rejects_malformed_keys_separators_and_items() {
   assert_eq!(Some(1), with_ows.urgency());
   assert_eq!(vec![("x", Some("token"))], extension_pairs(&with_ows));
 
+  let with_ows_fields = Priority::parse_values([" \tu=3\t ", " \ti=?0\t , \tx=ok \t"])
+    .expect("SP and HTAB padding across Priority fields is valid");
+  assert_eq!(Some(3), with_ows_fields.urgency());
+  assert!(!with_ows_fields.incremental());
+  assert_eq!(vec![("x", Some("ok"))], extension_pairs(&with_ows_fields));
+
+  for value in [
+    "\ru=1",
+    "u=1\n",
+    "\u{0b}u=1",
+    "u=1\u{0c}",
+    "\u{00a0}u=1",
+    "u=1\u{2003}",
+    "u=1,\ri",
+    "u=1,\ni",
+    "u=1,\u{0b}i",
+    "u=1,\u{0c}i",
+    "u=1,\u{00a0}i",
+    "u=1,\u{2003}i",
+  ] {
+    assert!(
+      Priority::parse(value).is_err(),
+      "{value:?} must reject non-OWS boundary padding"
+    );
+  }
+  for (index, values) in [
+    vec!["\ru=1", "i"],
+    vec!["u=1\n", "i"],
+    vec!["\u{0b}u=1", "i"],
+    vec!["u=1\u{0c}", "i"],
+    vec!["\u{00a0}u=1", "i"],
+    vec!["u=1\u{2003}", "i"],
+    vec!["u=1", "\ri"],
+    vec!["u=1", "i\n"],
+  ]
+  .into_iter()
+  .enumerate()
+  {
+    assert!(
+      Priority::parse_values(values).is_err(),
+      "non-OWS field padding must be rejected at index {index}"
+    );
+  }
+
   assert!(
     Priority::parse_values([]).is_err(),
     "empty field sets must be rejected"
