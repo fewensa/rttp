@@ -1991,7 +1991,7 @@ impl ContentEncoding {
       }
 
       for coding in value.split(',') {
-        let coding = coding.trim();
+        let coding = trim_ows(coding);
         if coding.is_empty() || !is_token(coding) {
           return Err(error::bad_response("Invalid Content-Encoding coding"));
         }
