@@ -32,6 +32,35 @@ fn access_control_expose_headers_ignores_empty_list_elements() {
 }
 
 #[test]
+fn access_control_expose_headers_accepts_only_http_ows_at_member_boundaries() {
+  let first = "X-Request-Id";
+  let second = "ETag";
+  let expose_headers = AccessControlExposeHeaders::parse(format!(" \t{first}\t ,\t {second} \t"))
+    .expect("SP and HTAB padding should be accepted");
+
+  assert_eq!(expose_headers.field_names(), ["x-request-id", "etag"]);
+
+  for whitespace in ["\r", "\n", "\u{000b}", "\u{000c}", "\u{00a0}", "\u{2003}"] {
+    assert!(
+      AccessControlExposeHeaders::parse(format!("{whitespace}{first}")).is_err(),
+      "non-OWS leading padding {whitespace:?} must be rejected"
+    );
+    assert!(
+      AccessControlExposeHeaders::parse(format!("{first}{whitespace},{second}")).is_err(),
+      "non-OWS padding before a comma {whitespace:?} must be rejected"
+    );
+    assert!(
+      AccessControlExposeHeaders::parse(format!("{first},{whitespace}{second}")).is_err(),
+      "non-OWS padding before a member {whitespace:?} must be rejected"
+    );
+    assert!(
+      AccessControlExposeHeaders::parse(format!("{first}{whitespace}")).is_err(),
+      "non-OWS trailing padding {whitespace:?} must be rejected"
+    );
+  }
+}
+
+#[test]
 fn access_control_expose_headers_preserves_wildcard_with_field_names() {
   let expose_headers = AccessControlExposeHeaders::parse("*, X-Request-Id")
     .expect("wildcard and field names should be preserved");

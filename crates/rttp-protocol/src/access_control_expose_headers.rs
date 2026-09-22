@@ -37,7 +37,7 @@ impl AccessControlExposeHeaders {
       }
 
       for field_name in value.split(',') {
-        let field_name = field_name.trim();
+        let field_name = trim_http_ows(field_name);
         if field_name.is_empty() {
           continue;
         }
@@ -130,6 +130,10 @@ impl fmt::Display for AccessControlExposeHeadersParseError {
 }
 
 impl Error for AccessControlExposeHeadersParseError {}
+
+fn trim_http_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
+}
 
 fn is_http_token(value: &str) -> bool {
   !value.is_empty()
