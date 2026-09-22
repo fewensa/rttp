@@ -7391,6 +7391,25 @@ fn test_parse_allow_response_helper_preserves_method_order_across_header_fields(
 }
 
 #[test]
+fn test_parse_allow_response_helper_accepts_empty_method_set() {
+  let raw = concat!(
+    "HTTP/1.1 405 Method Not Allowed\r\n",
+    "Allow: \r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response with an empty allow header");
+  let allow = response
+    .allow()
+    .expect("empty allow should parse")
+    .expect("allow header should be present");
+
+  assert!(allow.methods().is_empty());
+  assert_eq!(Some(""), response.header_value("Allow").map(String::as_str));
+}
+
+#[test]
 fn test_parse_allow_response_helper_returns_none_when_absent() {
   let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
   let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
@@ -7402,7 +7421,6 @@ fn test_parse_allow_response_helper_returns_none_when_absent() {
 #[test]
 fn test_parse_allow_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = [
-    "",
     "GET,",
     ",GET",
     "GET,,POST",

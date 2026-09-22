@@ -1252,6 +1252,11 @@ pub mod allow {
 
   const RESPONSE_CASES: &[ResponseCase] = &[
     ResponseCase {
+      name: "empty method set",
+      values: &[""],
+      methods: &[],
+    },
+    ResponseCase {
       name: "single method",
       values: &["GET"],
       methods: &["GET"],
@@ -1274,10 +1279,6 @@ pub mod allow {
   ];
 
   const INVALID_CASES: &[InvalidCase] = &[
-    InvalidCase {
-      name: "empty value",
-      value: "",
-    },
     InvalidCase {
       name: "trailing comma",
       value: "GET,",
