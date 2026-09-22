@@ -2674,6 +2674,115 @@ fn te_and_prefer_helpers_emit_bounded_request_metadata() {
 }
 
 #[test]
+fn prefer_helpers_accept_http_ows_padding_and_preserve_order() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .prefer("\t respond-async \t")
+      .expect("OWS-padded token preference should be accepted")
+      .prefer_with_value("\treturn\t", "\tminimal\t")
+      .expect("OWS-padded valued preference should be accepted")
+      .prefer_with_value(" wait ", " 30\t")
+      .expect("OWS-padded wait preference should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  assert_eq!(
+    Some("respond-async, return=minimal, wait=30"),
+    header_value(&request_text(&request), "Prefer")
+  );
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .header(("Prefer", "\treturn \t = \tminimal\t, \trespond-async\t"))
+      .prefer_with_value("\twait\t", "\t30\t")
+      .expect("OWS-padded existing Prefer header should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  assert_eq!(
+    Some("return \t = \tminimal\t, \trespond-async\t, wait=30"),
+    header_value(&request_text(&request), "Prefer")
+  );
+}
+
+#[test]
+fn prefer_helpers_reject_non_ows_whitespace_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let name = format!("{whitespace}return{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/metadata", base_url))
+        .prefer(name)
+        .expect_err("non-OWS whitespace around a preference name should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace around a preference name opened a socket"
+    );
+
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let value = format!("{whitespace}minimal{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/metadata", base_url))
+        .prefer_with_value("return", value)
+        .expect_err("non-OWS whitespace around a preference value should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace around a preference value opened a socket"
+    );
+  }
+}
+
+#[test]
+fn existing_prefer_headers_reject_non_ows_whitespace_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let existing =
+        format!("{whitespace}return{whitespace} = {whitespace}minimal{whitespace}, respond-async");
+      let error = client
+        .get()
+        .url(format!("{}/metadata", base_url))
+        .header(("Prefer", existing.as_str()))
+        .prefer("another")
+        .expect_err("non-OWS existing Prefer header should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace in an existing Prefer header opened a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_prefer_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .header(("Prefer", "legacy value"))
+      .emit()
+      .expect("generic raw Prefer header should succeed");
+  });
+  assert_eq!(
+    Some("legacy value"),
+    header_value(&request_text(&request), "Prefer")
+  );
+}
+
+#[test]
 fn te_and_prefer_helpers_reject_invalid_values_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
