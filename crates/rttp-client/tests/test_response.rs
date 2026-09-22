@@ -1,6 +1,6 @@
 use rttp_client::response::{
   AcceptSignature, AltSvc, AltUsed, Alternates, AuthenticationInfo, ContentDisposition, ContentDpr,
-  ContentEncoding, ContentLocation, ContentRange, ContentSecurityPolicy,
+  ContentEncoding, ContentLanguage, ContentLocation, ContentRange, ContentSecurityPolicy,
   ContentSecurityPolicyReportOnly, ContentType, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy,
   DeltaBase, Deprecation, DocumentPolicy, DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue,
@@ -9382,6 +9382,24 @@ fn test_parse_content_language_response_helper_preserves_order_across_header_fie
     vec![&"en-US, fr".to_string(), &"zh-Hant-TW, *".to_string()],
     response.header_values("Content-Language")
   );
+}
+
+#[test]
+fn test_parse_content_language_accepts_only_http_ows_around_members() {
+  assert_eq!(
+    vec!["en-US", "fr", "*"],
+    ContentLanguage::parse(" \ten-US\t,  fr ,\t* \t")
+      .expect("SP and HTAB padding should parse")
+      .tags()
+  );
+
+  for padding in ["\r", "\n", "\u{000b}", "\u{000c}", "\u{a0}", "\u{2003}"] {
+    let value = format!("en-US,{padding}fr");
+    assert!(
+      ContentLanguage::parse(&value).is_err(),
+      "non-OWS padding should be rejected: {value:?}"
+    );
+  }
 }
 
 #[test]
