@@ -74,6 +74,18 @@ fn warning_accepts_empty_quoted_text_ows_and_rfc7234_agents() {
 }
 
 #[test]
+fn warning_accepts_rfc3986_empty_ports_on_warn_agents() {
+  for (value, agent) in [
+    (r#"110 example.com: "text""#, "example.com:"),
+    (r#"110 [::1]: "text""#, "[::1]:"),
+  ] {
+    let warning = Warning::parse(value).expect("empty-port warn-agent should parse");
+    assert_eq!(warning.items()[0].agent(), agent, "{value:?}");
+    assert_eq!(warning.items()[0].text(), "text", "{value:?}");
+  }
+}
+
+#[test]
 fn warning_parse_values_combines_and_inspects_every_field() {
   let mut values = [
     r#"110 - "Response is Stale""#,

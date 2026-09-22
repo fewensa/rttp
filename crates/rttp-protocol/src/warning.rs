@@ -266,7 +266,15 @@ fn parse_agent<'a>(value: &'a str, position: &mut usize) -> Result<&'a str, Warn
 }
 
 fn is_valid_agent(agent: &str) -> bool {
-  Host::parse(agent).is_ok() || is_token(agent)
+  Host::parse(agent).is_ok() || is_token(agent) || is_uri_host_with_empty_port(agent)
+}
+
+/// RFC 7234 warn-agent is `uri-host [ ":" port ]` with RFC 3986 `port = *DIGIT`.
+/// `Host::parse` rejects empty ports, and a token cannot contain `:`.
+fn is_uri_host_with_empty_port(agent: &str) -> bool {
+  agent
+    .strip_suffix(':')
+    .is_some_and(|host| Host::parse(host).is_ok_and(|parsed| parsed.port().is_none()))
 }
 
 fn parse_quoted_http_date(
