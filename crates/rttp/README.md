@@ -1502,6 +1502,16 @@ available.
 These helpers only declare or parse request metadata. RTTP does not infer or
 enforce consent, tracking, legal, or serving policy.
 
+## Top-level response security and digest metadata
+
+With the `client` feature, users can import `CrossOriginResourcePolicy` and
+`CrossOriginResourcePolicyParseError`, plus `WantContentDigest` and
+`WantContentDigestEntry` with `WantContentDigestParseError`, and
+`WantReprDigest` and `WantReprDigestEntry` with `WantReprDigestParseError`,
+directly from `rttp`.
+CORP enforcement and digest negotiation or verification remain caller
+responsibilities.
+
 ## Bounded request-security metadata
 
 With the `client` feature, users can import `SecGpc`, `SecGpcParseError`,
