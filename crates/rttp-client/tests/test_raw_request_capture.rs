@@ -2278,8 +2278,12 @@ fn priority_helper_rejects_invalid_and_oversized_metadata_before_connecting() {
   );
 
   for invalid in [
-    "u=8",
+    "u=+1",
     "i=?2",
+    "u = 1",
+    "u= 1",
+    "x = token",
+    "x=:A:",
     "U=1",
     ",u=1",
     "u=1,",

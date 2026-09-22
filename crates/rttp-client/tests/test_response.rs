@@ -4342,8 +4342,12 @@ fn test_priority_response_helper_returns_none_when_absent() {
 #[test]
 fn test_priority_rejects_malformed_and_oversized_values_without_hiding_headers() {
   for value in [
-    "u=8",
+    "u=+1",
     "i=?2",
+    "u = 1",
+    "u= 1",
+    "x = token",
+    "x=:A:",
     "U=1",
     ",u=1",
     "u=1,",

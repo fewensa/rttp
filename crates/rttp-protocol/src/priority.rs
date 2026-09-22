@@ -1,3 +1,8 @@
+use base64::engine::{
+  general_purpose::{GeneralPurpose, GeneralPurposeConfig},
+  DecodePaddingMode,
+};
+use base64::Engine;
 use std::error::Error;
 use std::fmt;
 
@@ -103,35 +108,33 @@ impl Priority {
 
   fn apply_member(&mut self, member: &str) -> Result<(), PriorityParseError> {
     let (name, value) = match member.split_once('=') {
-      Some((name, value)) => (name.trim(), Some(value.trim())),
-      None => (member.trim(), None),
+      Some((name, value)) => {
+        if name.chars().last().is_some_and(char::is_whitespace)
+          || value.chars().next().is_some_and(char::is_whitespace)
+        {
+          return Err(PriorityParseError::new("invalid Priority parameter"));
+        }
+        (name, Some(value))
+      }
+      None => (member, None),
     };
     if !is_key(name) || value.is_some_and(|value| !is_bare_item(value)) {
       return Err(PriorityParseError::new("invalid Priority parameter"));
     }
     match name {
       "u" => {
-        let Some(value) = value else {
-          return Err(PriorityParseError::new("invalid Priority urgency"));
-        };
-        let urgency = value
-          .parse::<u8>()
-          .ok()
+        if let Some(urgency) = value
+          .and_then(|value| value.parse::<u8>().ok())
           .filter(|urgency| *urgency <= 7)
-          .ok_or_else(|| PriorityParseError::new("invalid Priority urgency"))?;
-        self.urgency = Some(urgency);
+        {
+          self.urgency = Some(urgency);
+        }
       }
-      "i" => {
-        self.incremental = Some(match value {
-          None | Some("?1") => true,
-          Some("?0") => false,
-          _ => {
-            return Err(PriorityParseError::new(
-              "invalid Priority incremental value",
-            ))
-          }
-        });
-      }
+      "i" => match value {
+        None | Some("?1") => self.incremental = Some(true),
+        Some("?0") => self.incremental = Some(false),
+        Some(_) => {}
+      },
       _ => {
         self.extensions.retain(|extension| extension.name != name);
         self.extensions.push(PriorityExtension {
@@ -262,6 +265,13 @@ fn is_token(value: &str) -> bool {
     && bytes.all(|byte| matches!(byte, b'*' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~' | b':' | b'/'))
 }
 
+const SFV_BASE64: GeneralPurpose = GeneralPurpose::new(
+  &base64::alphabet::STANDARD,
+  GeneralPurposeConfig::new()
+    .with_decode_allow_trailing_bits(true)
+    .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+);
+
 fn is_byte_sequence(value: &str) -> bool {
   let Some(inner) = value
     .strip_prefix(':')
@@ -269,10 +279,7 @@ fn is_byte_sequence(value: &str) -> bool {
   else {
     return false;
   };
-  !inner.is_empty()
-    && inner
-      .bytes()
-      .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
+  SFV_BASE64.decode(inner).is_ok()
 }
 
 #[cfg(test)]

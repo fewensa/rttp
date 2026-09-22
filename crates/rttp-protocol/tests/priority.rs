@@ -32,16 +32,20 @@ fn priority_parses_ordered_multi_field_values_with_defaults() {
 }
 
 #[test]
-fn priority_validates_urgency_range_and_incremental_forms() {
+fn priority_validates_known_parameter_types_and_ranges() {
   for urgency in 0..=7 {
     let priority = Priority::parse(format!("u={urgency}")).expect("urgency 0..=7 should parse");
     assert_eq!(Some(urgency), priority.urgency());
   }
 
-  for value in ["u", "u=", "u=8", "u=-1", "u=1.0", "u=01a", "u=+1", "u=999"] {
+  for value in ["u", "u=8", "u=-1", "u=1.0", "u=999"] {
+    let priority = Priority::parse(value).expect("valid Structured Fields members should parse");
+    assert_eq!(None, priority.urgency(), "{value:?} should be ignored");
+  }
+  for value in ["u=", "u=01a", "u=+1"] {
     assert!(
       Priority::parse(value).is_err(),
-      "{value:?} must be rejected as urgency"
+      "{value:?} must be rejected as malformed Structured Fields"
     );
   }
 
@@ -57,10 +61,14 @@ fn priority_validates_urgency_range_and_incremental_forms() {
   assert!(!false_value.incremental());
   assert_eq!("i=?0", false_value.header_value());
 
-  for value in ["i=", "i=?2", "i=1", "i=true", "i=?01"] {
+  for value in ["i=1", "i=true"] {
+    let priority = Priority::parse(value).expect("valid Structured Fields members should parse");
+    assert!(!priority.incremental(), "{value:?} should be ignored");
+  }
+  for value in ["i=", "i=?2", "i=?01"] {
     assert!(
       Priority::parse(value).is_err(),
-      "{value:?} must be rejected as incremental"
+      "{value:?} must be rejected as malformed Structured Fields"
     );
   }
 }
@@ -120,6 +128,14 @@ fn priority_accepts_extension_bare_item_forms_and_quoted_escaping() {
     Priority::parse(priority.header_value()).expect("canonical Priority output should reparse");
   assert_eq!(priority, reparsed);
   assert_eq!(priority.header_value(), reparsed.header_value());
+
+  let empty_bytes = Priority::parse("x=::").expect("an empty byte sequence should parse");
+  assert_eq!(vec![("x", Some("::"))], extension_pairs(&empty_bytes));
+  assert_eq!("x=::", empty_bytes.header_value());
+  assert_eq!(
+    empty_bytes,
+    Priority::parse(empty_bytes.header_value()).expect("empty byte sequence should round-trip")
+  );
 }
 
 #[test]
@@ -140,10 +156,14 @@ fn priority_rejects_malformed_keys_separators_and_items() {
     "x!=1",
     "=1",
     "x=",
+    "u = 1",
+    "u= 1",
+    "x = token",
     "x=\"unterminated",
     "x=\"bad\\escape\"",
     "x=:@@@:",
-    "x=::",
+    "x=:A:",
+    "x=:Y=Q:",
     "x=?2",
     "x=1.2345",
     "x=+1",
@@ -155,6 +175,10 @@ fn priority_rejects_malformed_keys_separators_and_items() {
       "{value:?} must be rejected"
     );
   }
+
+  let with_ows = Priority::parse(" \tu=1\t , \tx=token \t").expect("outer and comma OWS is valid");
+  assert_eq!(Some(1), with_ows.urgency());
+  assert_eq!(vec![("x", Some("token"))], extension_pairs(&with_ows));
 
   assert!(
     Priority::parse_values([]).is_err(),
