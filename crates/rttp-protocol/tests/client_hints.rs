@@ -55,6 +55,65 @@ fn critical_ch_round_trips_comma_separated_client_hints() {
 }
 
 #[test]
+fn client_hint_headers_accept_sp_and_htab_member_padding() {
+  for value in [
+    " DPR ",
+    "\tDPR\t",
+    " \tSec-CH-UA\t ,\t Width ",
+    "DPR,\tWidth",
+  ] {
+    let accept_ch = AcceptCh::parse(value).expect("valid Accept-CH OWS padding");
+    let critical_ch = CriticalCh::parse(value).expect("valid Critical-CH OWS padding");
+    assert_eq!(accept_ch.client_hints(), critical_ch.client_hints());
+    assert_eq!(
+      accept_ch,
+      AcceptCh::parse(accept_ch.header_value()).expect("Accept-CH roundtrip")
+    );
+    assert_eq!(
+      critical_ch,
+      CriticalCh::parse(critical_ch.header_value()).expect("Critical-CH roundtrip")
+    );
+  }
+
+  let padded = AcceptCh::parse(" \tSec-CH-UA\t ,\t Width ").expect("valid Accept-CH");
+  assert_eq!(&["Sec-CH-UA", "Width"], padded.client_hints());
+  assert_eq!("Sec-CH-UA, Width", padded.header_value());
+}
+
+#[test]
+fn client_hint_headers_reject_non_ows_member_padding() {
+  for value in [
+    "\rDPR",
+    "DPR\r",
+    "DPR,\rWidth",
+    "\nDPR",
+    "DPR\n",
+    "DPR,\nWidth",
+    "\u{0b}DPR",
+    "DPR\u{0b}",
+    "DPR,\u{0b}Width",
+    "\u{0c}DPR",
+    "DPR\u{0c}",
+    "DPR,\u{0c}Width",
+    "\u{00a0}DPR",
+    "DPR\u{00a0}",
+    "DPR,\u{00a0}Width",
+    "\u{2003}DPR",
+    "DPR\u{2003}",
+    "DPR,\u{2003}Width",
+  ] {
+    assert!(
+      AcceptCh::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+    assert!(
+      CriticalCh::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
 fn client_hint_headers_reject_invalid_and_empty_members() {
   for value in [
     "",
