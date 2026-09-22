@@ -34,7 +34,8 @@ pub use rttp_client::response::{
   CrossOriginEmbedderPolicyReportOnlyParseError, CrossOriginOpenerPolicy,
   CrossOriginOpenerPolicyParseError, CrossOriginOpenerPolicyReportOnly,
   CrossOriginOpenerPolicyReportOnlyBareItem, CrossOriginOpenerPolicyReportOnlyParameter,
-  CrossOriginOpenerPolicyReportOnlyParseError, Dav, DavClass, DavParseError, DeltaBase,
+  CrossOriginOpenerPolicyReportOnlyParseError, CrossOriginResourcePolicy,
+  CrossOriginResourcePolicyParseError, Dav, DavClass, DavParseError, DeltaBase,
   DeltaBaseParseError, Deprecation, DeprecationParseError, Digest, DigestEntry, DigestParseError,
   DocumentPolicy, DocumentPolicyDirective, DocumentPolicyParseError, DocumentPolicyReportOnly,
   DocumentPolicyReportOnlyDirective, DocumentPolicyReportOnlyParseError,
@@ -73,10 +74,11 @@ pub use rttp_client::response::{
   SupportsLoadingMode, SupportsLoadingModeParseError, SurrogateControl, SurrogateControlParseError,
   Tcn, TcnDirective, TcnParseError, TimingAllowOrigin, TimingAllowOriginParseError, Trailer,
   TrailerParseError, TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError,
-  VariantVary, VariantVaryParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest,
-  Warning, WarningParseError, WarningValue, WwwAuthenticate, WwwAuthenticateChallenge,
-  WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  VariantVary, VariantVaryParseError, Vary, VaryParseError, WantContentDigest,
+  WantContentDigestEntry, WantContentDigestParseError, WantReprDigest, WantReprDigestEntry,
+  WantReprDigestParseError, Warning, WarningParseError, WarningValue, WwwAuthenticate,
+  WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::response::{

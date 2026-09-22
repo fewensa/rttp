@@ -1221,6 +1221,35 @@ fn compatibility_facade_exports_content_companion_types() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_exports_response_security_and_digest_companion_types() {
+  let policy: rttp::CrossOriginResourcePolicy =
+    rttp::CrossOriginResourcePolicy::parse("same-origin")
+      .expect("Cross-Origin-Resource-Policy should parse through the facade");
+  assert_eq!("same-origin", policy.header_value());
+  let _: rttp::CrossOriginResourcePolicyParseError =
+    rttp::CrossOriginResourcePolicy::parse("invalid")
+      .expect_err("invalid Cross-Origin-Resource-Policy should fail through the facade");
+
+  let want_content_digest: rttp::WantContentDigest =
+    rttp::WantContentDigest::parse("sha-256=10, sha-512=8")
+      .expect("Want-Content-Digest should parse through the facade");
+  let content_entry: &rttp::WantContentDigestEntry = &want_content_digest.entries()[0];
+  assert_eq!("sha-256", content_entry.algorithm());
+  assert_eq!(10, content_entry.preference());
+  let _: rttp::WantContentDigestParseError = rttp::WantContentDigest::parse("sha-256=11")
+    .expect_err("invalid Want-Content-Digest should fail through the facade");
+
+  let want_repr_digest: rttp::WantReprDigest = rttp::WantReprDigest::parse("sha-512=10")
+    .expect("Want-Repr-Digest should parse through the facade");
+  let repr_entry: &rttp::WantReprDigestEntry = &want_repr_digest.entries()[0];
+  assert_eq!("sha-512", repr_entry.algorithm());
+  assert_eq!(10, repr_entry.preference());
+  let _: rttp::WantReprDigestParseError = rttp::WantReprDigest::parse("sha-512=11")
+    .expect_err("invalid Want-Repr-Digest should fail through the facade");
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn compatibility_facade_exports_link_preference_and_priority_metadata_types() {
   let links = rttp::LinkValues::parse(
     "</style.css>; rel=preload; as=style, <https://cdn.example.test/app.js>; rel=modulepreload",
