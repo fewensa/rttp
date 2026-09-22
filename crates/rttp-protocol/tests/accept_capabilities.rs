@@ -222,3 +222,14 @@ fn accept_post_parse_values_bounds_canonical_size_per_input_field() {
   );
   assert!(AcceptPost::parse_values([raw_at_limit.as_str(), "text/plain"]).is_err());
 }
+
+#[test]
+fn accept_patch_parse_values_bounds_canonical_size_per_input_field() {
+  let field = format!("a/{}", "x".repeat(40_000));
+  assert!(field.len() < MAX_ACCEPT_PATCH_VALUE_BYTES);
+  let parsed = AcceptPatch::parse_values([field.as_str(), field.as_str()])
+    .expect("repeated fields should use a per-field canonical bound");
+  assert_eq!(parsed.len(), 2);
+  assert!(parsed.header_value().len() > MAX_ACCEPT_PATCH_VALUE_BYTES);
+  assert!(AcceptPatch::from_media_types([field.as_str(), field.as_str()]).is_err());
+}
