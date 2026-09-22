@@ -90,6 +90,9 @@ impl LinkValues {
       if value.len() > MAX_LINK_VALUE_BYTES {
         return Err(LinkParseError::new("Link header value is too large"));
       }
+      if value.bytes().any(is_invalid_control_byte) {
+        return Err(LinkParseError::new("invalid Link control byte"));
+      }
       for member in split_members(value, b',')? {
         if parsed.len() >= MAX_LINK_VALUES {
           return Err(LinkParseError::new("too many Link values"));
@@ -161,7 +164,7 @@ impl fmt::Display for LinkParseError {
 impl Error for LinkParseError {}
 
 fn parse_member(member: &str) -> Result<LinkValue, LinkParseError> {
-  let member = member.trim();
+  let member = trim_ows(member);
   let Some(target_and_tail) = member.strip_prefix('<') else {
     return Err(LinkParseError::new("invalid Link target"));
   };
@@ -172,7 +175,7 @@ fn parse_member(member: &str) -> Result<LinkValue, LinkParseError> {
   validate_target(target)?;
 
   let mut parameters = Vec::new();
-  let tail = target_and_tail[target_end + 1..].trim();
+  let tail = trim_ows(&target_and_tail[target_end + 1..]);
   if !tail.is_empty() {
     if !tail.starts_with(';') {
       return Err(LinkParseError::new("invalid Link parameter"));
@@ -199,10 +202,10 @@ fn parse_member(member: &str) -> Result<LinkValue, LinkParseError> {
 
 fn parse_parameter(value: &str) -> Result<LinkParameter, LinkParseError> {
   let (name, value) = match value.split_once('=') {
-    Some((name, value)) => (name, Some(value.trim())),
+    Some((name, value)) => (name, Some(trim_ows(value))),
     None => (value, None),
   };
-  let name = name.trim();
+  let name = trim_ows(name);
   if !is_token(name) {
     return Err(LinkParseError::new("invalid Link parameter name"));
   }
@@ -262,7 +265,7 @@ fn parse_quoted_string(value: &str) -> Result<String, LinkParseError> {
     }
   }
 
-  if !closed || chars.any(|ch| !ch.is_ascii_whitespace()) {
+  if !closed || chars.any(|ch| !is_ows_char(ch)) {
     return Err(LinkParseError::new("invalid Link quoted-string"));
   }
   Ok(parsed)
@@ -353,7 +356,7 @@ fn split_members(value: &str, delimiter: u8) -> Result<Vec<String>, LinkParseErr
       b'<' if !quoted => in_target = true,
       b'>' if !quoted => in_target = false,
       byte if byte == delimiter && !quoted && !in_target => {
-        let member = value[start..index].trim();
+        let member = trim_ows(&value[start..index]);
         if member.is_empty() {
           return Err(LinkParseError::new("invalid Link value"));
         }
@@ -366,12 +369,24 @@ fn split_members(value: &str, delimiter: u8) -> Result<Vec<String>, LinkParseErr
   if quoted || escaped || in_target {
     return Err(LinkParseError::new("invalid Link value"));
   }
-  let member = value[start..].trim();
+  let member = trim_ows(&value[start..]);
   if member.is_empty() {
     return Err(LinkParseError::new("invalid Link value"));
   }
   members.push(member.to_string());
   Ok(members)
+}
+
+fn trim_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
+}
+
+fn is_ows_char(ch: char) -> bool {
+  matches!(ch, ' ' | '\t')
+}
+
+fn is_invalid_control_byte(byte: u8) -> bool {
+  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }
 
 fn is_token(value: &str) -> bool {

@@ -104,6 +104,24 @@ fn link_keeps_targets_as_raw_unresolved_text() {
 }
 
 #[test]
+fn link_preserves_quoted_commas_escaped_quotes_obs_text_fragments_and_relative_targets() {
+  let links = LinkValues::parse(
+    r#"</style.css>; title="a,b\"c"; rel=preload, <../images/logo.png?size=small#v1>; title="\é""#,
+  )
+  .expect("quoted commas, escapes, obs-text, fragments, and relative targets should parse");
+
+  assert_eq!(2, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some(r#"a,b"c"#), links.values()[0].parameter("title"));
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!(
+    "../images/logo.png?size=small#v1",
+    links.values()[1].target()
+  );
+  assert_eq!(Some("é"), links.values()[1].parameter("title"));
+}
+
+#[test]
 fn link_parse_values_combines_and_inspects_every_field() {
   let mut values = ["</a.css>", "</b.css>"].into_iter();
   let mut calls = 0;
@@ -146,6 +164,70 @@ fn link_rejects_malformed_values() {
     LinkValues::parse_values([]).is_err(),
     "empty field sets must be rejected"
   );
+}
+
+#[test]
+fn link_accepts_http_ows_around_members_parameters_and_quoted_suffixes() {
+  let padded = LinkValues::parse(" \t</style.css>\t;\trel\t=\t\"preload\" \t")
+    .expect("HTTP OWS around members, parameters, and quoted suffixes should parse");
+  assert_eq!(1, padded.len());
+  assert_eq!("/style.css", padded.values()[0].target());
+  assert_eq!(Some("preload"), padded.values()[0].parameter("rel"));
+
+  let list = LinkValues::parse("\t</a.css>; rel=preload\t,\t</b.css>; rel=prefetch\t")
+    .expect("HTTP OWS around list members should parse");
+  assert_eq!(2, list.len());
+  assert_eq!("/a.css", list.values()[0].target());
+  assert_eq!(Some("preload"), list.values()[0].parameter("rel"));
+  assert_eq!("/b.css", list.values()[1].target());
+  assert_eq!(Some("prefetch"), list.values()[1].parameter("rel"));
+}
+
+#[test]
+fn link_rejects_non_htab_controls_and_non_ows_member_whitespace() {
+  for value in [
+    "\r</style.css>; rel=preload",
+    "</style.css>; rel=preload\r",
+    "\n</style.css>; rel=preload",
+    "</a.css>,\r</b.css>",
+    "</a.css>,\n</b.css>",
+    "</style.css>; rel=preload\u{0b}",
+    "\u{0b}</style.css>; rel=preload",
+    "</style.css>; rel=preload\u{0c}",
+    "</style.css>; rel=preload\u{7f}",
+    "</style.css>; rel=preload\u{00}",
+    "</style.css>; rel=preload\u{01}",
+    "\u{00a0}</style.css>; rel=preload",
+    "</style.css>; rel=preload\u{00a0}",
+    "</a.css>,\u{00a0}</b.css>",
+    "</style.css>; rel=preload\u{0085}",
+  ] {
+    assert!(
+      LinkValues::parse(value).is_err(),
+      "{value:?} must reject CR, LF, VT, FF, DEL, other controls, and non-OWS whitespace"
+    );
+  }
+}
+
+#[test]
+fn link_rejects_non_ows_quoted_parameter_suffixes() {
+  for value in [
+    r#"</style.css>; rel="preload"extra"#,
+    r#"</style.css>; rel="preload" extra"#,
+    "</style.css>; rel=\"preload\"\u{00a0}",
+    "</style.css>; rel=\"preload\"\u{0b}",
+    "</style.css>; rel=\"preload\"\n",
+    "</style.css>; rel=\"preload\"\r",
+  ] {
+    assert!(
+      LinkValues::parse(value).is_err(),
+      "{value:?} must reject a non-OWS quoted-parameter suffix"
+    );
+  }
+
+  let links = LinkValues::parse("</style.css>; rel=\"preload\" ")
+    .expect("quoted-string OWS suffix should parse");
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
 }
 
 #[test]
