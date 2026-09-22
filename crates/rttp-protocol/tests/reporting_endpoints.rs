@@ -29,6 +29,46 @@ fn reporting_endpoints_parses_valid_multi_field_dictionaries() {
 }
 
 #[test]
+fn reporting_endpoints_accepts_http_ows_at_member_boundaries() {
+  let endpoints = ReportingEndpoints::parse(
+    "\t default=\"https://reports.example/default\" \t,\t csp=\"https://reports.example/csp\" \t ",
+  )
+  .expect("SP and HTAB should be accepted around Reporting-Endpoints members");
+
+  assert_eq!(
+    vec![
+      ("default", "https://reports.example/default"),
+      ("csp", "https://reports.example/csp"),
+    ],
+    endpoints.endpoints()
+  );
+  assert_eq!(
+    r#"default="https://reports.example/default", csp="https://reports.example/csp""#,
+    endpoints.header_value()
+  );
+}
+
+#[test]
+fn reporting_endpoints_rejects_non_ows_at_member_boundaries() {
+  let first = r#"default="https://reports.example/default""#;
+  let second = r#"csp="https://reports.example/csp""#;
+  for whitespace in ["\r", "\n", "\u{000b}", "\u{000c}", "\u{00a0}", "\u{2003}"] {
+    assert!(
+      ReportingEndpoints::parse(format!("{whitespace}{first}")).is_err(),
+      "leading {whitespace:?} must be rejected"
+    );
+    assert!(
+      ReportingEndpoints::parse(format!("{first},{whitespace}{second}")).is_err(),
+      "member-boundary {whitespace:?} must be rejected"
+    );
+    assert!(
+      ReportingEndpoints::parse(format!("{first}{whitespace}")).is_err(),
+      "trailing {whitespace:?} must be rejected"
+    );
+  }
+}
+
+#[test]
 fn reporting_endpoints_unescapes_quoted_urls_and_round_trips() {
   let endpoints = ReportingEndpoints::parse(r#"default="https://reports.example/a\"b\\c""#)
     .expect("escaped Reporting-Endpoints URL should parse");

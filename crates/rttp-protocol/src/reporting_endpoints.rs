@@ -149,9 +149,7 @@ fn parse_reporting_endpoints_value(
   let bytes = value.as_bytes();
   let mut position = 0;
   while position < bytes.len() {
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
-      position += 1;
-    }
+    skip_ows(bytes, &mut position);
     let name_start = position;
     while position < bytes.len()
       && is_reporting_endpoint_key_byte(bytes[position], position == name_start)
@@ -219,9 +217,7 @@ fn parse_reporting_endpoints_value(
       ));
     }
     endpoints.push((name.to_string(), url));
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
-      position += 1;
-    }
+    skip_ows(bytes, &mut position);
     if position == bytes.len() {
       break;
     }
@@ -238,6 +234,12 @@ fn parse_reporting_endpoints_value(
     }
   }
   Ok(())
+}
+
+fn skip_ows(bytes: &[u8], position: &mut usize) {
+  while matches!(bytes.get(*position), Some(b' ' | b'\t')) {
+    *position += 1;
+  }
 }
 
 fn is_reporting_endpoint_key_byte(byte: u8, first: bool) -> bool {
