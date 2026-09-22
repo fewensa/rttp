@@ -58,7 +58,7 @@ impl Accept {
       if value.len() > MAX_ACCEPT_VALUE_BYTES {
         return Err(AcceptParseError::new("Accept header value is too large"));
       }
-      if value.bytes().any(|byte| byte.is_ascii_control()) {
+      if value.bytes().any(is_invalid_control_byte) {
         return Err(AcceptParseError::new("invalid Accept header value"));
       }
 
@@ -125,10 +125,10 @@ impl AcceptMediaRange {
     media_range: &str,
     qvalue: Option<&str>,
   ) -> Result<String, AcceptParseError> {
-    if media_range.bytes().any(|byte| byte.is_ascii_control()) {
+    if media_range.bytes().any(is_invalid_control_byte) {
       return Err(AcceptParseError::new("invalid Accept media range"));
     }
-    let media_range = media_range.trim();
+    let media_range = trim_ows(media_range);
     let parsed = Self::parse_inner(media_range, false, AcceptQValueMode::RequestBuilder)?;
     let qvalue = qvalue.map(validate_request_builder_qvalue).transpose()?;
     if parsed.has_quality && qvalue.is_some() {
@@ -153,16 +153,16 @@ impl AcceptMediaRange {
     let Some(media_type) = parts.first() else {
       return Err(AcceptParseError::new("invalid Accept media range"));
     };
-    let media_type = parse_accept_media_type(media_type.trim())?;
+    let media_type = parse_accept_media_type(trim_ows(media_type))?;
     parts.remove(0);
 
     let mut parameters = Vec::new();
     let mut quality = None;
     let mut parsing_extensions = false;
     for part in parts {
-      let part = part.trim();
+      let part = trim_ows(part);
       let (name, value) = match part.split_once('=') {
-        Some((name, value)) => (name.trim().to_ascii_lowercase(), Some(value.trim())),
+        Some((name, value)) => (trim_ows(name).to_ascii_lowercase(), Some(trim_ows(value))),
         None if parsing_extensions && allow_extensions_after_quality => {
           (part.to_ascii_lowercase(), None)
         }
@@ -309,7 +309,7 @@ fn split_accept_delimited<'a>(
       b'\\' if quoted => escaped = true,
       b'"' => quoted = !quoted,
       byte if byte == delimiter && !quoted => {
-        let member = value[start..index].trim();
+        let member = trim_ows(&value[start..index]);
         if member.is_empty() {
           return Err(AcceptParseError::new(error));
         }
@@ -323,7 +323,7 @@ fn split_accept_delimited<'a>(
   if quoted || escaped {
     return Err(AcceptParseError::new(error));
   }
-  let member = value[start..].trim();
+  let member = trim_ows(&value[start..]);
   if member.is_empty() {
     return Err(AcceptParseError::new(error));
   }
@@ -338,8 +338,8 @@ fn parse_accept_media_type(value: &str) -> Result<String, AcceptParseError> {
   if subtype.contains('/') {
     return Err(AcceptParseError::new("invalid Accept media range"));
   }
-  let type_name = type_name.trim().to_ascii_lowercase();
-  let subtype = subtype.trim().to_ascii_lowercase();
+  let type_name = trim_ows(type_name).to_ascii_lowercase();
+  let subtype = trim_ows(subtype).to_ascii_lowercase();
   if type_name == "*" && subtype != "*" {
     return Err(AcceptParseError::new("invalid Accept media range"));
   }
@@ -432,7 +432,7 @@ fn parse_accept_quality(
 }
 
 fn validate_accept_qvalue(qvalue: &str) -> Result<&str, AcceptParseError> {
-  let value = qvalue.trim();
+  let value = trim_ows(qvalue);
   let valid = match value.split_once('.') {
     Some((whole, fraction)) => {
       (whole == "0" || whole == "1")
@@ -465,6 +465,14 @@ fn validate_request_builder_qvalue(qvalue: &str) -> Result<&str, AcceptParseErro
   } else {
     Err(AcceptParseError::new("invalid Accept quality value"))
   }
+}
+
+fn trim_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
+}
+
+fn is_invalid_control_byte(byte: u8) -> bool {
+  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }
 
 fn format_quality(quality: u16) -> String {
