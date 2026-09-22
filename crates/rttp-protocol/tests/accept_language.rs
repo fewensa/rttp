@@ -29,11 +29,32 @@ fn accept_language_accepts_wildcard_and_whitespace_padding() {
   assert_eq!(wildcard.qualities(), [Some("0")]);
   assert_eq!(wildcard.header_value(), "*; q=0");
 
-  let padded = AcceptLanguage::parse(" en-US , fr-CA ; q = 0.8 ")
+  let padded = AcceptLanguage::parse("\t en-US \t,\t fr-CA \t;\t q \t=\t 0.8 \t")
     .expect("OWS-padded Accept-Language should parse");
   assert_eq!(padded.ranges(), ["en-US", "fr-CA"]);
   assert_eq!(padded.qualities(), [None, Some("0.8")]);
   assert_eq!(padded.header_value(), "en-US, fr-CA; q=0.8");
+}
+
+#[test]
+fn accept_language_rejects_non_ows_whitespace_at_boundaries() {
+  for whitespace in ["\r", "\n", "\u{0b}", "\u{0c}", "\u{00a0}", "\u{2003}"] {
+    for value in [
+      format!("{whitespace}en-US"),
+      format!("en-US{whitespace}"),
+      format!("en-US{whitespace},fr-CA"),
+      format!("en-US,{whitespace}fr-CA"),
+      format!("en{whitespace};q=0"),
+      format!("en;{whitespace}q=0"),
+      format!("en;q{whitespace}=0"),
+      format!("en;q={whitespace}0"),
+    ] {
+      assert!(
+        AcceptLanguage::parse(&value).is_err(),
+        "{value:?} must reject non-OWS whitespace"
+      );
+    }
+  }
 }
 
 #[test]
