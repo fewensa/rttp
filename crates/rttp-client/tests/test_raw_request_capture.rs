@@ -2211,26 +2211,101 @@ fn priority_helper_emits_bounded_known_and_extension_metadata() {
 }
 
 #[test]
-fn priority_helper_rejects_oversized_parameter_sets_before_connecting() {
+fn priority_helper_emits_urgency_incremental_defaults_and_extension_forms() {
+  for (input, expected) in [
+    ("u=0", "u=0"),
+    ("u=7, i=?0", "u=7, i=?0"),
+    ("i=?1, y=abc/DEF", "i, y=abc/DEF"),
+    (
+      r#"flag, str="say \"hi\"", bin=:YWJj:, num=-2, dec=1.5"#,
+      r#"flag, str="say \"hi\"", bin=:YWJj:, num=-2, dec=1.5"#,
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .priority(input)
+        .expect("valid Priority should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+
+    assert_eq!(
+      Some(expected),
+      header_value(&request_text(&request), "Priority"),
+      "input {input:?} should emit {expected:?}"
+    );
+  }
+}
+
+#[test]
+fn priority_helper_rejects_invalid_and_oversized_metadata_before_connecting() {
   let too_many = (0..257)
     .map(|index| format!("x{index}=?1"))
     .collect::<Vec<_>>()
     .join(", ");
-  let request = capture_optional_request(|base_url| {
-    let mut client = client();
-    let error = client
+  let exact_parameters = (0..256)
+    .map(|index| format!("x{index}=?1"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let exact_value = format!("x={}", "a".repeat(64 * 1024 - 2));
+  let oversized_value = "a".repeat(64 * 1024 + 1);
+
+  let accepted = capture_request(|base_url| {
+    client()
       .get()
       .url(format!("{}/asset", base_url))
-      .priority(&too_many)
-      .expect_err("too many Priority parameters should be rejected");
-
-    assert!(error.is_builder());
+      .priority(&exact_parameters)
+      .expect("256 Priority parameters should be accepted")
+      .emit()
+      .expect("request should succeed");
   });
+  assert!(header_value(&request_text(&accepted), "Priority").is_some());
 
-  assert!(
-    request.is_empty(),
-    "invalid Priority should not open a socket"
+  let accepted_size = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .priority(&exact_value)
+      .expect("64 KiB Priority should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  assert_eq!(
+    Some(exact_value.as_str()),
+    header_value(&request_text(&accepted_size), "Priority")
   );
+
+  for invalid in [
+    "u=8",
+    "i=?2",
+    "U=1",
+    ",u=1",
+    "u=1,",
+    "x=\"unterminated",
+    too_many.as_str(),
+    oversized_value.as_str(),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .priority(invalid)
+        .expect_err("invalid Priority should be rejected");
+
+      assert!(
+        error.is_builder(),
+        "{invalid:?} should fail as a builder error"
+      );
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Priority {invalid:?} should not open a socket"
+    );
+  }
 }
 
 #[test]
