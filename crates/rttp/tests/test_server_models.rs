@@ -4059,7 +4059,7 @@ fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_head
     assert!(
       response
         .to_bytes()
-        .windows(value.as_bytes().len())
+        .windows(value.len())
         .any(|window| window == value.as_bytes()),
       "raw Link header should remain available"
     );
