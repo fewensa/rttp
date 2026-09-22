@@ -1718,14 +1718,14 @@ impl ContentType {
     }
 
     let members = split_content_type_members(value)?;
-    let Some(media_type) = members.first().map(|member| member.trim()) else {
+    let Some(media_type) = members.first().map(|member| trim_ows(member)) else {
       return Err(error::bad_response("Invalid Content-Type media type"));
     };
     let (type_, subtype) = media_type
       .split_once('/')
       .ok_or_else(|| error::bad_response("Invalid Content-Type media type"))?;
-    let type_ = type_.trim();
-    let subtype = subtype.trim();
+    let type_ = trim_ows(type_);
+    let subtype = trim_ows(subtype);
     if !is_token(type_) || !is_token(subtype) {
       return Err(error::bad_response("Invalid Content-Type media type"));
     }
@@ -1793,8 +1793,8 @@ impl ContentTypeParameter {
     let (name, raw_value) = value
       .split_once('=')
       .ok_or_else(|| error::bad_response("Invalid Content-Type parameter"))?;
-    let name = name.trim();
-    let raw_value = raw_value.trim();
+    let name = trim_ows(name);
+    let raw_value = trim_ows(raw_value);
     if !is_token(name) {
       return Err(error::bad_response("Invalid Content-Type parameter name"));
     }
@@ -1852,8 +1852,16 @@ fn split_content_type_members(value: &str) -> error::Result<Vec<String>> {
   Ok(members)
 }
 
+fn is_ows(ch: char) -> bool {
+  matches!(ch, ' ' | '\t')
+}
+
+fn trim_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
+}
+
 fn push_content_type_member(members: &mut Vec<String>, member: &str) -> error::Result<()> {
-  let member = member.trim();
+  let member = trim_ows(member);
   if member.is_empty() {
     return Err(error::bad_response("Invalid Content-Type member"));
   }
@@ -1899,7 +1907,7 @@ fn parse_content_type_quoted_string(value: &str) -> error::Result<String> {
     }
   }
 
-  if !closed || chars.any(|ch| !ch.is_ascii_whitespace()) {
+  if !closed || chars.any(|ch| !is_ows(ch)) {
     return Err(error::bad_response("Malformed Content-Type quoted-string"));
   }
   Ok(parsed)
