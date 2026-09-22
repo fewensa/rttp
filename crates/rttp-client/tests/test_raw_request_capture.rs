@@ -1981,6 +1981,76 @@ fn cache_control_helpers_emit_bounded_request_directives() {
 }
 
 #[test]
+fn cache_control_helpers_accept_ows_padding_and_preserve_existing_header() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/document", base_url))
+      .header(Header::new(
+        "Cache-Control",
+        " \tno-cache\t ,\t community \t=\t private\t ",
+      ))
+      .cache_control_extension(" \timmutable\t ")
+      .expect("SP and HTAB padding should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let expected_header =
+    "Cache-Control:  \tno-cache\t ,\t community \t=\t private\t , immutable\r\n";
+  assert!(request
+    .windows(expected_header.len())
+    .any(|window| window == expected_header.as_bytes()));
+}
+
+#[test]
+fn cache_control_helpers_reject_non_ows_padding_before_connecting() {
+  for name in [
+    "\u{b}community",
+    "\u{c}community",
+    "\rcommunity",
+    "\ncommunity",
+    "\u{a0}community",
+    "\u{2003}community",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/document", base_url))
+        .cache_control_extension(name)
+        .expect_err("non-OWS directive-name padding should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Cache-Control directive name should not open a socket"
+    );
+  }
+
+  for value in [
+    "no-cache,\u{b}community=private",
+    "no-cache,community\u{c}=private",
+    "no-cache,community=\r\nprivate",
+    "no-cache,community=\u{a0}private",
+    "no-cache,community=private\u{2003}",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/document", base_url))
+        .header(Header::new("Cache-Control", value))
+        .cache_control_extension("immutable")
+        .expect_err("non-OWS existing-header padding should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Cache-Control header should not open a socket"
+    );
+  }
+}
+
+#[test]
 fn cache_control_helpers_reject_invalid_or_excessive_values_before_connecting() {
   for (name, value) in [
     ("bad name", "value".to_string()),
