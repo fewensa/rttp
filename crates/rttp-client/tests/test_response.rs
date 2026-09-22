@@ -4297,6 +4297,116 @@ fn test_priority_response_helper_parses_known_and_extension_metadata() {
 }
 
 #[test]
+fn test_priority_response_helper_combines_repeated_fields_and_defaults() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Priority: u=1, x=first, y=keep\r\n",
+    "Priority: u=7, i=?0, x=last\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let priority = response
+    .priority()
+    .expect("repeated Priority fields should parse")
+    .expect("Priority should be present");
+
+  assert_eq!(Some(7), priority.urgency());
+  assert!(!priority.incremental());
+  assert_eq!("y", priority.extensions()[0].name());
+  assert_eq!(Some("keep"), priority.extensions()[0].value());
+  assert_eq!("x", priority.extensions()[1].name());
+  assert_eq!(Some("last"), priority.extensions()[1].value());
+  assert_eq!(
+    response.header_values("Priority"),
+    [
+      &"u=1, x=first, y=keep".to_string(),
+      &"u=7, i=?0, x=last".to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_priority_response_helper_returns_none_when_absent() {
+  let raw = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  assert_eq!(
+    None,
+    response
+      .priority()
+      .expect("absent Priority should not be an error")
+  );
+}
+
+#[test]
+fn test_priority_rejects_malformed_and_oversized_values_without_hiding_headers() {
+  for value in [
+    "u=+1",
+    "i=?2",
+    "u = 1",
+    "u= 1",
+    "x = token",
+    "x=:A:",
+    "U=1",
+    ",u=1",
+    "u=1,",
+    "x=\"unterminated",
+    "x=:@@@:",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nPriority: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.priority().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("Priority"));
+  }
+
+  let exact_parameters = (0..256)
+    .map(|index| format!("x{index}=?1"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let exact_raw =
+    format!("HTTP/1.1 200 OK\r\nPriority: {exact_parameters}\r\nContent-Length: 0\r\n\r\n");
+  let exact_response = Response::new(RoUrl::with("https://example.test"), exact_raw.into_bytes())
+    .expect("raw response should remain usable");
+  let exact_priority = exact_response
+    .priority()
+    .expect("256 Priority parameters should parse")
+    .expect("Priority should be present");
+  assert_eq!(256, exact_priority.extensions().len());
+
+  let exact_value = format!("x={}", "a".repeat(64 * 1024 - 2));
+  let exact_size_raw =
+    format!("HTTP/1.1 200 OK\r\nPriority: {exact_value}\r\nContent-Length: 0\r\n\r\n");
+  let exact_size_response = Response::new(
+    RoUrl::with("https://example.test"),
+    exact_size_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  let exact_size_priority = exact_size_response
+    .priority()
+    .expect("64 KiB Priority should parse")
+    .expect("Priority should be present");
+  assert_eq!(
+    Some(64 * 1024 - 2),
+    exact_size_priority.extensions()[0].value().map(str::len)
+  );
+
+  let too_many = (0..257)
+    .map(|index| format!("x{index}=?1"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let oversized = "a".repeat(64 * 1024 + 1);
+  for value in [too_many.as_str(), oversized.as_str()] {
+    let raw = format!("HTTP/1.1 200 OK\r\nPriority: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.priority().is_err(), "should reject bound breach");
+    assert_eq!(Some(&value.to_string()), response.header_value("Priority"));
+  }
+}
+
+#[test]
 fn test_server_timing_response_helper_parses_metrics_extensions_and_duplicates() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
