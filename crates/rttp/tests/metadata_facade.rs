@@ -1899,6 +1899,46 @@ fn compatibility_facade_exports_client_metadata_types() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_exports_response_observability_metadata_types() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nServer-Timing: db;dur=53;region=primary\r\nTiming-Allow-Origin: https://example.test\r\nReporting-Endpoints: default=\"https://reports.example/default\"\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("client response should parse");
+
+  let server_timing: rttp::ServerTiming = response
+    .server_timing()
+    .expect("Server-Timing should parse")
+    .expect("Server-Timing should be present");
+  let metric: &rttp::ServerTimingMetric = &server_timing.metrics()[0];
+  let parameter: &rttp::ServerTimingParameter = &metric.parameters()[0];
+  assert_eq!("db", metric.name());
+  assert_eq!(Some("primary"), parameter.value());
+  let _: rttp::ServerTimingParseError =
+    rttp::ServerTiming::parse("").expect_err("empty Server-Timing should be rejected");
+
+  let timing_allow_origin: rttp::TimingAllowOrigin = response
+    .timing_allow_origin()
+    .expect("Timing-Allow-Origin should parse")
+    .expect("Timing-Allow-Origin should be present");
+  assert_eq!("https://example.test", timing_allow_origin.origins()[0]);
+  let _: rttp::TimingAllowOriginParseError =
+    rttp::TimingAllowOrigin::parse("").expect_err("empty Timing-Allow-Origin should be rejected");
+
+  let reporting_endpoints: rttp::ReportingEndpoints = response
+    .reporting_endpoints()
+    .expect("Reporting-Endpoints should parse")
+    .expect("Reporting-Endpoints should be present");
+  assert_eq!(
+    Some("https://reports.example/default"),
+    reporting_endpoints.endpoint("default")
+  );
+  let _: rttp::ReportingEndpointsParseError =
+    rttp::ReportingEndpoints::parse("").expect_err("empty Reporting-Endpoints should be rejected");
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn compatibility_facade_exports_content_length_metadata_type() {
   let content_length: rttp::HttpContentLength = rttp::HttpContentLength::new(2);
 
