@@ -1,3 +1,4 @@
+use rttp_protocol::connection::Connection;
 use url::Url;
 
 use crate::error;
@@ -120,13 +121,12 @@ impl<'a> RawBuilder<'a> {
       .iter_mut()
       .find(|header| header.name().eq_ignore_ascii_case("connection"))
     {
-      if declares_te
-        && !header
-          .value()
-          .split(',')
-          .any(|token| token.trim().eq_ignore_ascii_case("te"))
-      {
-        header.replace(Header::new("Connection", format!("{}, TE", header.value())));
+      if declares_te {
+        let connection = Connection::parse(header.value())
+          .map_err(|error| error::builder_with_message(error.to_string()))?;
+        if !connection.contains("TE") {
+          header.replace(Header::new("Connection", format!("{}, TE", header.value())));
+        }
       }
       return Ok(());
     }
