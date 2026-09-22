@@ -5,7 +5,8 @@ use std::fmt;
 
 use crate::http1::is_token;
 
-pub const MAX_PREFER_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_PREFER_FIELD_BYTES: usize = 64 * 1024;
+pub const MAX_PREFER_VALUE_BYTES: usize = 8 * 1024;
 pub const MAX_PREFERENCES: usize = 32;
 pub const MAX_PREFERENCE_PARAMETERS: usize = 256;
 
@@ -80,7 +81,7 @@ impl Prefer {
     I: IntoIterator<Item = &'a str>,
   {
     Ok(Self {
-      preferences: parse_values(values, "Prefer")?,
+      preferences: parse_values(values, "Prefer", true)?,
     })
   }
 
@@ -111,7 +112,7 @@ impl PreferenceApplied {
     I: IntoIterator<Item = &'a str>,
   {
     Ok(Self {
-      preferences: parse_values(values, "Preference-Applied")?,
+      preferences: parse_values(values, "Preference-Applied", false)?,
     })
   }
 
@@ -195,13 +196,17 @@ impl PreferenceValue {
   }
 }
 
-fn parse_values<'a, I>(values: I, header_name: &str) -> Result<Vec<Preference>, PreferParseError>
+fn parse_values<'a, I>(
+  values: I,
+  header_name: &str,
+  allow_parameters: bool,
+) -> Result<Vec<Preference>, PreferParseError>
 where
   I: IntoIterator<Item = &'a str>,
 {
   let mut preferences = Vec::new();
   for value in values {
-    if value.len() > MAX_PREFER_VALUE_BYTES {
+    if value.len() > MAX_PREFER_FIELD_BYTES {
       return Err(PreferParseError::new(format!(
         "{header_name} header value is too large"
       )));
@@ -212,7 +217,7 @@ where
       return Err(invalid(header_name));
     }
     loop {
-      let preference = parse_preference(value, &mut position, header_name)?;
+      let preference = parse_preference(value, &mut position, header_name, allow_parameters)?;
       if preferences
         .iter()
         .any(|known: &Preference| known.name.eq_ignore_ascii_case(&preference.name))
@@ -251,12 +256,19 @@ fn parse_preference(
   value: &str,
   position: &mut usize,
   header_name: &str,
+  allow_parameters: bool,
 ) -> Result<Preference, PreferParseError> {
   let name = parse_token(value, position, header_name)?;
   skip_ows(value, position);
   let preference_value = if take_if(value, position, b'=') {
     skip_ows(value, position);
-    Some(parse_value(value, position, header_name)?)
+    let preference_value = parse_value(value, position, header_name)?;
+    if preference_value.value.len() > MAX_PREFER_VALUE_BYTES {
+      return Err(PreferParseError::new(format!(
+        "{header_name} preference value is too large"
+      )));
+    }
+    Some(preference_value)
   } else {
     None
   };
@@ -266,37 +278,39 @@ fn parse_preference(
     header_name,
   )?;
   let mut parameters = Vec::new();
-  loop {
-    skip_ows(value, position);
-    if !take_if(value, position, b';') {
-      break;
-    }
-    skip_ows(value, position);
-    let parameter_name = parse_token(value, position, header_name)?;
-    skip_ows(value, position);
-    let parameter_value = if take_if(value, position, b'=') {
+  if allow_parameters {
+    loop {
       skip_ows(value, position);
-      Some(parse_value(value, position, header_name)?)
-    } else {
-      None
-    };
-    if parameters
-      .iter()
-      .any(|parameter: &PreferenceParameter| parameter.name.eq_ignore_ascii_case(&parameter_name))
-    {
-      return Err(PreferParseError::new(format!(
-        "duplicate {header_name} preference parameter"
-      )));
+      if !take_if(value, position, b';') {
+        break;
+      }
+      skip_ows(value, position);
+      let parameter_name = parse_token(value, position, header_name)?;
+      skip_ows(value, position);
+      let parameter_value = if take_if(value, position, b'=') {
+        skip_ows(value, position);
+        Some(parse_value(value, position, header_name)?)
+      } else {
+        None
+      };
+      if parameters
+        .iter()
+        .any(|parameter: &PreferenceParameter| parameter.name.eq_ignore_ascii_case(&parameter_name))
+      {
+        return Err(PreferParseError::new(format!(
+          "duplicate {header_name} preference parameter"
+        )));
+      }
+      if parameters.len() >= MAX_PREFERENCE_PARAMETERS {
+        return Err(PreferParseError::new(format!(
+          "too many {header_name} preference parameters"
+        )));
+      }
+      parameters.push(PreferenceParameter {
+        name: parameter_name,
+        value: parameter_value,
+      });
     }
-    if parameters.len() >= MAX_PREFERENCE_PARAMETERS {
-      return Err(PreferParseError::new(format!(
-        "too many {header_name} preference parameters"
-      )));
-    }
-    parameters.push(PreferenceParameter {
-      name: parameter_name,
-      value: parameter_value,
-    });
   }
   Ok(Preference {
     name,
@@ -456,5 +470,6 @@ mod tests {
       assert!(Prefer::parse(value).is_err(), "{value} should be rejected");
     }
     assert!(PreferenceApplied::parse("handling=relaxed").is_err());
+    assert!(PreferenceApplied::parse("respond-async; source=server").is_err());
   }
 }

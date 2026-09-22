@@ -840,7 +840,7 @@ fn protocol_exports_structured_preference_metadata() {
     "return=representation, wait=10; priority=high, example=\"quoted value\"; mode=fast",
   )
   .expect("Prefer should parse");
-  let applied = PreferenceApplied::parse("respond-async; accepted=true")
+  let applied = PreferenceApplied::parse("respond-async, return=minimal")
     .expect("Preference-Applied should parse");
 
   assert_eq!(prefer.preferences().len(), 3);
@@ -854,10 +854,8 @@ fn protocol_exports_structured_preference_metadata() {
     applied.preferences()[0].kind(),
     PreferenceKind::RespondAsync
   );
-  assert_eq!(
-    applied.preferences()[0].parameters()[0].value(),
-    Some("true")
-  );
+  assert_eq!(applied.preferences()[1].value(), Some("minimal"));
+  assert!(applied.preferences()[0].parameters().is_empty());
 }
 
 #[test]

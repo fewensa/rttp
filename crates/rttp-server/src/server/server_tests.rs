@@ -1568,20 +1568,20 @@ fn preference_applied_response_helpers_validate_replace_and_parse_metadata() {
   let response = HttpResponse::ok([])
     .header("Preference-Applied", "return=minimal")
     .header("preference-applied", "wait=10")
-    .with_preference_applied("return=representation, vendor=enabled; trace=\"a b\"")
+    .with_preference_applied("return=representation, vendor=enabled")
     .expect("valid Preference-Applied should replace raw fields");
   let metadata = response
     .preference_applied()
     .expect("Preference-Applied should parse")
     .expect("Preference-Applied should be present");
   assert_eq!(
-    "return=representation, vendor=enabled; trace=\"a b\"",
+    "return=representation, vendor=enabled",
     metadata.header_value()
   );
   assert_eq!(
     vec![(
       "Preference-Applied",
-      "return=representation, vendor=enabled; trace=\"a b\""
+      "return=representation, vendor=enabled"
     )],
     response
       .headers

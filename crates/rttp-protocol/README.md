@@ -1550,6 +1550,29 @@ coding lists, and empty present field sets are errors. This parser never fails
 open and does not enable a transfer-coding engine, negotiate trailers, or
 apply compression or proxy behavior.
 
+## Prefer and Preference-Applied
+
+`prefer` parses RFC 7240 `Prefer` request fields and
+`PreferenceApplied` parses `Preference-Applied` response fields as ordered
+preference members. Each supplied field value is bounded to 64 KiB, each
+preference member's direct value is bounded to 8 KiB, and the combined
+preference count is bounded to 32. `Prefer` members may carry at most 256
+parameters; `Preference-Applied` rejects preference parameters because RFC 7240
+`applied-preference` allows only a token and optional value. Repeated fields
+are flattened in wire order. Preference names and Prefer parameter names are
+retained in their accepted spelling but duplicate names are rejected
+case-insensitively.
+
+Known preferences validate their RFC 7240 forms: `return` accepts only
+`minimal` or `representation`, `respond-async` is valueless, `wait` requires
+unsigned decimal digits, and `handling` accepts only `lenient` or `strict`.
+Extension preferences, Prefer parameters, token values, quoted-string values,
+quoted escaping, and valueless Prefer parameters are preserved and serialized
+through `header_value()`. Empty members, malformed separators or values,
+duplicate metadata, Preference-Applied parameters, and bound violations are
+errors. The parser does not check whether a matching request preference was
+sent or apply any preference semantics.
+
 ## X-Frame-Options
 
 `x_frame_options` parses a singleton `X-Frame-Options` response field. Each
