@@ -2139,8 +2139,8 @@ impl HttpClient {
   }
 
   fn prefer_member(&mut self, name: &str, value: Option<&str>) -> error::Result<&mut Self> {
-    let name = name.trim();
-    let value = value.map(str::trim);
+    let name = trim_http_ows(name);
+    let value = value.map(trim_http_ows);
     if !is_http_token(name)
       || (name.eq_ignore_ascii_case("wait")
         && !value.is_some_and(|value| value.bytes().all(|byte| byte.is_ascii_digit())))
@@ -2660,11 +2660,11 @@ fn parse_prefer_names(value: &str) -> error::Result<Vec<&str>> {
 }
 
 fn split_prefer_member(member: &str) -> error::Result<(&str, Option<&str>)> {
+  let member = trim_http_ows(member);
   let (name, value) = member
-    .trim()
     .split_once('=')
-    .map_or((member.trim(), None), |(name, value)| {
-      (name.trim(), Some(value.trim()))
+    .map_or((member, None), |(name, value)| {
+      (trim_http_ows(name), Some(trim_http_ows(value)))
     });
   if !is_http_token(name)
     || (name.eq_ignore_ascii_case("wait")
