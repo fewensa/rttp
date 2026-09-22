@@ -1226,7 +1226,7 @@ where
       )));
     }
     for member in value.split(',') {
-      let client_hint = member.trim();
+      let client_hint = member.trim_matches([' ', '\t']);
       if !is_structured_token(client_hint) {
         return Err(ClientHintsParseError::new(format!(
           "invalid {header_name} client hint"
