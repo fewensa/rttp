@@ -1938,7 +1938,7 @@ impl ContentLanguage {
       }
 
       for tag in value.split(',') {
-        let tag = tag.trim();
+        let tag = trim_ows(tag);
         if tag.is_empty() || !is_language_range(tag) {
           return Err(error::bad_response("Invalid Content-Language tag"));
         }
