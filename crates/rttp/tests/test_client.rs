@@ -22,6 +22,31 @@ fn test_client_http() {
 
 #[test]
 #[cfg(any(feature = "all", feature = "client"))]
+fn compatibility_facade_reexports_core_response_metadata() {
+  let _: rttp::Connection = rttp::Connection::parse("keep-alive").expect("Connection should parse");
+  let _: rttp::ConnectionParseError =
+    rttp::Connection::parse("").expect_err("empty Connection should fail");
+
+  let _: rttp::TransferEncoding =
+    rttp::TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
+  let _: rttp::TransferEncodingParseError =
+    rttp::TransferEncoding::parse("").expect_err("empty Transfer-Encoding should fail");
+
+  let keep_alive: rttp::KeepAlive =
+    rttp::KeepAlive::parse("timeout=5, max=100, custom=token").expect("Keep-Alive should parse");
+  let _: &[rttp::KeepAliveExtension] = keep_alive.extensions();
+  let _: rttp::KeepAliveParseError =
+    rttp::KeepAlive::parse("").expect_err("empty Keep-Alive should fail");
+
+  let _: rttp::Vary = rttp::Vary::parse("Accept-Encoding").expect("Vary should parse");
+  let _: rttp::VaryParseError = rttp::Vary::parse("").expect_err("empty Vary should fail");
+
+  let _: rttp::Trailer = rttp::Trailer::parse("X-Checksum").expect("Trailer should parse");
+  let _: rttp::TrailerParseError = rttp::Trailer::parse("").expect_err("empty Trailer should fail");
+}
+
+#[test]
+#[cfg(any(feature = "all", feature = "client"))]
 fn compatibility_facade_reexports_accept_response_metadata() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
