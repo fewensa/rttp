@@ -73,6 +73,17 @@ fn client_facade_exports_from_metadata_types() {
 }
 
 #[test]
+fn client_facade_exports_alt_svc_metadata_types() {
+  let alt_svc =
+    AltSvc::parse(r#"h3=":443"; extension=value"#).expect("Alt-Svc metadata should parse");
+  let alternative: &rttp_client::response::AltSvcAlternative = &alt_svc.alternatives()[0];
+  let _: &[rttp_client::response::AltSvcParameter] = alternative.parameters();
+  let _: rttp_client::response::AltSvcParseError =
+    AltSvc::parse("h3=:443").expect_err("invalid Alt-Svc should fail");
+  assert_eq!("h3=\":443\"; extension=value", alt_svc.header_value());
+}
+
+#[test]
 fn client_facade_exports_accept_signature_metadata_types() {
   let metadata = AcceptSignature::parse(
     r#"sig1=("@method" "content-digest");created;nonce="n1";keyid="test-key""#,

@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::net::Ipv6Addr;
 
 pub const MAX_ALT_SVC_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ALT_SVC_ALTERNATIVES: usize = 256;
@@ -253,17 +254,19 @@ fn parse_parameter(
 ) -> Result<(), AltSvcParseError> {
   let name = parse_token(value, position, "invalid Alt-Svc parameter name")?.to_ascii_lowercase();
   skip_ows(value.as_bytes(), position);
-  if value.as_bytes().get(*position) != Some(&b'=') {
-    return Err(AltSvcParseError::new("invalid Alt-Svc parameter"));
-  }
-  *position += 1;
-  skip_ows(value.as_bytes(), position);
-  let quoted_value = value.as_bytes().get(*position) == Some(&b'"');
-  let parameter_value = Some(if quoted_value {
-    parse_quoted_string(value, position)?
+  let (quoted_value, parameter_value) = if value.as_bytes().get(*position) == Some(&b'=') {
+    *position += 1;
+    skip_ows(value.as_bytes(), position);
+    let quoted_value = value.as_bytes().get(*position) == Some(&b'"');
+    let parameter_value = if quoted_value {
+      parse_quoted_string(value, position)?
+    } else {
+      parse_token(value, position, "invalid Alt-Svc parameter value")?.to_string()
+    };
+    (quoted_value, Some(parameter_value))
   } else {
-    parse_token(value, position, "invalid Alt-Svc parameter value")?.to_string()
-  });
+    (false, None)
+  };
   if parameter_value
     .as_ref()
     .is_some_and(|parameter| parameter.len() > MAX_ALT_SVC_PARAMETER_VALUE_BYTES)
@@ -329,9 +332,7 @@ fn validate_authority(authority: &str) -> Result<(), AltSvcParseError> {
     return Ok(());
   }
   let valid_host = if host.starts_with('[') && host.ends_with(']') {
-    host[1..host.len() - 1]
-      .bytes()
-      .all(|byte| byte.is_ascii_hexdigit() || matches!(byte, b':' | b'.'))
+    host[1..host.len() - 1].parse::<Ipv6Addr>().is_ok()
   } else {
     host
       .bytes()
@@ -411,7 +412,7 @@ fn escape_quoted(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-  use super::AltSvc;
+  use super::{parse_alternative, AltSvc, MAX_ALT_SVC_PARAMETER_VALUE_BYTES};
 
   #[test]
   fn parses_alternatives_and_clear() {
@@ -426,5 +427,30 @@ mod tests {
   fn preserves_utf8_quoted_extension_values() {
     let alt_svc = AltSvc::parse("h3=\":443\"; note=\"café\"").expect("valid Alt-Svc");
     assert_eq!("h3=\":443\"; note=\"café\"", alt_svc.header_value());
+  }
+
+  #[test]
+  fn enforces_parameter_value_bound_before_field_bound() {
+    let prefix = "h3=\":443\"; note=";
+    let exact = format!("{prefix}{}", "a".repeat(MAX_ALT_SVC_PARAMETER_VALUE_BYTES));
+    let mut alternatives = Vec::new();
+    let mut position = 0;
+    parse_alternative(&exact, &mut position, &mut alternatives)
+      .expect("an exact-size parameter value should parse");
+    assert_eq!(1, alternatives.len());
+
+    let over = format!(
+      "{prefix}{}",
+      "a".repeat(MAX_ALT_SVC_PARAMETER_VALUE_BYTES + 1)
+    );
+    let mut alternatives = Vec::new();
+    let mut position = 0;
+    assert_eq!(
+      "Alt-Svc parameter value is too large",
+      parse_alternative(&over, &mut position, &mut alternatives)
+        .expect_err("an over-size parameter value must be rejected")
+        .to_string()
+    );
+    assert!(alternatives.is_empty());
   }
 }
