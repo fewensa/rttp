@@ -5636,6 +5636,37 @@ fn test_parse_content_encoding_response_helper_preserves_order_across_fields() {
 }
 
 #[test]
+fn test_parse_content_encoding_accepts_only_http_ows_around_members() {
+  assert_eq!(
+    vec!["gzip", "br", "identity"],
+    ContentEncoding::parse(" \tgzip\t,  br ,\tidentity \t")
+      .expect("SP and HTAB padding should parse")
+      .codings()
+  );
+
+  for padding in ["\r", "\n", "\u{000b}", "\u{000c}", "\u{a0}", "\u{2003}"] {
+    let value = format!("gzip,{padding}br");
+    assert!(
+      ContentEncoding::parse(&value).is_err(),
+      "non-OWS padding should be rejected: {value:?}"
+    );
+  }
+}
+#[test]
+fn test_invalid_content_encoding_keeps_raw_header_available() {
+  let mut raw = b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip,".to_vec();
+  raw.push(0xa0);
+  raw.extend_from_slice(b"br\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw)
+    .expect("raw response with invalid content-encoding remains usable");
+  assert!(response.content_encoding().is_err());
+  assert_eq!(
+    Some(&"gzip,\u{a0}br".to_string()),
+    response.header_value("Content-Encoding")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+}
+#[test]
 fn test_content_encoding_runtime_decodes_only_single_supported_gzip_coding() {
   let body = gzip_bytes(b"OK");
   let mut raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Encoding: gzip\r\n")
