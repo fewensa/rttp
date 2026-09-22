@@ -40,7 +40,7 @@ impl AcceptLanguage {
         ));
       }
       for item in value.split(',') {
-        let (range, quality) = parse_accept_language_item(item.trim())?;
+        let (range, quality) = parse_accept_language_item(item.trim_matches([' ', '\t']))?;
         if ranges.len() >= MAX_ACCEPT_LANGUAGE_RANGES {
           return Err(AcceptLanguageParseError::new(
             "too many Accept-Language ranges",
@@ -134,7 +134,7 @@ fn parse_accept_language_item(
   value: &str,
 ) -> Result<(&str, Option<&str>), AcceptLanguageParseError> {
   let mut parts = value.split(';');
-  let range = parts.next().unwrap_or_default().trim();
+  let range = parts.next().unwrap_or_default().trim_matches([' ', '\t']);
   if !is_valid_language_range(range) {
     return Err(AcceptLanguageParseError::new(
       "invalid Accept-Language range",
@@ -148,13 +148,13 @@ fn parse_accept_language_item(
       "invalid Accept-Language q-value",
     ));
   }
-  let Some((name, quality)) = parameter.trim().split_once('=') else {
+  let Some((name, quality)) = parameter.trim_matches([' ', '\t']).split_once('=') else {
     return Err(AcceptLanguageParseError::new(
       "invalid Accept-Language q-value",
     ));
   };
-  let quality = quality.trim();
-  if !name.trim().eq_ignore_ascii_case("q") || !is_valid_qvalue(quality) {
+  let quality = quality.trim_matches([' ', '\t']);
+  if !name.trim_matches([' ', '\t']).eq_ignore_ascii_case("q") || !is_valid_qvalue(quality) {
     return Err(AcceptLanguageParseError::new(
       "invalid Accept-Language q-value",
     ));
