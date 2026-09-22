@@ -3265,6 +3265,26 @@ fn parses_allow_methods_and_serializes_single_header_value() {
 }
 
 #[test]
+fn parses_and_constructs_empty_allow_method_set() {
+  let parsed = HttpAllowedMethods::parse("").expect("empty Allow header should parse");
+  assert!(parsed.methods().is_empty());
+  assert_eq!("", parsed.header_value());
+
+  let response = HttpResponse::new(405, "Method Not Allowed")
+    .with_allow(std::iter::empty::<&str>())
+    .expect("empty Allow methods should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nAllow: \r\n"));
+  let allow = response
+    .allow()
+    .expect("empty Allow header should parse")
+    .expect("Allow header should be present");
+  assert!(allow.methods().is_empty());
+  assert_eq!("", allow.header_value());
+}
+
+#[test]
 fn response_allow_helper_parses_attached_header_fields() {
   let response = HttpResponse::ok("body")
     .header("Allow", "GET, HEAD")
@@ -3281,7 +3301,6 @@ fn response_allow_helper_parses_attached_header_fields() {
 #[test]
 fn allow_helpers_reject_malformed_duplicate_oversized_and_excessive_values() {
   for value in [
-    "",
     " ",
     "GET,",
     ", GET",

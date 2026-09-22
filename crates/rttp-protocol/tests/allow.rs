@@ -21,9 +21,21 @@ fn preserves_exact_method_tokens_without_policy() {
 }
 
 #[test]
+fn accepts_empty_allow_value_and_empty_method_construction() {
+  let parsed = Allow::parse("").expect("an empty Allow value should parse");
+  let constructed = Allow::from_methods(std::iter::empty::<&str>())
+    .expect("an empty method set should be constructible");
+
+  for allow in [parsed, constructed] {
+    assert!(allow.methods().is_empty());
+    assert_eq!("", allow.header_value());
+    assert!(!allow.contains_method("GET"));
+  }
+}
+
+#[test]
 fn rejects_malformed_members_and_control_bytes() {
   for value in [
-    "",
     "GET,",
     ",GET",
     "GET,,POST",

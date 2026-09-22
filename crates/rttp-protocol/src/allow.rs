@@ -35,6 +35,9 @@ impl Allow {
       if value.bytes().any(is_invalid_control_byte) {
         return Err(AllowParseError::new("invalid Allow control byte"));
       }
+      if value.is_empty() {
+        continue;
+      }
 
       for member in value.split(',') {
         let method = member.trim_matches([' ', '\t']);
@@ -49,10 +52,6 @@ impl Allow {
         }
         methods.push(method.to_string());
       }
-    }
-
-    if methods.is_empty() {
-      return Err(AllowParseError::new("invalid Allow method"));
     }
 
     Ok(Self { methods })
