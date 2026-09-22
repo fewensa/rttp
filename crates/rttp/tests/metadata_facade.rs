@@ -3988,6 +3988,62 @@ fn via_facade_exports_shared_request_and_response_type() {
 
 #[cfg(feature = "client")]
 #[test]
+fn compatibility_facade_exports_remaining_response_routing_metadata() {
+  use rttp::{
+    NoVarySearchExtension, PragmaDirective, ProxyStatus, ProxyStatusBareItem,
+    ProxyStatusIdentifier, ProxyStatusMember, ProxyStatusParameter, ProxyStatusParseError,
+    ReferrerPolicy, ReferrerPolicyParseError, ReferrerPolicyToken,
+  };
+
+  let no_vary_search =
+    rttp::NoVarySearch::parse(r#"key-order=?0, params=("utm_source" "q"), x-token=42"#)
+      .expect("No-Vary-Search should parse");
+  let extension: &NoVarySearchExtension = &no_vary_search.extensions()[0];
+  assert_eq!(extension.key(), "x-token");
+  assert_eq!(extension.value(), Some("42"));
+
+  let pragma = rttp::Pragma::parse("no-cache, community=private").expect("Pragma should parse");
+  let no_cache: &PragmaDirective = &pragma.directives()[0];
+  let community: &PragmaDirective = &pragma.directives()[1];
+  assert_eq!(no_cache.name(), "no-cache");
+  assert_eq!(community.name(), "community");
+  assert_eq!(community.value(), Some("private"));
+
+  let proxy_status: ProxyStatus =
+    ProxyStatus::parse("ExampleCDN; error=connection_timeout").expect("Proxy-Status should parse");
+  let member: &ProxyStatusMember = &proxy_status.members()[0];
+  let identifier: &ProxyStatusIdentifier = member.identifier();
+  assert_eq!(
+    identifier,
+    &ProxyStatusIdentifier::Token("ExampleCDN".to_string())
+  );
+  let parameter: &ProxyStatusParameter = member
+    .parameter("error")
+    .expect("error parameter should be present");
+  let value: &ProxyStatusBareItem = parameter.value();
+  assert_eq!(
+    value,
+    &ProxyStatusBareItem::Token("connection_timeout".to_string())
+  );
+  let _: ProxyStatusParseError =
+    ProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
+
+  let policy: ReferrerPolicy = ReferrerPolicy::parse("strict-origin, no-referrer, origin")
+    .expect("Referrer-Policy should parse");
+  assert_eq!(
+    policy.policies(),
+    &[
+      ReferrerPolicyToken::StrictOrigin,
+      ReferrerPolicyToken::NoReferrer,
+      ReferrerPolicyToken::Origin,
+    ]
+  );
+  let _: ReferrerPolicyParseError =
+    ReferrerPolicy::parse("").expect_err("empty Referrer-Policy should be rejected");
+}
+
+#[cfg(feature = "client")]
+#[test]
 fn via_compatibility_facade_exports_client_type() {
   let via: rttp::Via =
     rttp::Via::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
