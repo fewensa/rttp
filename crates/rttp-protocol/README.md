@@ -1590,11 +1590,13 @@ may be framed.
 `warning` parses `#warning-value` lists from RFC 7234 `Warning` fields. Each
 field value is bounded to 64 KiB, the combined item count is bounded to 256,
 and each unescaped warn-agent and warn-text is bounded to 64 KiB. Warn-codes
-are any 3 ASCII digits; warn-agent is opaque non-space text; warn-text is a
-quoted-string; an optional quoted HTTP-date is parsed with the same
+are any 3 ASCII digits; warn-agent is a `uri-host` with optional port
+(including bracketed IP-literals) or an RFC 7230 token pseudonym; warn-text
+is a quoted-string; an optional quoted HTTP-date is parsed with the same
 `httpdate` helper as Sunset. Empty input, empty members, malformed quoting,
-invalid codes, and bound violations are rejected. This parser does not
-implement cache, freshness, stale-response, or response-acceptance policy.
+invalid codes, invalid warn-agents (including CR, LF, DEL, and other control
+bytes), and bound violations are rejected. This parser does not implement
+cache, freshness, stale-response, or response-acceptance policy.
 
 ## Access-Control-Allow-Credentials
 
