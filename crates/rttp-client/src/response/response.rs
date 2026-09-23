@@ -2063,14 +2063,14 @@ impl CacheControl {
   fn apply_directive(&mut self, directive: &str) -> error::Result<()> {
     let (name, value, value_was_quoted) = match directive.split_once('=') {
       Some((name, value)) => {
-        let value = value.trim();
+        let value = trim_ows(value);
         (
-          name.trim(),
+          trim_ows(name),
           Some(parse_directive_value(value)?),
           value.starts_with('"'),
         )
       }
-      None => (directive.trim(), None, false),
+      None => (trim_ows(directive), None, false),
     };
     if !is_token(name) {
       return Err(error::bad_response("Invalid Cache-Control directive"));
@@ -2253,7 +2253,7 @@ fn split_cache_control_directives(value: &str) -> error::Result<Vec<String>> {
 }
 
 fn push_directive(directives: &mut Vec<String>, directive: &str) -> error::Result<()> {
-  let directive = directive.trim();
+  let directive = trim_ows(directive);
   if directive.is_empty() {
     return Err(error::bad_response("Invalid Cache-Control directive"));
   }
@@ -2268,7 +2268,7 @@ fn parse_directive_value(value: &str) -> error::Result<String> {
   if let Some(value) = value.strip_prefix('"') {
     return parse_quoted_string(value);
   }
-  if value.contains('"') || value.is_empty() {
+  if value.contains('"') || value.is_empty() || !is_token(value) {
     return Err(error::bad_response("Invalid Cache-Control directive value"));
   }
   Ok(value.to_string())
@@ -2299,7 +2299,7 @@ fn parse_quoted_string(value: &str) -> error::Result<String> {
     }
   }
 
-  if !closed || chars.any(|ch| !ch.is_ascii_whitespace()) {
+  if !closed || chars.any(|ch| !is_ows(ch)) {
     return Err(error::bad_response("Malformed Cache-Control quoted-string"));
   }
   Ok(parsed)
@@ -2328,7 +2328,7 @@ fn parse_delta_seconds(
 fn split_field_names(value: &str) -> Vec<String> {
   value
     .split(',')
-    .map(str::trim)
+    .map(trim_ows)
     .filter(|field| !field.is_empty())
     .map(ToString::to_string)
     .collect()
