@@ -24,6 +24,52 @@ fn authorization_parses_basic_bearer_custom_and_proxy_metadata() {
 }
 
 #[test]
+fn authorization_constructors_accept_only_http_ows_scheme_padding() {
+  for (scheme, credentials, expected_scheme, expected_header) in [
+    (
+      " Basic ",
+      "dXNlcjpzZWNyZXQ=",
+      "Basic",
+      "Basic dXNlcjpzZWNyZXQ=",
+    ),
+    ("\tBearer\t", "token-123", "Bearer", "Bearer token-123"),
+    (
+      " \tApiKey\t ",
+      "v1:client-42",
+      "ApiKey",
+      "ApiKey v1:client-42",
+    ),
+  ] {
+    let authorization = Authorization::new(scheme, credentials)
+      .expect("OWS-padded Authorization scheme should be accepted");
+    assert_eq!(expected_scheme, authorization.scheme());
+    assert_eq!(credentials, authorization.credentials());
+    assert_eq!(expected_header, authorization.header_value());
+
+    let proxy = ProxyAuthorization::new(scheme, credentials)
+      .expect("OWS-padded Proxy-Authorization scheme should be accepted");
+    assert_eq!(expected_scheme, proxy.scheme());
+    assert_eq!(credentials, proxy.credentials());
+    assert_eq!(expected_header, proxy.header_value());
+  }
+}
+
+#[test]
+fn authorization_constructors_reject_non_ows_scheme_padding() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let scheme = format!("{whitespace}Bearer{whitespace}");
+    assert!(
+      Authorization::new(&scheme, "token").is_err(),
+      "non-OWS Authorization scheme padding must be rejected: {scheme:?}"
+    );
+    assert!(
+      ProxyAuthorization::new(&scheme, "token").is_err(),
+      "non-OWS Proxy-Authorization scheme padding must be rejected: {scheme:?}"
+    );
+  }
+}
+
+#[test]
 fn authorization_rejects_malformed_or_injected_metadata() {
   for value in [
     "Bearer",
