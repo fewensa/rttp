@@ -2784,7 +2784,7 @@ fn validate_request_trailer_header(name: &str, value: &str) -> error::Result<()>
 const MAX_CONDITIONAL_VALIDATOR_VALUE_BYTES: usize = 64 * 1024;
 
 fn validate_single_etag(etag: &str) -> error::Result<&str> {
-  let etag = etag.trim();
+  let etag = trim_http_ows(etag);
   if etag.len() > MAX_CONDITIONAL_VALIDATOR_VALUE_BYTES {
     return Err(error::builder_with_message(
       "conditional entity-tag validator is too large",
@@ -2833,7 +2833,20 @@ fn validate_single_strong_etag(etag: &str) -> error::Result<&str> {
 }
 
 fn validate_http_date(http_date: &str) -> error::Result<&str> {
-  let http_date = http_date.trim();
+  let http_date = trim_http_ows(http_date);
+  if http_date
+    .chars()
+    .next()
+    .is_some_and(|character| character.is_whitespace())
+    || http_date
+      .chars()
+      .next_back()
+      .is_some_and(|character| character.is_whitespace())
+  {
+    return Err(error::builder_with_message(
+      "conditional modification time must be a valid HTTP-date",
+    ));
+  }
   httpdate::parse_http_date(http_date).map_err(|_| {
     error::builder_with_message("conditional modification time must be a valid HTTP-date")
   })?;

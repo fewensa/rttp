@@ -5762,6 +5762,96 @@ fn conditional_request_helpers_emit_validator_headers() {
 }
 
 #[test]
+fn conditional_request_helpers_accept_only_http_ows_padding() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .if_match(" \t\"match\"\t ")
+      .expect("SP/HTAB-padded If-Match should be accepted")
+      .if_none_match("\tW/\"none\"\t")
+      .expect("SP/HTAB-padded If-None-Match should be accepted")
+      .if_range_etag(" \t\"range\"\t")
+      .expect("SP/HTAB-padded If-Range etag should be accepted")
+      .if_modified_since(" \tSun, 06 Nov 1994 08:49:37 GMT\t")
+      .expect("SP/HTAB-padded If-Modified-Since should be accepted")
+      .if_unmodified_since("\tSun, 06 Nov 1994 08:49:37 GMT\t ")
+      .expect("SP/HTAB-padded If-Unmodified-Since should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some(r#""match""#), header_value(&request, "If-Match"));
+  assert_eq!(Some(r#"W/"none""#), header_value(&request, "If-None-Match"));
+  assert_eq!(Some(r#""range""#), header_value(&request, "If-Range"));
+  assert_eq!(
+    Some("Sun, 06 Nov 1994 08:49:37 GMT"),
+    header_value(&request, "If-Modified-Since")
+  );
+  assert_eq!(
+    Some("Sun, 06 Nov 1994 08:49:37 GMT"),
+    header_value(&request, "If-Unmodified-Since")
+  );
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .if_range_date("\tSun, 06 Nov 1994 08:49:37 GMT\t ")
+      .expect("SP/HTAB-padded If-Range date should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("Sun, 06 Nov 1994 08:49:37 GMT"),
+    header_value(&request, "If-Range")
+  );
+}
+
+#[test]
+fn conditional_request_helpers_reject_non_ows_padding_before_connecting() {
+  for padding in ["\u{b}", "\u{c}", "\r", "\n", "\u{a0}", "\u{2003}"] {
+    for helper in [
+      "If-Match",
+      "If-None-Match",
+      "If-Range etag",
+      "If-Range date",
+      "If-Modified-Since",
+      "If-Unmodified-Since",
+    ] {
+      let request = capture_optional_request(|base_url| {
+        let mut client = client();
+        let request = client.get().url(format!("{}/asset", base_url));
+        let error = match helper {
+          "If-Match" => request.if_match(format!("{padding}\"tag\"{padding}")),
+          "If-None-Match" => request.if_none_match(format!("{padding}\"tag\"{padding}")),
+          "If-Range etag" => request.if_range_etag(format!("{padding}\"tag\"{padding}")),
+          "If-Range date" => {
+            request.if_range_date(format!("{padding}Sun, 06 Nov 1994 08:49:37 GMT{padding}"))
+          }
+          "If-Modified-Since" => {
+            request.if_modified_since(format!("{padding}Sun, 06 Nov 1994 08:49:37 GMT{padding}"))
+          }
+          "If-Unmodified-Since" => {
+            request.if_unmodified_since(format!("{padding}Sun, 06 Nov 1994 08:49:37 GMT{padding}"))
+          }
+          _ => unreachable!("test helper names are exhaustive"),
+        }
+        .expect_err("non-OWS padding must be rejected");
+        assert!(error.is_builder());
+      });
+
+      assert!(
+        request.is_empty(),
+        "{helper} with {padding:?} padding must not open a socket"
+      );
+    }
+  }
+}
+
+#[test]
 fn if_range_helpers_emit_single_validator_headers() {
   let request = capture_request(|base_url| {
     client()
