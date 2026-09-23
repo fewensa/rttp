@@ -157,6 +157,7 @@ pub use rttp_protocol::negotiate::{
   Negotiate as HttpNegotiate, NegotiateDirective as HttpNegotiateDirective,
   NegotiateParseError as HttpNegotiateParseError,
 };
+pub use rttp_protocol::origin::{Origin as HttpOrigin, OriginParseError as HttpOriginParseError};
 pub use rttp_protocol::overwrite::{
   Overwrite as HttpOverwrite, OverwriteParseError as HttpOverwriteParseError,
 };
@@ -458,6 +459,18 @@ impl Request {
   /// Parses one strong entity-tag or HTTP-date `If-Range` validator.
   pub fn if_range(&self) -> Result<Option<HttpIfRange>, HttpIfRangeParseError> {
     HttpIfRange::parse_optional_values(self.headers_named("If-Range"))
+  }
+
+  /// Parses one bounded `Origin` field without applying CORS policy.
+  ///
+  /// Returns `Ok(None)` when the field is absent. The raw `Origin` field
+  /// remains available through `header`.
+  pub fn origin(&self) -> Result<Option<HttpOrigin>, HttpOriginParseError> {
+    let values: Vec<&str> = self.headers_named("Origin").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpOrigin::parse_values(values).map(Some)
   }
 
   /// Parses bounded `If-Match` validators without evaluating them.
@@ -2606,6 +2619,23 @@ impl HttpRequest {
         .filter(|header| header.name.eq_ignore_ascii_case("If-Range"))
         .map(|header| header.value.as_str()),
     )
+  }
+
+  /// Parses one bounded `Origin` field without applying CORS policy.
+  ///
+  /// Returns `Ok(None)` when the field is absent. The raw `Origin` field
+  /// remains available through `header`.
+  pub fn origin(&self) -> Result<Option<HttpOrigin>, HttpOriginParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Origin"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpOrigin::parse_values(values).map(Some)
   }
 
   /// Parses bounded `If-Match` validators without evaluating them.
