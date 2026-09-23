@@ -16,7 +16,7 @@ use rttp::server::{
   HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
   HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
   HttpScheduleTag, HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType,
-  HttpTimingAllowOrigin, HttpTimingAllowOriginParseError, HttpVary, HttpVia,
+  HttpTimingAllowOrigin, HttpTimingAllowOriginParseError, HttpVary, HttpVia, HttpWarning,
 };
 
 use rttp::server::{
@@ -1275,6 +1275,136 @@ fn response_via_helper_validates_replaces_and_preserves_raw_headers() {
       .expect("absent Via should parse")
   );
   assert!(HttpVia::parse("1.1 ".to_string() + &"a".repeat(64 * 1024)).is_err());
+}
+
+#[test]
+fn response_warning_helper_combines_fields_replaces_and_preserves_order() {
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .warning()
+      .expect("absent Warning should parse")
+  );
+
+  let comma_list = HttpResponse::ok("body")
+    .header(
+      "Warning",
+      r#"110 - "Response is Stale", 111 cache "Revalidation Failed""#,
+    )
+    .warning()
+    .expect("comma-separated Warning should parse")
+    .expect("Warning should be present");
+  assert_eq!(2, comma_list.len());
+  assert_eq!(110, comma_list.items()[0].code());
+  assert_eq!("-", comma_list.items()[0].agent());
+  assert_eq!("Response is Stale", comma_list.items()[0].text());
+  assert_eq!(None, comma_list.items()[0].date());
+  assert_eq!(111, comma_list.items()[1].code());
+  assert_eq!("cache", comma_list.items()[1].agent());
+  assert_eq!("Revalidation Failed", comma_list.items()[1].text());
+
+  let repeated = HttpResponse::ok("body")
+    .header("Warning", r#"110 - "Response is Stale""#)
+    .header(
+      "warning",
+      r#"299 example.com:80 "Deprecated API" "Wed, 21 Oct 2015 07:28:00 GMT""#,
+    );
+  let warning = repeated
+    .warning()
+    .expect("repeated Warning fields should parse")
+    .expect("Warning should be present");
+  assert_eq!(2, warning.len());
+  assert_eq!(110, warning.items()[0].code());
+  assert_eq!("Response is Stale", warning.items()[0].text());
+  assert_eq!(299, warning.items()[1].code());
+  assert_eq!("example.com:80", warning.items()[1].agent());
+  assert_eq!("Deprecated API", warning.items()[1].text());
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(1_445_412_480)),
+    warning.items()[1].date()
+  );
+  let repeated_serialized =
+    String::from_utf8(repeated.to_bytes()).expect("response should serialize");
+  assert!(repeated_serialized.contains("\r\nWarning: 110 - \"Response is Stale\"\r\n"));
+  assert!(repeated_serialized.contains(
+    "\r\nwarning: 299 example.com:80 \"Deprecated API\" \"Wed, 21 Oct 2015 07:28:00 GMT\"\r\n"
+  ));
+
+  let response = HttpResponse::ok("body")
+    .header("Warning", r#"110 - "stale""#)
+    .header("warning", r#"111 cache "older""#)
+    .with_warning(
+      r#"110 - "Response is Stale", 299 example.com:80 "Deprecated API" "Wed, 21 Oct 2015 07:28:00 GMT""#,
+    )
+    .expect("valid Warning should be accepted");
+  let replaced: HttpWarning = response
+    .warning()
+    .expect("replaced Warning should parse")
+    .expect("Warning should be present");
+  assert_eq!(2, replaced.len());
+  assert_eq!(110, replaced.items()[0].code());
+  assert_eq!(299, replaced.items()[1].code());
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(1_445_412_480)),
+    replaced.items()[1].date()
+  );
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nWarning: ").count());
+  assert!(serialized.contains(
+    "\r\nWarning: 110 - \"Response is Stale\", 299 example.com:80 \"Deprecated API\" \"Wed, 21 Oct 2015 07:28:00 GMT\"\r\n"
+  ));
+  assert!(!serialized.contains("stale"));
+  assert!(!serialized.contains("older"));
+}
+
+#[test]
+fn response_warning_helper_rejects_invalid_and_bounds_without_hiding_headers() {
+  for value in [
+    r#"110 - "unterminated"#,
+    r#"110 - "ok" "not a date""#,
+    "110 agent\x7f \"text\"",
+    "110 agent\r \"text\"",
+    "110 agent\nX-Injected:1 \"text\"",
+  ] {
+    assert!(
+      HttpResponse::ok("body").with_warning(value).is_err(),
+      "with_warning should reject {value:?}"
+    );
+  }
+
+  for value in [
+    r#"110 - "unterminated"#,
+    r#"110 - "ok" "not a date""#,
+    "110 agent\x7f \"text\"",
+  ] {
+    let raw = HttpResponse::ok("body").header("Warning", value);
+    assert!(raw.warning().is_err(), "warning() should reject {value:?}");
+    assert!(
+      String::from_utf8(raw.to_bytes())
+        .expect("response should serialize")
+        .contains(&format!("\r\nWarning: {value}\r\n")),
+      "raw Warning {value:?} should be preserved"
+    );
+  }
+
+  let too_many = (0..=256)
+    .map(|index| format!(r#"110 - "item{index}""#))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(HttpResponse::ok("body").with_warning(&too_many).is_err());
+  let too_many_raw = HttpResponse::ok("body").header("Warning", &too_many);
+  assert!(too_many_raw.warning().is_err());
+  assert!(String::from_utf8(too_many_raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nWarning: {too_many}\r\n")));
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  assert!(HttpResponse::ok("body").with_warning(&oversized).is_err());
+  let oversized_raw = HttpResponse::ok("body").header("Warning", &oversized);
+  assert!(oversized_raw.warning().is_err());
+  assert!(String::from_utf8(oversized_raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nWarning: {oversized}\r\n")));
 }
 
 #[test]

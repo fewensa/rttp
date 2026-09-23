@@ -8332,6 +8332,51 @@ fn sync_client_reads_sunset_emitted_by_server() {
 }
 
 #[test]
+fn sync_client_reads_warning_emitted_by_server() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Warning response server");
+  let addr = server.local_addr().expect("Warning response server addr");
+  let warning_value = r#"110 - "Response is Stale", 299 example.com:80 "Deprecated API" "Wed, 21 Oct 2015 07:28:00 GMT""#;
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_warning(warning_value)
+          .expect("Warning response metadata should be accepted")
+      })
+      .expect("serve Warning response request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/warning"))
+    .emit()
+    .expect("Warning response should parse");
+
+  let warning = response
+    .warning()
+    .expect("Warning should parse")
+    .expect("Warning should be present");
+  assert_eq!(2, warning.len());
+  assert_eq!(110, warning.items()[0].code());
+  assert_eq!("-", warning.items()[0].agent());
+  assert_eq!("Response is Stale", warning.items()[0].text());
+  assert_eq!(None, warning.items()[0].date());
+  assert_eq!(299, warning.items()[1].code());
+  assert_eq!("example.com:80", warning.items()[1].agent());
+  assert_eq!("Deprecated API", warning.items()[1].text());
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(1_445_412_480)),
+    warning.items()[1].date()
+  );
+  assert_eq!(
+    Some(&warning_value.to_string()),
+    response.header_value("Warning")
+  );
+  handle.join().expect("Warning response server thread");
+}
+
+#[test]
 fn sync_client_reads_timing_allow_origin_emitted_by_server() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
     .expect("bind Timing-Allow-Origin response server");
