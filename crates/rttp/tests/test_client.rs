@@ -150,6 +150,34 @@ fn compatibility_facade_roundtrips_accept_post_metadata_over_http11() {
 
 #[test]
 #[cfg(any(feature = "all", feature = "client"))]
+fn compatibility_facade_roundtrips_location_metadata_over_http11() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind Location server");
+  let addr = server.local_addr().expect("Location server address");
+  let handle = std::thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        rttp::server::HttpResponse::new(302, "Found")
+          .with_location("/next")
+          .expect("Location declaration should parse")
+      })
+      .expect("serve Location response");
+  });
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/location"))
+    .emit()
+    .expect("Location response should parse");
+  let location = response
+    .location()
+    .expect("Location metadata should parse")
+    .expect("Location metadata should be present");
+  assert_eq!("/next", location.as_str());
+  handle.join().expect("Location server thread");
+}
+
+#[test]
+#[cfg(any(feature = "all", feature = "client"))]
 fn compatibility_facade_reexports_client_hints_response_metadata() {
   let dpr: rttp::Dpr = rttp::Dpr::parse("1.5").expect("DPR should parse");
   assert_eq!(1.5, dpr.ratio());

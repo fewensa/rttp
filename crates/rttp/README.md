@@ -1605,6 +1605,31 @@ not treat `Content-Location` as redirect behavior, cache variant selection,
 representation replacement, retry/replay behavior, route generation, or
 status-policy behavior.
 
+## Bounded HTTP/1.1 Location behavior
+
+Server-side `Location` helpers expose response metadata declaration and parsing
+through the shared protocol-owned `HttpLocation` type without resolving
+relative references or following redirects. `HttpResponse::with_location(value)`
+validates one `Location` URI-reference field value, trims outer whitespace,
+removes any existing raw `Location` fields, and adds a single validated
+`Location` header. `HttpResponse::location()` parses any attached `Location`
+header into `HttpLocation` and returns `Ok(None)` when the header is absent.
+
+Parsing is bounded and validation-oriented. The field value is limited to
+64 KiB and must be a non-empty absolute URI or relative URI reference without
+control characters, interior whitespace, unsafe field-value characters,
+malformed URI syntax, or broken percent-encoding. Duplicate `Location` fields
+are rejected because the helper treats the header as singleton response
+metadata. Malformed values, duplicated singleton fields, and oversized values
+return `HttpLocationParseError` from the helper. Raw
+`HttpResponse::header("Location", ...)` values remain preserved exactly as
+ordinary response headers until a typed declaration helper replaces them or the
+typed parser is requested.
+
+These helpers are metadata-only: RTTP does not resolve relative `Location`
+references, follow redirects, or alter status-policy behavior from the typed
+accessor.
+
 ## Bounded HTTP/1.1 Service-Worker-Allowed behavior
 
 Server-side `Service-Worker-Allowed` helpers expose response metadata
@@ -2224,6 +2249,7 @@ scheduling, or async accept loops.
 | Pragma | `HttpClient::pragma`/`pragma_no_cache`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation across client construction, server access, server response declaration, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | Prefer and Preference-Applied | `Request::prefer`/`HttpRequest::prefer` parse bounded `Prefer` request metadata, while `HttpResponse::with_preference_applied`/`preference_applied` and the `HttpPreferenceApplied` facade aliases declare or parse bounded `Preference-Applied` response metadata, replacing valid declarations and preserving raw fields on accessor errors | No preference application, response status or representation selection, retry, replay, or processing-policy behavior |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
+| Location | `HttpResponse::with_location` declares one bounded singleton `Location` header, and `HttpResponse::location` plus client `Response::location` parse attached singleton URI-reference metadata while preserving raw headers | No relative-reference resolution, redirect following, or status-policy behavior |
 | Service-Worker-Allowed | `HttpResponse::with_service_worker_allowed` declares one bounded singleton `Service-Worker-Allowed` header, and `HttpResponse::service_worker_allowed` plus client `Response::service_worker_allowed` parse attached singleton path metadata while preserving raw headers | No service-worker registration, scope evaluation, script-URL resolution, or application routing policy |
 | Content-DPR | `HttpResponse::with_content_dpr` declares one bounded singleton `Content-DPR` header, and `HttpResponse::content_dpr` plus client `Response::content_dpr` parse attached singleton decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | Sec-CH-DPR | `HttpClient::sec_ch_dpr` emits bounded singleton `Sec-CH-DPR` request metadata through `rttp::SecChDpr`; `Request::sec_ch_dpr` and `HttpRequest::sec_ch_dpr` parse received fields as `HttpSecChDpr` while preserving raw headers on errors | No content negotiation, `Accept-CH` emission, automatic Client Hints generation, viewport inference, retry, adaptation, or transport changes |

@@ -1048,6 +1048,26 @@ references against a response URL, follow redirects, select cache variants,
 replace representations, generate routes, trigger retries, or alter status
 policy from `Content-Location`.
 
+## Location response metadata
+
+`HttpResponse::with_location(value)` validates one `Location` URI-reference
+field value with the shared protocol-owned `HttpLocation` type, trims outer
+whitespace, removes any existing raw `Location` fields, and adds a single
+validated `Location` header. `HttpResponse::location()` parses attached raw
+fields into `HttpLocation`, returns `Ok(None)` when absent, and preserves
+invalid raw fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB and must be a non-empty absolute URI or relative URI reference without
+control characters, interior whitespace, unsafe field-value characters,
+malformed URI syntax, or broken percent-encoding. Duplicate fields are rejected
+because `Location` is singleton response metadata. The preserved trimmed
+reference is available through `as_str()` and `header_value()`.
+
+These helpers only declare and parse metadata. RTTP does not resolve relative
+references against a response URL, follow redirects, or alter status policy
+from `Location`.
+
 ## Service-Worker-Allowed response metadata
 
 `HttpResponse::with_service_worker_allowed(value)` validates one

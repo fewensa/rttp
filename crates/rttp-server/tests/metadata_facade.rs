@@ -31,12 +31,13 @@ use rttp_server::server::{
   HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate, HttpIfResourceTag,
   HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
   HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter,
-  HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
-  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
-  HttpNegotiateDirective, HttpNegotiateParseError, HttpNoVarySearch, HttpNoVarySearchParams,
-  HttpOrigin, HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginParseError,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
-  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
+  HttpImParseError, HttpKeepAlive, HttpLocation, HttpLocationParseError, HttpLockToken,
+  HttpLockTokenParseError, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError,
+  HttpNoVarySearch, HttpNoVarySearchParams, HttpOrigin, HttpOriginAgentCluster,
+  HttpOriginAgentClusterParseError, HttpOriginParseError, HttpOriginTrialParseError,
+  HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError, HttpPermissionsPolicy,
+  HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPermissionsPolicyReportOnly,
   HttpPermissionsPolicyReportOnlyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
   HttpPreferenceKind, HttpPrefersColorScheme, HttpPrefersColorSchemeParseError,
@@ -494,6 +495,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
     .expect_err("invalid Content-Location should be rejected");
+  let location = HttpLocation::parse("/next").expect("Location should parse");
+  let _: HttpLocationParseError =
+    HttpLocation::parse("").expect_err("empty Location should be rejected");
   let service_worker_allowed =
     HttpServiceWorkerAllowed::parse("/").expect("Service-Worker-Allowed should parse");
   let _: HttpServiceWorkerAllowedParseError =
@@ -855,6 +859,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(location.header_value(), "/next");
+  assert_eq!(location.as_str(), "/next");
   assert_eq!(service_worker_allowed.header_value(), "/");
   assert_eq!(service_worker_allowed.as_str(), "/");
   assert_eq!(content_disposition.disposition_type(), "attachment");
