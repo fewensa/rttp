@@ -3751,6 +3751,117 @@ fn response_content_location_helper_parses_attached_singleton_header() {
 }
 
 #[test]
+fn response_location_helper_declares_and_parses_uri_references() {
+  let absent = HttpResponse::ok("body");
+  assert_eq!(
+    None,
+    absent.location().expect("absent Location should parse")
+  );
+
+  let absolute = HttpResponse::new(302, "Found")
+    .header("Location", "/old")
+    .with_location(" https://example.test/next?q=1#frag ")
+    .expect("absolute Location should be accepted");
+  let serialized = String::from_utf8(absolute.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nLocation: https://example.test/next?q=1#frag\r\n"));
+  assert_eq!(1, serialized.matches("\r\nLocation: ").count());
+  assert_eq!(
+    "https://example.test/next?q=1#frag",
+    absolute
+      .location()
+      .expect("Location should parse")
+      .expect("Location should be present")
+      .as_str()
+  );
+
+  let relative = HttpResponse::new(302, "Found")
+    .with_location("/next")
+    .expect("relative Location should be accepted");
+  assert_eq!(
+    "/next",
+    relative
+      .location()
+      .expect("Location should parse")
+      .expect("Location should be present")
+      .as_str()
+  );
+
+  let attached = HttpResponse::new(302, "Found").header("Location", "../login?next=%2Fdashboard");
+  assert_eq!(
+    "../login?next=%2Fdashboard",
+    attached
+      .location()
+      .expect("Location should parse")
+      .expect("Location should be present")
+      .as_str()
+  );
+}
+
+#[test]
+fn location_helper_rejects_invalid_duplicate_and_oversized_values_without_losing_raw_headers() {
+  for value in [
+    "",
+    " ",
+    "/bad%zz",
+    "/safe\u{7f}",
+    "/safe\u{1f}",
+    "/safe\r\nX-Evil: true",
+  ] {
+    assert!(
+      HttpResponse::new(302, "Found")
+        .with_location(value)
+        .is_err(),
+      "Location helper should reject {value:?}"
+    );
+  }
+
+  for value in ["", " ", "/bad%zz", "/safe\u{7f}", "/safe\u{1f}"] {
+    let response = HttpResponse::new(302, "Found").header("Location", value);
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+    assert!(
+      response.location().is_err(),
+      "Location parser should reject {value:?}"
+    );
+    assert!(
+      serialized.contains(&format!("\r\nLocation: {value}\r\n")),
+      "raw Location header should be preserved for {value:?}"
+    );
+  }
+
+  let duplicate = HttpResponse::new(302, "Found")
+    .header("Location", "/one")
+    .header("Location", "/two");
+  let serialized = String::from_utf8(duplicate.to_bytes()).expect("response is UTF-8");
+  assert!(
+    duplicate.location().is_err(),
+    "Location parser should reject duplicate header fields"
+  );
+  assert!(serialized.contains("\r\nLocation: /one\r\n"));
+  assert!(serialized.contains("\r\nLocation: /two\r\n"));
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  assert!(
+    HttpResponse::new(302, "Found")
+      .with_location(&oversized)
+      .is_err(),
+    "Location helper should reject oversized values"
+  );
+
+  let response = HttpResponse::new(302, "Found").header("Location", &oversized);
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+  assert!(
+    response.location().is_err(),
+    "Location parser should reject oversized raw values"
+  );
+  assert!(
+    serialized.contains(&format!("\r\nLocation: {oversized}\r\n")),
+    "raw oversized Location header should be preserved"
+  );
+}
+
+#[test]
 fn response_etag_helper_declares_and_parses_singleton_metadata() {
   let absent = HttpResponse::ok("body");
   assert_eq!(None, absent.etag().expect("absent ETag should parse"));

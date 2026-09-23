@@ -159,6 +159,9 @@ pub use rttp_protocol::keep_alive::{
   KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
   KeepAliveParseError as HttpKeepAliveParseError,
 };
+pub use rttp_protocol::location::{
+  Location as HttpLocation, LocationParseError as HttpLocationParseError,
+};
 pub use rttp_protocol::lock_token::{
   LockToken as HttpLockToken, LockTokenParseError as HttpLockTokenParseError,
 };
@@ -2299,6 +2302,17 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_location<V: AsRef<str>>(mut self, value: V) -> Result<Self, HttpLocationParseError> {
+    let location = HttpLocation::parse(value.as_ref())?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Location"));
+    self
+      .headers
+      .push(HttpHeader::new("Location", location.header_value()));
+    Ok(self)
+  }
+
   pub fn with_service_worker_allowed<V: AsRef<str>>(
     mut self,
     value: V,
@@ -3880,6 +3894,19 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpContentLocation::parse_values(values).map(Some)
+  }
+
+  pub fn location(&self) -> Result<Option<HttpLocation>, HttpLocationParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Location"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpLocation::parse_values(values).map(Some)
   }
 
   pub fn service_worker_allowed(
