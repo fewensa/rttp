@@ -591,15 +591,15 @@ impl HttpByteRange {
     range_header: S,
     entity_length: usize,
   ) -> Result<Self, HttpByteRangeError> {
-    let range_header = range_header.as_ref().trim();
+    let range_header = range_header.as_ref().trim_matches([' ', '\t']);
     let Some((unit, range_spec)) = range_header.split_once('=') else {
       return Err(HttpByteRangeError::InvalidRange);
     };
-    if !unit.trim().eq_ignore_ascii_case("bytes") {
+    if !unit.trim_matches([' ', '\t']).eq_ignore_ascii_case("bytes") {
       return Err(HttpByteRangeError::UnsupportedUnit);
     }
 
-    let range_spec = range_spec.trim();
+    let range_spec = range_spec.trim_matches([' ', '\t']);
     if range_spec.contains(',') {
       return Err(HttpByteRangeError::MultipleRanges);
     }
@@ -611,8 +611,8 @@ impl HttpByteRange {
       return Err(HttpByteRangeError::InvalidRange);
     }
 
-    let first = first.trim();
-    let last = last.trim();
+    let first = first.trim_matches([' ', '\t']);
+    let last = last.trim_matches([' ', '\t']);
     if first.is_empty() {
       return parse_suffix_byte_range(last, entity_length);
     }
