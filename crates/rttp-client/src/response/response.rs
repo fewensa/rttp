@@ -2063,14 +2063,14 @@ impl CacheControl {
   fn apply_directive(&mut self, directive: &str) -> error::Result<()> {
     let (name, value, value_was_quoted) = match directive.split_once('=') {
       Some((name, value)) => {
-        let value = value.trim();
+        let value = trim_ows(value);
         (
-          name.trim(),
+          trim_ows(name),
           Some(parse_directive_value(value)?),
           value.starts_with('"'),
         )
       }
-      None => (directive.trim(), None, false),
+      None => (trim_ows(directive), None, false),
     };
     if !is_token(name) {
       return Err(error::bad_response("Invalid Cache-Control directive"));
@@ -2253,7 +2253,7 @@ fn split_cache_control_directives(value: &str) -> error::Result<Vec<String>> {
 }
 
 fn push_directive(directives: &mut Vec<String>, directive: &str) -> error::Result<()> {
-  let directive = directive.trim();
+  let directive = trim_ows(directive);
   if directive.is_empty() {
     return Err(error::bad_response("Invalid Cache-Control directive"));
   }
@@ -2299,7 +2299,7 @@ fn parse_quoted_string(value: &str) -> error::Result<String> {
     }
   }
 
-  if !closed || chars.any(|ch| !ch.is_ascii_whitespace()) {
+  if !closed || chars.any(|ch| !is_ows(ch)) {
     return Err(error::bad_response("Malformed Cache-Control quoted-string"));
   }
   Ok(parsed)
