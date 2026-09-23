@@ -68,8 +68,8 @@ impl ContentType {
     T: AsRef<str>,
     S: AsRef<str>,
   {
-    let type_name = type_name.as_ref().trim().to_ascii_lowercase();
-    let subtype = subtype.as_ref().trim().to_ascii_lowercase();
+    let type_name = trim_ows(type_name.as_ref()).to_ascii_lowercase();
+    let subtype = trim_ows(subtype.as_ref()).to_ascii_lowercase();
     if !crate::media_type::is_token(&type_name) || !crate::media_type::is_token(&subtype) {
       return Err(ContentTypeParseError::new(
         "invalid Content-Type media type",
@@ -89,7 +89,7 @@ impl ContentType {
     N: AsRef<str>,
     V: AsRef<str>,
   {
-    let name = name.as_ref().trim().to_ascii_lowercase();
+    let name = trim_ows(name.as_ref()).to_ascii_lowercase();
     let value = value.as_ref();
     if !crate::media_type::is_token(&name) {
       return Err(ContentTypeParseError::new(
@@ -156,6 +156,10 @@ impl ContentType {
   pub fn header_value(&self) -> String {
     self.media_type.header_value()
   }
+}
+
+fn trim_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
 }
 
 fn parse_singleton<'a, I>(values: I) -> Result<&'a str, ContentTypeParseError>

@@ -138,6 +138,105 @@ fn content_type_builds_media_types_and_parameters() {
 }
 
 #[test]
+fn content_type_builder_accepts_http_ows_around_type_subtype_and_parameter_names() {
+  for (
+    type_name,
+    subtype,
+    parameter_name,
+    expected_type,
+    expected_subtype,
+    expected_parameter,
+    expected_header,
+  ) in [
+    (
+      " application ",
+      " json ",
+      " charset ",
+      "application",
+      "json",
+      "charset",
+      "application/json; charset=UTF-8",
+    ),
+    (
+      "\ttext\t",
+      "\tplain\t",
+      "\tboundary\t",
+      "text",
+      "plain",
+      "boundary",
+      "text/plain; boundary=UTF-8",
+    ),
+    (
+      " \tApplication\t ",
+      " \tJSON\t ",
+      " \tCharset\t ",
+      "application",
+      "json",
+      "charset",
+      "application/json; charset=UTF-8",
+    ),
+  ] {
+    let content_type = ContentType::new(type_name, subtype)
+      .expect("OWS-padded media type should build")
+      .with_parameter(parameter_name, "UTF-8")
+      .expect("OWS-padded parameter name should build");
+
+    assert_eq!(content_type.type_(), expected_type);
+    assert_eq!(content_type.subtype(), expected_subtype);
+    assert_eq!(content_type.parameter(expected_parameter), Some("UTF-8"));
+    assert_eq!(content_type.header_value(), expected_header);
+  }
+}
+
+#[test]
+fn content_type_builder_rejects_non_ows_padding_around_type_subtype_and_parameter_names() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let type_name = format!("{whitespace}application{whitespace}");
+    assert!(
+      ContentType::new(&type_name, "json").is_err(),
+      "non-OWS type padding must be rejected: {type_name:?}"
+    );
+
+    let subtype = format!("{whitespace}json{whitespace}");
+    assert!(
+      ContentType::new("application", &subtype).is_err(),
+      "non-OWS subtype padding must be rejected: {subtype:?}"
+    );
+
+    let parameter_name = format!("{whitespace}charset{whitespace}");
+    assert!(
+      ContentType::new("application", "json")
+        .expect("media type should build")
+        .with_parameter(&parameter_name, "utf-8")
+        .is_err(),
+      "non-OWS parameter name padding must be rejected: {parameter_name:?}"
+    );
+  }
+}
+
+#[test]
+fn content_type_builder_preserves_normalized_media_type_and_opaque_parameter_values() {
+  let content_type = ContentType::new(" Application ", " JSON ")
+    .expect("media type should build")
+    .with_parameter(" Charset ", "UTF-8")
+    .expect("parameter should build")
+    .with_parameter("profile", "https://example.test/a;b")
+    .expect("quoted parameter should build");
+
+  assert_eq!(content_type.type_(), "application");
+  assert_eq!(content_type.subtype(), "json");
+  assert_eq!(content_type.parameter("charset"), Some("UTF-8"));
+  assert_eq!(
+    content_type.parameter("profile"),
+    Some("https://example.test/a;b")
+  );
+  assert_eq!(
+    content_type.header_value(),
+    r#"application/json; charset=UTF-8; profile="https://example.test/a;b""#
+  );
+}
+
+#[test]
 fn content_type_builder_rejects_invalid_media_types_and_parameters() {
   assert!(
     ContentType::new("bad type", "plain").is_err(),
