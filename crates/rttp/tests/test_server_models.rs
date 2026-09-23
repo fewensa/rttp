@@ -15,7 +15,8 @@ use rttp::server::{
   HttpReferer, HttpRefererParseError, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
   HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
   HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
-  HttpScheduleTag, HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
+  HttpScheduleTag, HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType,
+  HttpTimingAllowOrigin, HttpTimingAllowOriginParseError, HttpVary, HttpVia,
 };
 
 use rttp::server::{
@@ -969,6 +970,78 @@ fn response_server_timing_helper_validates_formats_and_preserves_raw_headers() {
     .contains("\r\nServer-Timing: db;dur=not-a-number\r\n"));
 
   assert!(HttpServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
+}
+
+#[test]
+fn response_timing_allow_origin_helper_validates_replaces_and_preserves_raw_headers() {
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .timing_allow_origin()
+      .expect("missing Timing-Allow-Origin should parse")
+  );
+
+  let wildcard = HttpResponse::ok("body")
+    .with_timing_allow_origin("*")
+    .expect("wildcard Timing-Allow-Origin should be accepted")
+    .timing_allow_origin()
+    .expect("wildcard Timing-Allow-Origin should parse")
+    .expect("Timing-Allow-Origin should be present");
+  assert!(wildcard.is_wildcard());
+  assert!(wildcard.origins().is_empty());
+
+  let response = HttpResponse::ok("body")
+    .header("Timing-Allow-Origin", "https://legacy.test")
+    .header("timing-allow-origin", "https://deprecated.test")
+    .with_timing_allow_origin("https://example.test, https://api.example.test")
+    .expect("serialized origins should be accepted");
+  let origins: HttpTimingAllowOrigin = response
+    .timing_allow_origin()
+    .expect("serialized origins should parse")
+    .expect("Timing-Allow-Origin should be present");
+  assert_eq!(
+    [
+      "https://example.test".to_string(),
+      "https://api.example.test".to_string(),
+    ],
+    origins.origins()
+  );
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nTiming-Allow-Origin: ").count());
+  assert!(serialized
+    .contains("\r\nTiming-Allow-Origin: https://example.test, https://api.example.test\r\n"));
+
+  let assert_rejected = |value: String| {
+    assert!(
+      HttpResponse::ok("body")
+        .with_timing_allow_origin(&value)
+        .is_err(),
+      "builder should reject {value:?}"
+    );
+    let raw = HttpResponse::ok("body").header("Timing-Allow-Origin", &value);
+    let _: HttpTimingAllowOriginParseError = raw
+      .timing_allow_origin()
+      .expect_err("invalid Timing-Allow-Origin should return its typed parse error");
+    let expected = format!("Timing-Allow-Origin: {value}\r\n").into_bytes();
+    assert!(
+      raw
+        .to_bytes()
+        .windows(expected.len())
+        .any(|window| window == expected),
+      "raw Timing-Allow-Origin header should remain readable"
+    );
+  };
+
+  assert_rejected("https://example.test/path".to_string());
+  assert_rejected("*, *".to_string());
+  assert_rejected("https://example.test,\u{1}".to_string());
+  assert_rejected(
+    (0..257)
+      .map(|index| format!("https://{index}.example.test"))
+      .collect::<Vec<_>>()
+      .join(", "),
+  );
+  assert_rejected("x".repeat(64 * 1024 + 1));
 }
 
 #[test]
