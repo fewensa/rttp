@@ -2011,12 +2011,13 @@ impl HttpClient {
     coding: &str,
     qvalue: Option<&str>,
   ) -> error::Result<&mut Self> {
-    let coding = coding.trim();
+    let coding = trim_http_ows(coding);
     if !is_http_token(coding) {
       return Err(error::builder_with_message(
         "invalid Accept-Encoding coding",
       ));
     }
+    let qvalue = qvalue.map(trim_http_ows);
     let member = qvalue.map_or_else(
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),

@@ -1352,6 +1352,45 @@ fn accept_encoding_helpers_emit_validated_codings_and_quality_values() {
 }
 
 #[test]
+fn accept_encoding_helpers_accept_ows_and_append_existing_headers() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Accept-Encoding", " \tgzip\t "))
+      .accept_encoding_with_q(" br ", "\t0.8\t")
+      .expect("SP and HTAB around coding and q-value should be accepted")
+      .accept_encoding_with_q("\tidentity\t", " 0.5 ")
+      .expect("HTAB and SP around coding and q-value should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("gzip, br;q=0.8, identity;q=0.5"),
+    header_value(&request, "Accept-Encoding")
+  );
+}
+
+#[test]
+fn raw_accept_encoding_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Accept-Encoding", "legacy-coding; unsupported=1"))
+      .emit()
+      .expect("generic raw Accept-Encoding header should succeed");
+  });
+
+  assert_eq!(
+    Some("legacy-coding; unsupported=1"),
+    header_value(&request_text(&request), "Accept-Encoding")
+  );
+}
+
+#[test]
 fn expect_continue_helper_emits_metadata_without_gating_the_request_body() {
   let request = capture_request(|base_url| {
     client()
@@ -1730,6 +1769,66 @@ fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
     request.is_empty(),
     "comma-bearing gzip Accept-Encoding q-value should not open a socket"
   );
+}
+
+#[test]
+fn accept_encoding_helpers_reject_non_ows_whitespace_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let coding = format!("{whitespace}gzip{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .accept_encoding(coding)
+        .expect_err("non-OWS whitespace around an Accept-Encoding coding should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace around an Accept-Encoding coding opened a socket"
+    );
+
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let qvalue = format!("{whitespace}0.5{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .accept_encoding_with_q("gzip", qvalue)
+        .expect_err("non-OWS whitespace around an Accept-Encoding q-value should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace around an Accept-Encoding q-value opened a socket"
+    );
+  }
+}
+
+#[test]
+fn accept_encoding_helpers_reject_non_ows_whitespace_in_existing_headers_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    for existing in [
+      format!("{whitespace}gzip{whitespace}"),
+      format!("gzip;q={whitespace}0.5{whitespace}"),
+    ] {
+      let request = capture_optional_request(|base_url| {
+        let mut client = client();
+        let error = client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .header(("Accept-Encoding", existing.as_str()))
+          .accept_encoding("br")
+          .expect_err("non-OWS existing Accept-Encoding header should be rejected");
+        assert!(error.is_builder());
+      });
+      assert!(
+        request.is_empty(),
+        "non-OWS whitespace in an existing Accept-Encoding header opened a socket"
+      );
+    }
+  }
 }
 
 #[test]

@@ -79,12 +79,26 @@ fn accept_encoding_accepts_http_optional_whitespace_padding() {
     assert_eq!(encodings.header_value(), "gzip");
   }
 
-  let encodings = AcceptEncoding::parse(" gzip ,\tbr; q=0.8 ")
+  let encodings = AcceptEncoding::parse(" gzip ,\tbr\t; \tq\t=\t0.8\t ")
     .expect("OWS-padded Accept-Encoding members should parse");
   assert_eq!(encodings.codings()[0].coding(), "gzip");
   assert_eq!(encodings.codings()[1].coding(), "br");
   assert_eq!(800, encodings.codings()[1].quality());
   assert_eq!(encodings.header_value(), "gzip, br;q=0.8");
+}
+
+#[test]
+fn accept_encoding_rejects_non_ows_whitespace_padding() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    assert!(
+      AcceptEncoding::parse(format!("{whitespace}gzip{whitespace}")).is_err(),
+      "non-OWS whitespace around a coding must be rejected"
+    );
+    assert!(
+      AcceptEncoding::parse(format!("gzip;q={whitespace}0.5{whitespace}")).is_err(),
+      "non-OWS whitespace around a q-value must be rejected"
+    );
+  }
 }
 
 #[test]
