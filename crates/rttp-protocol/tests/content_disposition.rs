@@ -183,6 +183,81 @@ fn content_disposition_builds_common_dispositions_and_parameters() {
 }
 
 #[test]
+fn content_disposition_builder_accepts_http_ows_around_type_and_parameter_names() {
+  for (disposition_type, parameter_name, expected_type, expected_parameter, expected_header) in [
+    (
+      " attachment ",
+      " filename ",
+      "attachment",
+      "filename",
+      "attachment; filename=report.txt",
+    ),
+    (
+      "\tAttachment\t",
+      "\tFilename\t",
+      "attachment",
+      "filename",
+      "attachment; filename=report.txt",
+    ),
+    (
+      " \tAttachment\t ",
+      " \tFilename\t ",
+      "attachment",
+      "filename",
+      "attachment; filename=report.txt",
+    ),
+  ] {
+    let content_disposition = ContentDisposition::new(disposition_type)
+      .expect("OWS-padded disposition type should build")
+      .with_parameter(parameter_name, "report.txt")
+      .expect("OWS-padded parameter name should build");
+
+    assert_eq!(content_disposition.disposition_type(), expected_type);
+    assert_eq!(
+      content_disposition
+        .parameter(expected_parameter)
+        .map(|parameter| parameter.value()),
+      Some("report.txt")
+    );
+    assert_eq!(content_disposition.header_value(), expected_header);
+  }
+}
+
+#[test]
+fn content_disposition_builder_rejects_non_ows_padding_around_type_and_parameter_names() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let disposition_type = format!("{whitespace}attachment{whitespace}");
+    assert!(
+      ContentDisposition::new(&disposition_type).is_err(),
+      "non-OWS disposition type padding must be rejected: {disposition_type:?}"
+    );
+
+    let parameter_name = format!("{whitespace}filename{whitespace}");
+    assert!(
+      ContentDisposition::attachment()
+        .with_parameter(&parameter_name, "report.txt")
+        .is_err(),
+      "non-OWS parameter name padding must be rejected: {parameter_name:?}"
+    );
+  }
+}
+
+#[test]
+fn content_disposition_builder_preserves_normalized_filename_output() {
+  let content_disposition = ContentDisposition::new(" Attachment ")
+    .expect("disposition type should build")
+    .with_parameter(" Filename ", "financial report.txt")
+    .expect("filename should build")
+    .with_parameter("filename*", "UTF-8''financial-report.txt")
+    .expect("filename* should build");
+
+  assert_eq!(
+    content_disposition.header_value(),
+    "attachment; filename=\"financial report.txt\"; filename*=UTF-8''financial-report.txt"
+  );
+}
+
+#[test]
 fn content_disposition_builder_rejects_invalid_types_and_parameters() {
   assert!(
     ContentDisposition::new("bad type").is_err(),
