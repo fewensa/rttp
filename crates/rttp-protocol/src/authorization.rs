@@ -44,7 +44,7 @@ impl Authorization {
     Ok(Self {
       value: RequestAuthorization::new(
         "Authorization",
-        scheme.as_ref().trim(),
+        trim_http_ows(scheme.as_ref()),
         credentials.as_ref(),
       )?,
     })
@@ -84,7 +84,7 @@ impl ProxyAuthorization {
     Ok(Self {
       value: RequestAuthorization::new(
         "Proxy-Authorization",
-        scheme.as_ref().trim(),
+        trim_http_ows(scheme.as_ref()),
         credentials.as_ref(),
       )?,
     })
@@ -215,6 +215,10 @@ fn parse_value(
     scheme: scheme.to_string(),
     credentials: credentials.to_string(),
   })
+}
+
+fn trim_http_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
 }
 
 fn validate_parts(
