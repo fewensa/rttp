@@ -914,6 +914,48 @@ fn accept_charset_helpers_emit_validated_ranges_and_quality_values() {
 }
 
 #[test]
+fn accept_charset_helpers_accept_http_ows_padding_and_canonicalize_values() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("\t utf-8 \t")
+      .expect("OWS-padded Accept-Charset range should be accepted")
+      .accept_charset_with_q("\tiso-8859-1\t", "\t0.5\t")
+      .expect("OWS-padded Accept-Charset q-value should be accepted")
+      .accept_charset_with_q(" * ", " 0 ")
+      .expect("OWS-padded Accept-Charset wildcard should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("utf-8, iso-8859-1;q=0.5, *;q=0"),
+    header_value(&request, "Accept-Charset")
+  );
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/localized", base_url))
+      .header(("Accept-Charset", "\t utf-8 \t"))
+      .accept_charset_with_q("\tiso-8859-1\t", "\t0.5\t")
+      .expect("OWS-padded existing Accept-Charset header should be accepted")
+      .accept_charset_with_q(" * ", " 0 ")
+      .expect("append after existing Accept-Charset should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("utf-8, iso-8859-1;q=0.5, *;q=0"),
+    header_value(&request, "Accept-Charset")
+  );
+}
+
+#[test]
 fn auth_facade_rejects_oversized_bearer_before_connecting_without_exposing_token() {
   let token = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
   let request = capture_optional_request(|base_url| {
@@ -1479,6 +1521,78 @@ fn accept_charset_helpers_reject_invalid_members_before_connecting() {
   assert!(
     request.is_empty(),
     "too many Accept-Charset members should not open a socket"
+  );
+}
+
+#[test]
+fn accept_charset_helpers_reject_non_ows_whitespace_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let charset = format!("{whitespace}utf-8{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/localized", base_url))
+        .accept_charset(charset)
+        .expect_err("non-OWS whitespace around an Accept-Charset range should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace around an Accept-Charset range opened a socket"
+    );
+
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let qvalue = format!("{whitespace}0.5{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/localized", base_url))
+        .accept_charset_with_q("utf-8", qvalue)
+        .expect_err("non-OWS whitespace around an Accept-Charset q-value should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace around an Accept-Charset q-value opened a socket"
+    );
+  }
+}
+
+#[test]
+fn accept_charset_helpers_reject_non_ows_whitespace_in_existing_headers_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let existing = format!("{whitespace}utf-8{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/localized", base_url))
+        .header(("Accept-Charset", existing.as_str()))
+        .accept_charset("iso-8859-1")
+        .expect_err("non-OWS existing Accept-Charset header should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS whitespace in an existing Accept-Charset header opened a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_accept_charset_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/localized", base_url))
+      .header(("Accept-Charset", "legacy-charset;q=0.1"))
+      .emit()
+      .expect("generic raw Accept-Charset header should succeed");
+  });
+  assert_eq!(
+    Some("legacy-charset;q=0.1"),
+    header_value(&request_text(&request), "Accept-Charset")
   );
 }
 

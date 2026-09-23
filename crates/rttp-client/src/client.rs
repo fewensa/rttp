@@ -1921,10 +1921,11 @@ impl HttpClient {
     charset: &str,
     qvalue: Option<&str>,
   ) -> error::Result<&mut Self> {
-    let charset = charset.trim();
+    let charset = trim_http_ows(charset);
     if !is_http_token(charset) {
       return Err(error::builder_with_message("invalid Accept-Charset range"));
     }
+    let qvalue = qvalue.map(trim_http_ows);
     let member = qvalue.map_or_else(
       || charset.to_string(),
       |qvalue| format!("{charset};q={qvalue}"),
