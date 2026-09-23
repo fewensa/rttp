@@ -134,20 +134,11 @@ impl Cookie {
 
   pub fn parse<S: AsRef<str>>(text: S) -> error::Result<Self> {
     let mut builder = Cookie::builder();
-    let parts: Vec<&str> = text.as_ref().split(";").collect();
-    for (index, item) in parts.iter().enumerate() {
-      let nvs: Vec<&str> = item.split("=").collect();
-      let name = nvs
-        .first()
-        .ok_or(error::bad_cookie("Cookie not have name"))?
-        .trim();
-      let value: String = nvs
-        .iter()
-        .enumerate()
-        .filter(|(ix, _)| *ix > 0)
-        .map(|(_, v)| *v)
-        .collect::<Vec<&str>>()
-        .join("=");
+    for (index, item) in text.as_ref().split(';').enumerate() {
+      let (name, value) = item
+        .split_once('=')
+        .map_or((item, ""), |(name, value)| (name, value));
+      let name = name.trim();
       let value = value.trim();
       if index == 0 {
         builder.name(name);
@@ -213,6 +204,28 @@ impl Cookie {
       }
     }
     Ok(builder.build())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::Cookie;
+
+  #[test]
+  fn parse_preserves_embedded_equals_in_cookie_value() {
+    let cookie = Cookie::parse("token=a=b=c").unwrap();
+
+    assert_eq!(cookie.name(), "token");
+    assert_eq!(cookie.value(), "a=b=c");
+  }
+
+  #[test]
+  fn parse_keeps_valueless_cookie_attributes_as_flags() {
+    let cookie = Cookie::parse("token=value; Secure; HttpOnly; HostOnly").unwrap();
+
+    assert!(cookie.secure());
+    assert!(cookie.http_only());
+    assert!(cookie.host_only());
   }
 }
 
