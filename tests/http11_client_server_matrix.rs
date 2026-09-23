@@ -14,9 +14,9 @@ use rttp_client::HttpClient;
 use rttp_server::server::{
   HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
   HttpContentDisposition, HttpContentType, HttpDav, HttpDepth, HttpDestination, HttpEntityTag,
-  HttpIf, HttpIfRangeRequestOutcome, HttpIfScheduleTagMatch, HttpLockToken, HttpOverwrite,
-  HttpResponse, HttpScheduleTag, HttpSecRequiredDocumentPolicyValue, HttpTimeout, Request,
-  SecFetchDest, SecFetchMode, SecFetchSite, SecPurpose,
+  HttpIf, HttpIfMatch, HttpIfRangeRequestOutcome, HttpIfScheduleTagMatch, HttpLockToken,
+  HttpOverwrite, HttpResponse, HttpScheduleTag, HttpSecRequiredDocumentPolicyValue, HttpTimeout,
+  Request, SecFetchDest, SecFetchMode, SecFetchSite, SecPurpose,
 };
 use rttp_test_support as fixtures;
 
@@ -5518,6 +5518,54 @@ fn sync_client_and_server_exchange_bounded_overwrite_metadata_without_policy() {
   assert_eq!(Some("F".to_string()), raw);
   assert_eq!(204, response.code());
   handle.join().expect("Overwrite server thread");
+}
+
+#[test]
+fn sync_client_if_match_reaches_server_typed_accessor() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind If-Match server");
+  let addr = server.local_addr().expect("If-Match server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let parsed: HttpIfMatch = request
+          .if_match()
+          .expect("If-Match should parse")
+          .expect("If-Match should be present");
+        observed_tx
+          .send((
+            parsed.is_wildcard(),
+            parsed
+              .entity_tags()
+              .iter()
+              .map(|tag| (tag.opaque_tag().to_string(), tag.is_weak()))
+              .collect::<Vec<_>>(),
+            parsed.header_value(),
+            request.header("If-Match").map(str::to_string),
+          ))
+          .expect("send observed If-Match metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve If-Match request");
+  });
+
+  let response = client()
+    .put()
+    .url(format!("http://{addr}/asset"))
+    .if_match(r#""abc""#)
+    .expect("If-Match helper should accept test validator")
+    .emit()
+    .expect("If-Match response should parse");
+
+  assert_eq!(200, response.code());
+  let (wildcard, tags, header_value, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe If-Match metadata");
+  assert!(!wildcard);
+  assert_eq!(vec![("abc".to_string(), false)], tags);
+  assert_eq!("\"abc\"", header_value);
+  assert_eq!(Some("\"abc\"".to_string()), raw);
+  handle.join().expect("If-Match server thread");
 }
 
 type ObservedWebDavField = (Option<String>, bool);

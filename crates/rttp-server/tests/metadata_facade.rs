@@ -27,11 +27,11 @@ use rttp_server::server::{
   HttpDpr, HttpDprParseError, HttpEarlyData, HttpEarlyDataParseError, HttpEct, HttpEctParseError,
   HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpExpiresParseError, HttpFrom,
   HttpFromParseError, HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf,
-  HttpIfCondition, HttpIfList, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
-  HttpIfParseError, HttpIfPredicate, HttpIfResourceTag, HttpIfScheduleTagMatch,
-  HttpIfScheduleTagMatchParseError, HttpIfStateToken, HttpIfUnmodifiedSince,
-  HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter, HttpImParseError,
-  HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
+  HttpIfCondition, HttpIfList, HttpIfMatch, HttpIfMatchParseError, HttpIfModifiedSince,
+  HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate, HttpIfResourceTag,
+  HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
+  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter,
+  HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
   HttpNegotiateDirective, HttpNegotiateParseError, HttpNoVarySearch, HttpNoVarySearchParams,
   HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginTrialParseError,
@@ -405,6 +405,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("If-Modified-Since should parse");
   let if_modified_since_error: Result<HttpIfModifiedSince, HttpIfModifiedSinceParseError> =
     HttpIfModifiedSince::parse("not-a-date");
+  let if_match: HttpIfMatch =
+    HttpIfMatch::parse("\"one\", W/\"two\"").expect("If-Match list should parse");
+  let if_match_wildcard: HttpIfMatch =
+    HttpIfMatch::parse("*").expect("If-Match wildcard should parse");
+  let if_match_error: Result<HttpIfMatch, HttpIfMatchParseError> = HttpIfMatch::parse("not-a-tag");
   let if_schedule_tag_match: HttpIfScheduleTagMatch =
     HttpIfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
   let if_schedule_tag_match_weak: HttpIfScheduleTagMatch =
@@ -763,6 +768,17 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert!(if_modified_since_error.is_err());
+  assert!(!if_match.is_wildcard());
+  assert_eq!(2, if_match.entity_tags().len());
+  assert_eq!("one", if_match.entity_tags()[0].opaque_tag());
+  assert!(!if_match.entity_tags()[0].is_weak());
+  assert_eq!("two", if_match.entity_tags()[1].opaque_tag());
+  assert!(if_match.entity_tags()[1].is_weak());
+  assert_eq!("\"one\", W/\"two\"", if_match.header_value());
+  assert!(if_match_wildcard.is_wildcard());
+  assert!(if_match_wildcard.entity_tags().is_empty());
+  assert_eq!("*", if_match_wildcard.header_value());
+  assert!(if_match_error.is_err());
   assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
   assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
   assert!(!if_schedule_tag_match.is_weak());
@@ -3650,6 +3666,77 @@ fn request_facade_parses_if_schedule_tag_match_metadata_without_policy() {
   assert!(
     HttpIfScheduleTagMatch::parse(format!("\"{}\"", "a".repeat(64 * 1024 - 1))).is_err(),
     "oversized If-Schedule-Tag-Match values must fail closed"
+  );
+}
+
+#[test]
+fn request_facade_parses_if_match() {
+  let request = HttpRequest::parse(
+    b"PUT /asset HTTP/1.1\r\nHost: example.test\r\nIf-Match: \"one\", W/\"two\"\r\n\r\n",
+  )
+  .expect("request should parse");
+  let if_match: HttpIfMatch = request
+    .if_match()
+    .expect("If-Match should parse")
+    .expect("If-Match should be present");
+
+  assert!(!if_match.is_wildcard());
+  assert_eq!(2, if_match.entity_tags().len());
+  assert_eq!("one", if_match.entity_tags()[0].opaque_tag());
+  assert!(!if_match.entity_tags()[0].is_weak());
+  assert_eq!("two", if_match.entity_tags()[1].opaque_tag());
+  assert!(if_match.entity_tags()[1].is_weak());
+  assert_eq!("\"one\", W/\"two\"", if_match.header_value());
+  assert_eq!(Some("\"one\", W/\"two\""), request.header("If-Match"));
+
+  let wildcard =
+    HttpRequest::parse(b"PUT /asset HTTP/1.1\r\nHost: example.test\r\nIf-Match: *\r\n\r\n")
+      .expect("request should parse");
+  let wildcard_match: HttpIfMatch = wildcard
+    .if_match()
+    .expect("If-Match wildcard should parse")
+    .expect("If-Match should be present");
+  assert!(wildcard_match.is_wildcard());
+  assert!(wildcard_match.entity_tags().is_empty());
+  assert_eq!("*", wildcard_match.header_value());
+  assert_eq!(Some("*"), wildcard.header("If-Match"));
+
+  let absent = HttpRequest::parse(b"PUT /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .if_match()
+      .expect("missing If-Match should be accepted")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"PUT /asset HTTP/1.1\r\nHost: example.test\r\nIf-Match: not-a-tag\r\n\r\n")
+      .expect("malformed If-Match request should still parse");
+  assert!(malformed.if_match().is_err());
+  assert_eq!(Some("not-a-tag"), malformed.header("If-Match"));
+
+  let duplicate = HttpRequest::parse(
+    b"PUT /asset HTTP/1.1\r\nHost: example.test\r\nIf-Match: \"one\"\r\nif-match: \"one\"\r\n\r\n",
+  )
+  .expect("duplicate If-Match request should still parse");
+  assert!(duplicate.if_match().is_err());
+  assert_eq!(Some("\"one\""), duplicate.header("If-Match"));
+
+  let too_many = (0..=256)
+    .map(|index| format!("\"t{index}\""))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let too_many_raw =
+    format!("PUT /asset HTTP/1.1\r\nHost: example.test\r\nIf-Match: {too_many}\r\n\r\n");
+  let oversized = HttpRequest::parse(too_many_raw.as_bytes())
+    .expect("over-limit typed metadata should not reject raw request parsing");
+  assert!(oversized.if_match().is_err());
+  assert_eq!(Some(too_many.as_str()), oversized.header("If-Match"));
+
+  assert!(
+    HttpIfMatch::parse(format!("\"{}\"", "a".repeat(64 * 1024 - 1))).is_err(),
+    "oversized If-Match values must fail closed"
   );
 }
 
