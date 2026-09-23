@@ -289,6 +289,10 @@ pub use rttp_protocol::surrogate_control::{
 pub use rttp_protocol::tcn::{
   Tcn as HttpTcn, TcnDirective as HttpTcnDirective, TcnParseError as HttpTcnParseError,
 };
+pub use rttp_protocol::timing_allow_origin::{
+  TimingAllowOrigin as HttpTimingAllowOrigin,
+  TimingAllowOriginParseError as HttpTimingAllowOriginParseError,
+};
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
 };
@@ -2085,6 +2089,23 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Timing-Allow-Origin` response metadata without
+  /// applying resource-timing policy.
+  pub fn with_timing_allow_origin(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpTimingAllowOriginParseError> {
+    let timing_allow_origin = HttpTimingAllowOrigin::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Timing-Allow-Origin"));
+    self.headers.push(HttpHeader::new(
+      "Timing-Allow-Origin",
+      timing_allow_origin.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Alt-Svc` response metadata without selecting an endpoint.
   pub fn with_alt_svc(mut self, value: impl AsRef<str>) -> Result<Self, HttpAltSvcParseError> {
     let alt_svc = HttpAltSvc::parse(value)?;
@@ -3664,6 +3685,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpServerTiming::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Timing-Allow-Origin` response metadata without changing
+  /// raw headers or applying resource-timing policy.
+  pub fn timing_allow_origin(
+    &self,
+  ) -> Result<Option<HttpTimingAllowOrigin>, HttpTimingAllowOriginParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Timing-Allow-Origin"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTimingAllowOrigin::parse_values(values).map(Some)
   }
 
   /// Parses attached `Alt-Svc` metadata without changing raw headers or connections.

@@ -8332,6 +8332,49 @@ fn sync_client_reads_sunset_emitted_by_server() {
 }
 
 #[test]
+fn sync_client_reads_timing_allow_origin_emitted_by_server() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Timing-Allow-Origin response server");
+  let addr = server
+    .local_addr()
+    .expect("Timing-Allow-Origin response server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_timing_allow_origin("https://example.test, https://api.example.test")
+          .expect("Timing-Allow-Origin response metadata should be accepted")
+      })
+      .expect("serve Timing-Allow-Origin response request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/timing-allow-origin"))
+    .emit()
+    .expect("Timing-Allow-Origin response should parse");
+
+  let timing_allow_origin = response
+    .timing_allow_origin()
+    .expect("Timing-Allow-Origin should parse")
+    .expect("Timing-Allow-Origin should be present");
+  assert_eq!(
+    [
+      "https://example.test".to_string(),
+      "https://api.example.test".to_string(),
+    ],
+    timing_allow_origin.origins()
+  );
+  assert_eq!(
+    Some(&"https://example.test, https://api.example.test".to_string()),
+    response.header_value("Timing-Allow-Origin")
+  );
+  handle
+    .join()
+    .expect("Timing-Allow-Origin response server thread");
+}
+
+#[test]
 fn sync_client_parses_shared_retry_after_response_matrix() {
   for case in fixtures::retry_after::retry_after_cases() {
     let raw_response = retry_after_response(&[case.value], false);
