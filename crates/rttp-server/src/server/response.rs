@@ -303,6 +303,10 @@ pub use rttp_protocol::variant_vary::{
   VariantVary as HttpVariantVary, VariantVaryParseError as HttpVariantVaryParseError,
 };
 pub use rttp_protocol::via::{Via as HttpVia, ViaParseError as HttpViaParseError};
+pub use rttp_protocol::warning::{
+  Warning as HttpWarning, WarningParseError as HttpWarningParseError,
+  WarningValue as HttpWarningValue,
+};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
@@ -2049,6 +2053,20 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces RFC 7234 `Warning` response metadata without
+  /// applying cache freshness, stale-response handling, or response-acceptance
+  /// policy.
+  pub fn with_warning(mut self, value: impl AsRef<str>) -> Result<Self, HttpWarningParseError> {
+    let warning = HttpWarning::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Warning"));
+    self
+      .headers
+      .push(HttpHeader::new("Warning", warning.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces RFC 9209 `Proxy-Status` response metadata
   /// without generating origin proxy status or applying health policy.
   pub fn with_proxy_status(
@@ -3656,6 +3674,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpVia::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Warning` metadata without applying cache freshness,
+  /// stale-response handling, or response-acceptance policy.
+  pub fn warning(&self) -> Result<Option<HttpWarning>, HttpWarningParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Warning"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpWarning::parse_values(values).map(Some)
   }
 
   /// Parses attached `Proxy-Status` metadata without changing raw headers
