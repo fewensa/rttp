@@ -24,6 +24,33 @@ fn authorization_parses_basic_bearer_custom_and_proxy_metadata() {
 }
 
 #[test]
+fn authorization_constructors_accept_only_http_ows_scheme_padding() {
+  let authorization = Authorization::new(" \tBearer\t ", "token-123")
+    .expect("SP and HTAB scheme padding should be accepted");
+  assert_eq!("Bearer", authorization.scheme());
+  assert_eq!("token-123", authorization.credentials());
+  assert_eq!("Bearer token-123", authorization.header_value());
+
+  let proxy = ProxyAuthorization::new(" \tBasic\t ", "cHJveHk6c2VjcmV0")
+    .expect("SP and HTAB scheme padding should be accepted for Proxy-Authorization");
+  assert_eq!("Basic", proxy.scheme());
+  assert_eq!("cHJveHk6c2VjcmV0", proxy.credentials());
+  assert_eq!("Basic cHJveHk6c2VjcmV0", proxy.header_value());
+
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}", "\u{3000}"] {
+    assert!(
+      Authorization::new(format!("{whitespace}Bearer{whitespace}"), "token").is_err(),
+      "Authorization should reject non-OWS scheme padding {whitespace:?}"
+    );
+    assert!(
+      ProxyAuthorization::new(format!("{whitespace}Basic{whitespace}"), "cHJveHk6c2VjcmV0")
+        .is_err(),
+      "Proxy-Authorization should reject non-OWS scheme padding {whitespace:?}"
+    );
+  }
+}
+
+#[test]
 fn authorization_rejects_malformed_or_injected_metadata() {
   for value in [
     "Bearer",

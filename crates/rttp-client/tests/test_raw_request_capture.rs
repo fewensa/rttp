@@ -540,6 +540,7 @@ fn authorization_helpers_emit_basic_bearer_and_custom_scheme_credentials() {
     ("Basic", "dXNlcjpzZWNyZXQ=", "Basic dXNlcjpzZWNyZXQ="),
     ("Bearer", "token-123", "Bearer token-123"),
     ("ApiKey", "v1:client-42", "ApiKey v1:client-42"),
+    (" \tBearer\t ", "token-123", "Bearer token-123"),
   ] {
     let request = capture_request(|base_url| {
       client()
@@ -583,6 +584,27 @@ fn authorization_helper_rejects_invalid_or_oversized_metadata_before_connecting(
     assert!(
       request.is_empty(),
       "invalid metadata should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn authorization_helper_rejects_non_ows_scheme_padding_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n", "\u{00a0}", "\u{2003}", "\u{3000}"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let scheme = format!("{whitespace}Bearer{whitespace}");
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .authorization(&scheme, "token-123")
+        .expect_err("non-OWS scheme padding should be rejected");
+      assert!(error.is_builder());
+      assert!(!error.to_string().contains("token-123"));
+    });
+    assert!(
+      request.is_empty(),
+      "non-OWS scheme padding should not open a socket"
     );
   }
 }
