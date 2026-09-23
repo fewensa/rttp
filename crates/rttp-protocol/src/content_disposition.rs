@@ -63,7 +63,8 @@ impl ContentDisposition {
   }
 
   pub fn new(disposition_type: impl AsRef<str>) -> Result<Self, ContentDispositionParseError> {
-    let disposition_type = disposition_type.as_ref().trim().to_ascii_lowercase();
+    let disposition_type =
+      trim_http_optional_whitespace(disposition_type.as_ref()).to_ascii_lowercase();
     if !crate::media_type::is_token(&disposition_type) {
       return Err(ContentDispositionParseError::new(
         "invalid Content-Disposition disposition type",
@@ -104,7 +105,7 @@ impl ContentDisposition {
     N: AsRef<str>,
     V: AsRef<str>,
   {
-    let name = name.as_ref().trim().to_ascii_lowercase();
+    let name = trim_http_optional_whitespace(name.as_ref()).to_ascii_lowercase();
     let value = value.as_ref();
     if !crate::media_type::is_token(&name) {
       return Err(ContentDispositionParseError::new(
