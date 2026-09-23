@@ -4700,6 +4700,158 @@ fn request_if_schedule_tag_match_is_optional_bounded_and_preserves_invalid_heade
 }
 
 #[test]
+fn request_if_match_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"PUT / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.if_match().expect("missing value should be valid")
+  );
+  let absent_http = HttpRequest::parse(b"PUT / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent_http
+      .if_match()
+      .expect("missing value should be valid")
+  );
+
+  let list_raw =
+    "PUT /asset HTTP/1.1\r\nHost: example.test\r\nIf-Match: \"one\", W/\"two\"\r\n\r\n";
+  let list = Request::from_raw_frame(list_raw.as_bytes()).expect("request should parse");
+  let parsed = list
+    .if_match()
+    .expect("value should parse")
+    .expect("If-Match should be present");
+  assert!(!parsed.is_wildcard());
+  assert_eq!(2, parsed.entity_tags().len());
+  assert_eq!("one", parsed.entity_tags()[0].opaque_tag());
+  assert!(!parsed.entity_tags()[0].is_weak());
+  assert_eq!("two", parsed.entity_tags()[1].opaque_tag());
+  assert!(parsed.entity_tags()[1].is_weak());
+  assert_eq!("\"one\", W/\"two\"", parsed.header_value());
+  let list_http = HttpRequest::parse(list_raw.as_bytes()).expect("request should parse");
+  let parsed_http = list_http
+    .if_match()
+    .expect("value should parse")
+    .expect("If-Match should be present");
+  assert_eq!(parsed.header_value(), parsed_http.header_value());
+  assert_eq!(
+    parsed.entity_tags().len(),
+    parsed_http.entity_tags().len()
+  );
+
+  let weak_list_raw =
+    "PUT /asset HTTP/1.1\r\nHost: example.test\r\nIf-Match:  \"one\" , W/\"two\" \r\n\r\n";
+  let weak_list =
+    Request::from_raw_frame(weak_list_raw.as_bytes()).expect("request should parse");
+  assert_eq!(
+    "\"one\", W/\"two\"",
+    weak_list
+      .if_match()
+      .expect("padded list should parse")
+      .expect("If-Match should be present")
+      .header_value()
+  );
+  let weak_list_http =
+    HttpRequest::parse(weak_list_raw.as_bytes()).expect("request should parse");
+  assert_eq!(
+    "\"one\", W/\"two\"",
+    weak_list_http
+      .if_match()
+      .expect("padded list should parse")
+      .expect("If-Match should be present")
+      .header_value()
+  );
+
+  let wildcard_raw = "PUT /asset HTTP/1.1\r\nHost: example.test\r\nIf-Match: *\r\n\r\n";
+  let wildcard = Request::from_raw_frame(wildcard_raw.as_bytes()).expect("request should parse");
+  let parsed_wildcard = wildcard
+    .if_match()
+    .expect("wildcard should parse")
+    .expect("If-Match should be present");
+  assert!(parsed_wildcard.is_wildcard());
+  assert!(parsed_wildcard.entity_tags().is_empty());
+  assert_eq!("*", parsed_wildcard.header_value());
+  let wildcard_http = HttpRequest::parse(wildcard_raw.as_bytes()).expect("request should parse");
+  assert!(wildcard_http
+    .if_match()
+    .expect("wildcard should parse")
+    .expect("If-Match should be present")
+    .is_wildcard());
+
+  for value in [
+    "",
+    "abc",
+    "*, \"one\"",
+    "\"one\", \"one\"",
+    "\"one\",",
+    "W/abc",
+  ] {
+    let raw = format!("PUT /asset HTTP/1.1\r\nHost: example.test\r\nIf-Match: {value}\r\n\r\n");
+    let request = Request::from_raw_frame(raw.as_bytes())
+      .expect("request should retain malformed metadata");
+    assert!(request.if_match().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("If-Match"));
+
+    let http_request =
+      HttpRequest::parse(raw.as_bytes()).expect("request should retain malformed metadata");
+    assert!(http_request.if_match().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), http_request.header("If-Match"));
+  }
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024 - 1));
+  let oversized_request = Request {
+    method: "PUT".to_string(),
+    target: "/asset".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("If-Match".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.if_match().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("If-Match")
+  );
+  let oversized_http = HttpRequest {
+    method: "PUT".to_string(),
+    path: "/asset".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      HttpHeader::new("Host", "example.test"),
+      HttpHeader::new("If-Match", oversized.clone()),
+    ],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(oversized_http.if_match().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_http.header("If-Match"));
+
+  let duplicate_raw = concat!(
+    "PUT /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "If-Match: \"one\"\r\n",
+    "if-match: \"one\"\r\n",
+    "\r\n"
+  );
+  let duplicate = Request::from_raw_frame(duplicate_raw.as_bytes())
+    .expect("request should retain duplicate metadata");
+  assert!(duplicate.if_match().is_err());
+  assert_eq!(Some("\"one\""), duplicate.header("If-Match"));
+  let duplicate_http = HttpRequest::parse(duplicate_raw.as_bytes())
+    .expect("request should retain duplicate metadata");
+  assert!(duplicate_http.if_match().is_err());
+  assert_eq!(Some("\"one\""), duplicate_http.header("If-Match"));
+}
+
+#[test]
 fn request_overwrite_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"COPY / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");

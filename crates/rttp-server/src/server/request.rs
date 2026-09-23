@@ -112,6 +112,7 @@ pub use rttp_protocol::early_data::{
 };
 pub use rttp_protocol::entity_tag::{
   EntityTag as HttpEntityTag, EntityTagParseError as HttpEntityTagParseError,
+  IfMatch as HttpIfMatch, IfMatchParseError as HttpIfMatchParseError,
 };
 pub use rttp_protocol::expect::{
   Expect as HttpExpectations, ExpectParseError as HttpExpectParseError,
@@ -457,6 +458,20 @@ impl Request {
   /// Parses one strong entity-tag or HTTP-date `If-Range` validator.
   pub fn if_range(&self) -> Result<Option<HttpIfRange>, HttpIfRangeParseError> {
     HttpIfRange::parse_optional_values(self.headers_named("If-Range"))
+  }
+
+  /// Parses bounded `If-Match` validators without evaluating them.
+  ///
+  /// Returns `Ok(None)` when the field is absent. A successful parse does not
+  /// imply that a precondition is satisfied; callers decide how to apply the
+  /// declared validators. The raw `If-Match` field remains available through
+  /// `header`.
+  pub fn if_match(&self) -> Result<Option<HttpIfMatch>, HttpIfMatchParseError> {
+    let values: Vec<&str> = self.headers_named("If-Match").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfMatch::parse_values(values).map(Some)
   }
 
   /// Parses bounded `If-None-Match` validators without evaluating them.
@@ -2591,6 +2606,25 @@ impl HttpRequest {
         .filter(|header| header.name.eq_ignore_ascii_case("If-Range"))
         .map(|header| header.value.as_str()),
     )
+  }
+
+  /// Parses bounded `If-Match` validators without evaluating them.
+  ///
+  /// Returns `Ok(None)` when the field is absent. A successful parse does not
+  /// imply that a precondition is satisfied; callers decide how to apply the
+  /// declared validators. The raw `If-Match` field remains available through
+  /// `header`.
+  pub fn if_match(&self) -> Result<Option<HttpIfMatch>, HttpIfMatchParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("If-Match"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfMatch::parse_values(values).map(Some)
   }
 
   /// Parses bounded `If-None-Match` validators without evaluating them.
