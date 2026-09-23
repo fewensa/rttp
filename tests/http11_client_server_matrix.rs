@@ -15,8 +15,8 @@ use rttp_server::server::{
   HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
   HttpContentDisposition, HttpContentType, HttpDav, HttpDepth, HttpDestination, HttpEntityTag,
   HttpIf, HttpIfMatch, HttpIfRangeRequestOutcome, HttpIfScheduleTagMatch, HttpLockToken,
-  HttpOverwrite, HttpResponse, HttpScheduleTag, HttpSecRequiredDocumentPolicyValue, HttpTimeout,
-  Request, SecFetchDest, SecFetchMode, SecFetchSite, SecPurpose,
+  HttpOrigin, HttpOverwrite, HttpResponse, HttpScheduleTag, HttpSecRequiredDocumentPolicyValue,
+  HttpTimeout, Request, SecFetchDest, SecFetchMode, SecFetchSite, SecPurpose,
 };
 use rttp_test_support as fixtures;
 
@@ -5566,6 +5566,57 @@ fn sync_client_if_match_reaches_server_typed_accessor() {
   assert_eq!("\"abc\"", header_value);
   assert_eq!(Some("\"abc\"".to_string()), raw);
   handle.join().expect("If-Match server thread");
+}
+
+#[test]
+fn sync_client_origin_reaches_server_typed_accessor() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Origin server");
+  let addr = server.local_addr().expect("Origin server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let parsed: HttpOrigin = request
+          .origin()
+          .expect("Origin should parse")
+          .expect("Origin should be present");
+        let tuple = parsed.tuple().expect("client Origin should be a tuple");
+        observed_tx
+          .send((
+            tuple.scheme().as_str().to_string(),
+            tuple.host().to_string(),
+            tuple.port(),
+            parsed.header_value(),
+            request.header("Origin").map(str::to_string),
+          ))
+          .expect("send observed Origin metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Origin request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .origin("https://spa.example.test:8443")
+    .expect("Origin helper should accept test origin")
+    .emit()
+    .expect("Origin response should parse");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    (
+      "https".to_string(),
+      "spa.example.test".to_string(),
+      Some(8443),
+      "https://spa.example.test:8443".to_string(),
+      Some("https://spa.example.test:8443".to_string()),
+    ),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe Origin metadata")
+  );
+  handle.join().expect("Origin server thread");
 }
 
 type ObservedWebDavField = (Option<String>, bool);

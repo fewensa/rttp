@@ -34,9 +34,9 @@ use rttp_server::server::{
   HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
   HttpNegotiateDirective, HttpNegotiateParseError, HttpNoVarySearch, HttpNoVarySearchParams,
-  HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginTrialParseError,
-  HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError, HttpPermissionsPolicy,
-  HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
+  HttpOrigin, HttpOriginAgentCluster, HttpOriginAgentClusterParseError, HttpOriginParseError,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
+  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPermissionsPolicyReportOnly,
   HttpPermissionsPolicyReportOnlyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
   HttpPreferenceKind, HttpPrefersColorScheme, HttpPrefersColorSchemeParseError,
@@ -410,6 +410,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let if_match_wildcard: HttpIfMatch =
     HttpIfMatch::parse("*").expect("If-Match wildcard should parse");
   let if_match_error: Result<HttpIfMatch, HttpIfMatchParseError> = HttpIfMatch::parse("not-a-tag");
+  let origin: HttpOrigin =
+    HttpOrigin::parse("https://example.test:8443").expect("Origin should parse");
+  let origin_null: HttpOrigin = HttpOrigin::parse("null").expect("null Origin should parse");
+  let origin_error: Result<HttpOrigin, HttpOriginParseError> =
+    HttpOrigin::parse("https://example.test/path");
   let if_schedule_tag_match: HttpIfScheduleTagMatch =
     HttpIfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
   let if_schedule_tag_match_weak: HttpIfScheduleTagMatch =
@@ -779,6 +784,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(if_match_wildcard.entity_tags().is_empty());
   assert_eq!("*", if_match_wildcard.header_value());
   assert!(if_match_error.is_err());
+  assert_eq!("https://example.test:8443", origin.header_value());
+  assert_eq!(
+    Some("example.test"),
+    origin.tuple().map(|tuple| tuple.host())
+  );
+  assert_eq!(Some(8443), origin.tuple().and_then(|tuple| tuple.port()));
+  assert_eq!("null", origin_null.header_value());
+  assert!(origin_error.is_err());
   assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
   assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
   assert!(!if_schedule_tag_match.is_weak());
@@ -3667,6 +3680,61 @@ fn request_facade_parses_if_schedule_tag_match_metadata_without_policy() {
     HttpIfScheduleTagMatch::parse(format!("\"{}\"", "a".repeat(64 * 1024 - 1))).is_err(),
     "oversized If-Schedule-Tag-Match values must fail closed"
   );
+}
+
+#[test]
+fn request_facade_parses_origin() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nOrigin: HTTPS://EXAMPLE.TEST:8443\r\n\r\n",
+  )
+  .expect("request should parse");
+  let origin: HttpOrigin = request
+    .origin()
+    .expect("Origin should parse")
+    .expect("Origin should be present");
+
+  assert_eq!("https://example.test:8443", origin.header_value());
+  assert_eq!(
+    Some("example.test"),
+    origin.tuple().map(|tuple| tuple.host())
+  );
+  assert_eq!(Some(8443), origin.tuple().and_then(|tuple| tuple.port()));
+  assert_eq!(Some("HTTPS://EXAMPLE.TEST:8443"), request.header("Origin"));
+
+  let null =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nOrigin: null\r\n\r\n")
+      .expect("request should parse");
+  assert_eq!(
+    HttpOrigin::Null,
+    null
+      .origin()
+      .expect("null Origin should parse")
+      .expect("Origin should be present")
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.origin().expect("missing Origin should be accepted")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nOrigin: https://example.test/path\r\n\r\n",
+  )
+  .expect("malformed Origin request should still parse");
+  assert!(malformed.origin().is_err());
+  assert_eq!(
+    Some("https://example.test/path"),
+    malformed.header("Origin")
+  );
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nOrigin: https://example.test\r\norigin: null\r\n\r\n",
+  )
+  .expect("duplicate Origin request should still parse");
+  assert!(duplicate.origin().is_err());
+  assert_eq!(Some("https://example.test"), duplicate.header("Origin"));
 }
 
 #[test]

@@ -4852,6 +4852,149 @@ fn request_if_match_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_origin_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.origin().expect("missing Origin should be valid"));
+  let absent_http = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent_http
+      .origin()
+      .expect("missing Origin should be valid")
+  );
+
+  let tuple_raw =
+    "GET / HTTP/1.1\r\nHost: example.test\r\nOrigin: HTTPS://EXAMPLE.TEST:8443\r\n\r\n";
+  let tuple = Request::from_raw_frame(tuple_raw.as_bytes()).expect("request should parse");
+  let parsed = tuple
+    .origin()
+    .expect("Origin should parse")
+    .expect("Origin should be present");
+  assert_eq!("https://example.test:8443", parsed.header_value());
+  assert_eq!(Some("HTTPS://EXAMPLE.TEST:8443"), tuple.header("Origin"));
+  let tuple_http = HttpRequest::parse(tuple_raw.as_bytes()).expect("request should parse");
+  assert_eq!(
+    "https://example.test:8443",
+    tuple_http
+      .origin()
+      .expect("Origin should parse")
+      .expect("Origin should be present")
+      .header_value()
+  );
+  assert_eq!(Some("HTTPS://EXAMPLE.TEST:8443"), tuple_http.header("Origin"));
+
+  let null_raw = b"GET / HTTP/1.1\r\nHost: example.test\r\nOrigin: null\r\n\r\n";
+  let null = Request::from_raw_frame(null_raw).expect("request should parse");
+  assert_eq!(
+    HttpOrigin::Null,
+    null
+      .origin()
+      .expect("null Origin should parse")
+      .expect("Origin should be present")
+  );
+  let null_http = HttpRequest::parse(null_raw).expect("request should parse");
+  assert_eq!(
+    HttpOrigin::Null,
+    null_http
+      .origin()
+      .expect("null Origin should parse")
+      .expect("Origin should be present")
+  );
+
+  for value in [
+    "",
+    "https://example.test/path",
+    "ftp://example.test",
+    "https://example.test, https://other.test",
+  ] {
+    let raw = format!("GET / HTTP/1.1\r\nHost: example.test\r\nOrigin: {value}\r\n\r\n");
+    let request = Request::from_raw_frame(raw.as_bytes())
+      .expect("request should retain malformed Origin metadata");
+    assert!(request.origin().is_err(), "Origin should reject {value:?}");
+    assert_eq!(Some(value), request.header("Origin"));
+
+    let http_request =
+      HttpRequest::parse(raw.as_bytes()).expect("request should retain malformed Origin metadata");
+    assert!(
+      http_request.origin().is_err(),
+      "HttpRequest Origin should reject {value:?}"
+    );
+    assert_eq!(Some(value), http_request.header("Origin"));
+  }
+
+  let duplicate_raw = concat!(
+    "GET / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Origin: https://example.test\r\n",
+    "origin: null\r\n",
+    "\r\n"
+  );
+  let duplicate = Request::from_raw_frame(duplicate_raw.as_bytes())
+    .expect("duplicate Origin metadata should be retained");
+  assert!(duplicate.origin().is_err());
+  assert_eq!(Some("https://example.test"), duplicate.header("Origin"));
+  let duplicate_http = HttpRequest::parse(duplicate_raw.as_bytes())
+    .expect("duplicate Origin metadata should be retained");
+  assert!(duplicate_http.origin().is_err());
+  assert_eq!(Some("https://example.test"), duplicate_http.header("Origin"));
+
+  let control_value = "https://example.test\0";
+  let control = Request {
+    method: "GET".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![("Origin".to_string(), control_value.to_string())],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(control.origin().is_err());
+  assert_eq!(Some(control_value), control.header("Origin"));
+  let control_http = HttpRequest {
+    method: "GET".to_string(),
+    path: "/".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![HttpHeader::new("Origin", control_value)],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(control_http.origin().is_err());
+  assert_eq!(Some(control_value), control_http.header("Origin"));
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![("Origin".to_string(), oversized.clone())],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.origin().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_request.header("Origin"));
+  let oversized_http = HttpRequest {
+    method: "GET".to_string(),
+    path: "/".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![HttpHeader::new("Origin", oversized.clone())],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(oversized_http.origin().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_http.header("Origin"));
+
+  let _: HttpOriginParseError = HttpOrigin::parse(control_value)
+    .expect_err("control-byte Origin metadata should be rejected");
+}
+
+#[test]
 fn request_overwrite_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"COPY / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");
