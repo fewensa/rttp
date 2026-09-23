@@ -519,6 +519,10 @@ pub(crate) fn is_request_target_byte(byte: u8) -> bool {
   byte > 0x20 && byte != 0x7f
 }
 
+fn trim_http_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
+}
+
 pub(crate) fn optional_header_content_length(
   headers: &[(String, String)],
 ) -> io::Result<Option<usize>> {
@@ -529,7 +533,7 @@ pub(crate) fn optional_header_content_length(
     .filter(|(name, _)| name.eq_ignore_ascii_case("Content-Length"))
   {
     for token in value.split(',') {
-      let token = token.trim();
+      let token = trim_http_ows(token);
       if token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(io::Error::new(
           io::ErrorKind::InvalidData,
@@ -562,7 +566,7 @@ pub(crate) fn request_body_kind(headers: &[(String, String)]) -> io::Result<Requ
     .iter()
     .filter(|(name, _)| name.eq_ignore_ascii_case("Transfer-Encoding"))
   {
-    for token in value.split(',').map(str::trim) {
+    for token in value.split(',').map(trim_http_ows) {
       if token.is_empty() {
         return Err(io::Error::new(
           io::ErrorKind::InvalidData,
