@@ -1741,6 +1741,188 @@ fn test_async_keep_alive_content_length_response_leaves_client_reusable() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_http11_connection_ows_close_forces_fresh_socket() {
+  let (addr, handle) = support::spawn_redirect_connection_reuse_probe_server(
+    b"Connection: \t close \t\r\n".as_slice(),
+  );
+  block_on(async {
+    let response = client()
+      .get()
+      .config(Config::builder().auto_redirect(true))
+      .url(format!("http://{}/start", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!(200, response.code());
+    assert_eq!("final", response.body().string().unwrap());
+  });
+  assert_eq!(vec![1, 1], handle.join().unwrap());
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_http11_connection_ows_keep_alive_reuses_socket() {
+  let (addr, handle) = support::spawn_redirect_connection_reuse_probe_server(
+    b"Connection: \t KEEP-ALIVE \t\r\n".as_slice(),
+  );
+  block_on(async {
+    let response = client()
+      .get()
+      .config(Config::builder().auto_redirect(true))
+      .url(format!("http://{}/start", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!(200, response.code());
+    assert_eq!("final", response.body().string().unwrap());
+  });
+  assert_eq!(vec![2], handle.join().unwrap());
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_http10_connection_ows_keep_alive_reuses_socket() {
+  let (addr, handle) = support::spawn_http10_redirect_connection_reuse_probe_server(
+    b"Connection: keep-alive, TE\r\n".as_slice(),
+  );
+  block_on(async {
+    let response = client()
+      .get()
+      .config(Config::builder().auto_redirect(true))
+      .url(format!("http://{}/start", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!(200, response.code());
+    assert_eq!("final", response.body().string().unwrap());
+  });
+  assert_eq!(vec![2], handle.join().unwrap());
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_http11_connection_raw_obs_text_close_padding_still_reuses_socket() {
+  let mut connection = b"Connection:".to_vec();
+  connection.push(0xa0);
+  connection.extend_from_slice(b"close");
+  connection.push(0xa0);
+  connection.extend_from_slice(b"\r\n");
+  let (addr, handle) = support::spawn_redirect_connection_reuse_probe_server(connection);
+  block_on(async {
+    let response = client()
+      .get()
+      .config(Config::builder().auto_redirect(true))
+      .url(format!("http://{}/start", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!(200, response.code());
+    assert_eq!("final", response.body().string().unwrap());
+  });
+  assert_eq!(vec![2], handle.join().unwrap());
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_http10_connection_raw_obs_text_keep_alive_padding_forces_fresh_socket() {
+  let mut connection = b"Connection:".to_vec();
+  connection.push(0xa0);
+  connection.extend_from_slice(b"keep-alive");
+  connection.push(0xa0);
+  connection.extend_from_slice(b"\r\n");
+  let (addr, handle) = support::spawn_http10_redirect_connection_reuse_probe_server(connection);
+  block_on(async {
+    let response = client()
+      .get()
+      .config(Config::builder().auto_redirect(true))
+      .url(format!("http://{}/start", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!(200, response.code());
+    assert_eq!("final", response.body().string().unwrap());
+  });
+  assert_eq!(vec![1, 1], handle.join().unwrap());
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_connection_header_preserves_raw_obs_text_padding() {
+  let mut response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection:".to_vec();
+  response.push(0xa0);
+  response.extend_from_slice(b"close");
+  response.push(0xa0);
+  response.extend_from_slice(b"\r\n\r\nOK");
+  let expected: String = [0xa0u8]
+    .into_iter()
+    .chain(b"close".iter().copied())
+    .chain([0xa0u8])
+    .map(|byte| byte as char)
+    .collect();
+
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!("OK", response.body().string().unwrap());
+    assert_eq!(
+      Some(&expected),
+      response.header_value("Connection"),
+      "raw obs-text Connection padding must remain visible to callers"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_connection_header_ows_close_still_closes_client() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length: 2\r\n",
+    "Connection: \t close \t\r\n",
+    "\r\n",
+    "OK"
+  ));
+  block_on(async {
+    let mut client = client();
+    let response = client
+      .get()
+      .url(format!("http://{}/", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!("OK", response.body().string().unwrap());
+    assert_eq!(
+      Some(&"close".to_string()),
+      response.header_value("Connection")
+    );
+
+    let error = client
+      .get()
+      .url(format!("http://{}/", addr))
+      .rasync()
+      .await
+      .expect_err("OWS-padded Connection: close should close the client");
+    assert!(
+      error.to_string().contains("The connection is closed."),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_client_skips_100_continue_before_final_response() {
   let (addr, _handle) = support::spawn_continue_then_ok_server();
   block_on(async {

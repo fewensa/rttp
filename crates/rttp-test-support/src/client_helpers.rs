@@ -667,6 +667,98 @@ pub fn spawn_keep_alive_server_count(count: usize) -> (SocketAddr, JoinHandle<()
   (addr, handle)
 }
 
+/// Serves a 302 with a custom Connection header line, then probes whether the
+/// auto-redirected follow-up arrives on the same socket (`[2]`) or a new accept (`[1, 1]`).
+///
+/// `connection_header_line` should be empty or a full header line ending in `\r\n`
+/// (for example `b"Connection: close\r\n"`).
+pub fn spawn_redirect_connection_reuse_probe_server(
+  connection_header_line: impl Into<Vec<u8>>,
+) -> (SocketAddr, JoinHandle<Vec<usize>>) {
+  let (listener, addr) = bind_local_http_listener("redirect connection reuse probe server");
+  let connection_header_line = connection_header_line.into();
+  let handle = thread::spawn(move || {
+    let Ok((mut first_stream, _)) = listener.accept() else {
+      return Vec::new();
+    };
+
+    let mut requests_per_connection = vec![1];
+    let _ = read_http_request(&mut first_stream);
+    let mut redirect = b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\n".to_vec();
+    redirect.extend_from_slice(&connection_header_line);
+    redirect.extend_from_slice(b"\r\n");
+    let _ = first_stream.write_all(&redirect);
+
+    first_stream
+      .set_read_timeout(Some(Duration::from_millis(300)))
+      .expect("set redirect reuse probe read timeout");
+    match read_http_request(&mut first_stream) {
+      request if !request.is_empty() => {
+        requests_per_connection[0] += 1;
+        let _ = first_stream
+          .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal");
+        return requests_per_connection;
+      }
+      _ => {}
+    }
+    drop(first_stream);
+
+    let Ok((mut second_stream, _)) = listener.accept() else {
+      return requests_per_connection;
+    };
+    requests_per_connection.push(1);
+    let _ = read_http_request(&mut second_stream);
+    let _ = second_stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal");
+    requests_per_connection
+  });
+  (addr, handle)
+}
+
+/// Same as [`spawn_redirect_connection_reuse_probe_server`], but the first status line uses HTTP/1.0.
+pub fn spawn_http10_redirect_connection_reuse_probe_server(
+  connection_header_line: impl Into<Vec<u8>>,
+) -> (SocketAddr, JoinHandle<Vec<usize>>) {
+  let (listener, addr) = bind_local_http_listener("http10 redirect connection reuse probe server");
+  let connection_header_line = connection_header_line.into();
+  let handle = thread::spawn(move || {
+    let Ok((mut first_stream, _)) = listener.accept() else {
+      return Vec::new();
+    };
+
+    let mut requests_per_connection = vec![1];
+    let _ = read_http_request(&mut first_stream);
+    let mut redirect = b"HTTP/1.0 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\n".to_vec();
+    redirect.extend_from_slice(&connection_header_line);
+    redirect.extend_from_slice(b"\r\n");
+    let _ = first_stream.write_all(&redirect);
+
+    first_stream
+      .set_read_timeout(Some(Duration::from_millis(300)))
+      .expect("set http10 redirect reuse probe read timeout");
+    match read_http_request(&mut first_stream) {
+      request if !request.is_empty() => {
+        requests_per_connection[0] += 1;
+        let _ = first_stream
+          .write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal");
+        return requests_per_connection;
+      }
+      _ => {}
+    }
+    drop(first_stream);
+
+    let Ok((mut second_stream, _)) = listener.accept() else {
+      return requests_per_connection;
+    };
+    requests_per_connection.push(1);
+    let _ = read_http_request(&mut second_stream);
+    let _ = second_stream
+      .write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal");
+    requests_per_connection
+  });
+  (addr, handle)
+}
+
 pub fn spawn_redirect_connection_lifecycle_server(
   first_response_connection_close: bool,
 ) -> (SocketAddr, JoinHandle<Vec<usize>>) {

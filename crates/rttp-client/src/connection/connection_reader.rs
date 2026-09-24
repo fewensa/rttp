@@ -505,7 +505,7 @@ pub(crate) fn response_connection_should_close(header: &[u8]) -> error::Result<b
       continue;
     }
 
-    for token in value.split(',').map(str::trim) {
+    for token in value.split(',').map(trim_http_ows) {
       if token.eq_ignore_ascii_case("close") {
         return Ok(true);
       }
@@ -1127,6 +1127,104 @@ mod tests {
           .to_string()
           .contains("Unsupported Transfer-Encoding response body"),
         "unexpected error for {transfer_encoding:?}: {error}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_response_connection_should_close_accepts_only_http_ows_padding() {
+    for connection in [
+      "close",
+      " close ",
+      "\tclose\t",
+      " \tCLOSE\t ",
+      "keep-alive, close",
+      "keep-alive,\tclose",
+      " keep-alive , close ",
+    ] {
+      let raw = format!("HTTP/1.1 200 OK\r\nConnection:{connection}\r\n\r\n");
+      assert!(
+        super::response_connection_should_close(raw.as_bytes()).unwrap(),
+        "OWS-padded close should close for {connection:?}"
+      );
+    }
+
+    for connection in [
+      "keep-alive",
+      " keep-alive ",
+      "\tKEEP-ALIVE\t",
+      " \tkeep-alive\t ",
+    ] {
+      let http11 = format!("HTTP/1.1 200 OK\r\nConnection:{connection}\r\n\r\n");
+      assert!(
+        !super::response_connection_should_close(http11.as_bytes()).unwrap(),
+        "HTTP/1.1 keep-alive should remain reusable for {connection:?}"
+      );
+
+      let http10 = format!("HTTP/1.0 200 OK\r\nConnection:{connection}\r\n\r\n");
+      assert!(
+        !super::response_connection_should_close(http10.as_bytes()).unwrap(),
+        "HTTP/1.0 OWS keep-alive should remain reusable for {connection:?}"
+      );
+    }
+
+    assert!(
+      !super::response_connection_should_close(b"HTTP/1.1 200 OK\r\n\r\n").unwrap(),
+      "HTTP/1.1 without Connection should remain reusable"
+    );
+    assert!(
+      super::response_connection_should_close(b"HTTP/1.0 200 OK\r\n\r\n").unwrap(),
+      "HTTP/1.0 without keep-alive should close"
+    );
+
+    for connection in [
+      "\u{000b}close\u{000b}",
+      "\u{000c}close\u{000c}",
+      "\u{00a0}close\u{00a0}",
+      "\u{2003}close\u{2003}",
+      "close\u{000b}",
+      "\u{00a0}close",
+    ] {
+      let raw = format!("HTTP/1.1 200 OK\r\nConnection:{connection}\r\n\r\n");
+      assert!(
+        !super::response_connection_should_close(raw.as_bytes()).unwrap(),
+        "non-OWS padding must not count as close for {connection:?}"
+      );
+    }
+
+    for connection in [
+      "\u{000b}keep-alive\u{000b}",
+      "\u{000c}keep-alive\u{000c}",
+      "\u{00a0}keep-alive\u{00a0}",
+      "keep-alive\u{00a0}",
+      "\u{00a0}keep-alive",
+    ] {
+      let raw = format!("HTTP/1.0 200 OK\r\nConnection:{connection}\r\n\r\n");
+      assert!(
+        super::response_connection_should_close(raw.as_bytes()).unwrap(),
+        "non-OWS padding must not count as keep-alive for {connection:?}"
+      );
+    }
+
+    for padding in [0x0bu8, 0x0cu8, 0xa0u8] {
+      let mut close_head = b"HTTP/1.1 200 OK\r\nConnection: ".to_vec();
+      close_head.push(padding);
+      close_head.extend_from_slice(b"close");
+      close_head.push(padding);
+      close_head.extend_from_slice(b"\r\n\r\n");
+      assert!(
+        !super::response_connection_should_close(&close_head).unwrap(),
+        "raw obs-text/non-OWS padding {padding:#x} must not count as close"
+      );
+
+      let mut keep_alive_head = b"HTTP/1.0 200 OK\r\nConnection: ".to_vec();
+      keep_alive_head.push(padding);
+      keep_alive_head.extend_from_slice(b"keep-alive");
+      keep_alive_head.push(padding);
+      keep_alive_head.extend_from_slice(b"\r\n\r\n");
+      assert!(
+        super::response_connection_should_close(&keep_alive_head).unwrap(),
+        "raw obs-text/non-OWS padding {padding:#x} must not count as keep-alive"
       );
     }
   }
