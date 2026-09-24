@@ -1079,6 +1079,157 @@ fn test_async_transfer_encoding_chunked_with_content_length_is_rejected() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_content_length_accepts_http_ows_padding() {
+  for content_length in ["2", " 2 ", "\t2\t", " \t2\t ", "2, 2", "2,\t2"] {
+    let (addr, _handle) = support::spawn_chunked_response_server(format!(
+      "HTTP/1.1 200 OK\r\nContent-Length:{content_length}\r\nConnection: close\r\n\r\nOK"
+    ));
+
+    block_on(async {
+      let response = client()
+        .get()
+        .url(format!("http://{}/", addr))
+        .rasync()
+        .await
+        .expect("HTTP OWS should be accepted around Content-Length members");
+
+      assert_eq!("OK", response.body().string().unwrap());
+      assert!(
+        response.header_value("Content-Length").is_some(),
+        "accepted Content-Length should remain exposed via header_value"
+      );
+      let framed_length = response
+        .content_length()
+        .expect("accepted Content-Length should remain exposed via content_length");
+      assert_eq!(2, framed_length.len());
+    });
+  }
+
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length:  2  \r\n",
+    "Content-Length:\t2\t\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "OK"
+  ));
+
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/", addr))
+      .rasync()
+      .await
+      .expect("matching repeated Content-Length fields should accept HTTP OWS");
+
+    assert_eq!("OK", response.body().string().unwrap());
+    assert!(response.header_value("Content-Length").is_some());
+    assert_eq!(2, response.content_length().unwrap().len());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_content_length_rejects_non_http_ows_padding() {
+  for content_length in [
+    "\u{000b}2",
+    "2\u{000b}",
+    "\u{000c}2",
+    "2\u{000c}",
+    "\u{00a0}2",
+    "2\u{00a0}",
+    "\u{2003}2",
+    "\u{3000}2",
+  ] {
+    let (addr, _handle) = support::spawn_chunked_response_server(format!(
+      "HTTP/1.1 200 OK\r\nContent-Length:{content_length}\r\nConnection: close\r\n\r\nOK"
+    ));
+
+    block_on(async {
+      let error = client()
+        .get()
+        .url(format!("http://{}/", addr))
+        .rasync()
+        .await
+        .expect_err("non-OWS whitespace should not pad Content-Length");
+
+      assert!(
+        error.to_string().contains("Invalid Content-Length header"),
+        "unexpected error for {content_length:?}: {error}"
+      );
+    });
+  }
+
+  for padding in [0x0bu8, 0x0cu8, 0xa0u8] {
+    let mut response = b"HTTP/1.1 200 OK\r\nContent-Length: ".to_vec();
+    response.push(padding);
+    response.extend_from_slice(b"2\r\nConnection: close\r\n\r\nOK");
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+    block_on(async {
+      let error = client()
+        .get()
+        .url(format!("http://{}/", addr))
+        .rasync()
+        .await
+        .expect_err("raw non-OWS/obs-text Content-Length padding should be rejected");
+
+      assert!(
+        error.to_string().contains("Invalid Content-Length header"),
+        "unexpected error for padding {padding:#x}: {error}"
+      );
+    });
+
+    let mut response = b"HTTP/1.1 200 OK\r\nContent-Length: 2".to_vec();
+    response.push(padding);
+    response.extend_from_slice(b"\r\nConnection: close\r\n\r\nOK");
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+    block_on(async {
+      let error = client()
+        .get()
+        .url(format!("http://{}/", addr))
+        .rasync()
+        .await
+        .expect_err("raw trailing non-OWS/obs-text Content-Length padding should be rejected");
+
+      assert!(
+        error.to_string().contains("Invalid Content-Length header"),
+        "unexpected error for trailing padding {padding:#x}: {error}"
+      );
+    });
+  }
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_conflicting_content_length_response_is_rejected() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length: 2\r\n",
+    "Content-Length: 3\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "OK!"
+  ));
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/", addr))
+      .rasync()
+      .await
+      .expect_err("conflicting Content-Length headers should be rejected");
+
+    assert!(
+      error.to_string().contains("Conflicting Content-Length"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_non_chunked_transfer_coding_before_chunked_is_rejected() {
   let (addr, _handle) = support::spawn_chunked_response_server(concat!(
     "HTTP/1.1 200 OK\r\n",
