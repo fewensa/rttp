@@ -563,6 +563,23 @@ fn sec_ch_ua_platform_accepts_structured_strings_and_canonicalizes_them() {
 }
 
 #[test]
+fn sec_ch_ua_platform_rejects_non_ascii_structured_strings() {
+  for value in [
+    "\"\u{1f34e}\"",
+    "\"Windows\u{80}\"",
+    "\"\u{65e5}\u{672c}\u{8a9e}\"",
+  ] {
+    assert!(
+      SecChUaPlatform::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let platform = SecChUaPlatform::parse(r#""Windows\"""#).expect("valid ASCII string");
+  assert_eq!(r#""Windows\"""#, platform.header_value());
+}
+
+#[test]
 fn sec_ch_ua_platform_rejects_invalid_duplicate_oversized_and_control_values() {
   assert!(SecChUaPlatform::parse_values([r#""Windows""#, r#""Linux""#]).is_err());
   assert!(SecChUaPlatform::parse_values([]).is_err());
@@ -576,9 +593,6 @@ fn sec_ch_ua_platform_rejects_invalid_duplicate_oversized_and_control_values() {
     r#""unterminated"#,
     r#""bad"quote""#,
     r#""bad\escape""#,
-    "\"\u{1f34e}\"",
-    "\"Windows\u{80}\"",
-    "\"\u{65e5}\u{672c}\u{8a9e}\"",
     "\"Windows\0\"",
     "\"Windows\r\nInjected: yes\"",
     "\"Windows\u{7f}\"",
