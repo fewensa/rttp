@@ -754,7 +754,7 @@ pub(crate) fn connection_header_has_token(value: Option<&str>, expected: &str) -
   value.is_some_and(|value| {
     value
       .split(',')
-      .any(|token| token.trim().eq_ignore_ascii_case(expected))
+      .any(|token| trim_http_ows(token).eq_ignore_ascii_case(expected))
   })
 }
 

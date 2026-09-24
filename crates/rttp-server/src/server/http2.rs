@@ -2454,16 +2454,21 @@ mod tests {
   use super::*;
 
   fn h2c_upgrade_request(settings: &str) -> Request {
+    h2c_upgrade_request_with_tokens("Upgrade, HTTP2-Settings", "h2c", settings)
+  }
+
+  fn h2c_upgrade_request_with_tokens(
+    connection: &str,
+    upgrade: &str,
+    settings: &str,
+  ) -> Request {
     Request {
       method: "GET".to_string(),
       target: "/".to_string(),
       version: "HTTP/1.1".to_string(),
       headers: vec![
-        (
-          "Connection".to_string(),
-          "Upgrade, HTTP2-Settings".to_string(),
-        ),
-        ("Upgrade".to_string(), "h2c".to_string()),
+        ("Connection".to_string(), connection.to_string()),
+        ("Upgrade".to_string(), upgrade.to_string()),
         ("HTTP2-Settings".to_string(), settings.to_string()),
       ],
       trailers: Vec::new(),
@@ -2540,6 +2545,67 @@ mod tests {
         .expect("h2c upgrade should be selected");
       validate_http2_settings_payload(&payload)
         .unwrap_or_else(|error| panic!("{value:?} settings payload should validate: {error}"));
+    }
+  }
+
+  #[test]
+  fn h2c_upgrade_settings_accepts_ows_connection_and_upgrade_token_padding() {
+    let settings = encode_base64url_unpadded(&setting(HTTP2_SETTINGS_ENABLE_PUSH, 0));
+    for (connection, upgrade) in [
+      ("Upgrade, HTTP2-Settings", "h2c"),
+      (" upgrade ,\thttp2-settings\t", " h2c "),
+      ("\tUpgrade\t,\tHTTP2-Settings\t", "\th2c\t"),
+      (" keep-alive , Upgrade , HTTP2-Settings ", "H2C"),
+    ] {
+      let payload = h2c_upgrade_settings(&h2c_upgrade_request_with_tokens(
+        connection, upgrade, &settings,
+      ))
+      .unwrap_or_else(|error| {
+        panic!("OWS-padded h2c tokens should select upgrade ({connection:?}, {upgrade:?}): {error}")
+      })
+      .expect("h2c upgrade should be selected");
+      validate_http2_settings_payload(&payload).expect("settings payload should validate");
+    }
+  }
+
+  #[test]
+  fn h2c_upgrade_settings_rejects_non_ows_connection_and_upgrade_token_padding() {
+    let settings = encode_base64url_unpadded(&setting(HTTP2_SETTINGS_ENABLE_PUSH, 0));
+    const VT: char = '\u{000b}';
+    const FF: char = '\u{000c}';
+    const NBSP: char = '\u{00a0}';
+    const OBS_TEXT: char = '\u{00ff}';
+
+    for padding in [VT, FF, NBSP, OBS_TEXT] {
+      for upgrade in [format!("{padding}h2c"), format!("h2c{padding}")] {
+        let selected = h2c_upgrade_settings(&h2c_upgrade_request_with_tokens(
+          "Upgrade, HTTP2-Settings",
+          &upgrade,
+          &settings,
+        ))
+        .expect("non-OWS Upgrade padding should not select h2c");
+        assert_eq!(
+          None, selected,
+          "non-OWS Upgrade h2c padding must not select h2c: {upgrade:?}"
+        );
+      }
+
+      for connection in [
+        format!("{padding}Upgrade, HTTP2-Settings"),
+        format!("Upgrade{padding}, HTTP2-Settings"),
+        format!("Upgrade, {padding}HTTP2-Settings"),
+        format!("Upgrade, HTTP2-Settings{padding}"),
+      ] {
+        let error = h2c_upgrade_settings(&h2c_upgrade_request_with_tokens(
+          &connection, "h2c", &settings,
+        ))
+        .expect_err("non-OWS Connection token padding must invalidate h2c upgrade");
+        assert_eq!(
+          "invalid h2c upgrade request",
+          error.to_string(),
+          "{connection:?}"
+        );
+      }
     }
   }
 }

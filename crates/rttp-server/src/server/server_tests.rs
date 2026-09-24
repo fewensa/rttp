@@ -6411,6 +6411,333 @@ hello\r\n\
   }
 
   #[test]
+  fn connection_token_matcher_trims_only_http_ows() {
+    for value in [
+      "close",
+      " close",
+      "close ",
+      " close ",
+      "\tclose",
+      "close\t",
+      "\tclose\t",
+      " \tclose\t ",
+      "keep-alive, close",
+      " keep-alive ,\tclose\t",
+      "CLOSE",
+      " Close ",
+    ] {
+      assert!(
+        connection_header_has_token(Some(value), "close"),
+        "OWS-padded close should match: {value:?}"
+      );
+    }
+
+    for value in [
+      "keep-alive",
+      " keep-alive",
+      "keep-alive ",
+      "\tKEEP-ALIVE\t",
+      " close , keep-alive ",
+    ] {
+      assert!(
+        connection_header_has_token(Some(value), "keep-alive"),
+        "OWS-padded keep-alive should match: {value:?}"
+      );
+    }
+
+    const VT: char = '\u{000b}';
+    const FF: char = '\u{000c}';
+    const NBSP: char = '\u{00a0}';
+    const OBS_TEXT: char = '\u{00ff}';
+    for padding in [VT, FF, NBSP, OBS_TEXT] {
+      for (value, expected) in [
+        (format!("{padding}close"), "close"),
+        (format!("close{padding}"), "close"),
+        (format!("{padding}close{padding}"), "close"),
+        (format!("keep-alive,{padding}close"), "close"),
+        (format!("{padding}keep-alive"), "keep-alive"),
+        (format!("keep-alive{padding}"), "keep-alive"),
+        (format!("close,{padding}keep-alive"), "keep-alive"),
+      ] {
+        assert!(
+          !connection_header_has_token(Some(&value), expected),
+          "non-OWS padding must not match {expected}: {value:?}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn http11_closes_connection_accepts_ows_and_rejects_non_ows_padding() {
+    for value in [
+      "close",
+      "keep-alive, close",
+      "keep-alive,\tclose",
+      "keep-alive , Close",
+    ] {
+      let raw = format!(
+        "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: {value}\r\n\r\n"
+      );
+      let request = Request::from_raw_frame(raw.as_bytes()).expect("request should parse");
+      assert_eq!(Some(value), request.header("Connection"));
+      assert!(
+        request.closes_connection(),
+        "HTTP/1.1 OWS-padded close should close: {value:?}"
+      );
+    }
+
+    for value in [" close", "close ", "\tclose\t", " \tclose\t "] {
+      let request = Request {
+        method: "GET".to_string(),
+        target: "/".to_string(),
+        version: "HTTP/1.1".to_string(),
+        headers: vec![("Connection".to_string(), value.to_string())],
+        trailers: Vec::new(),
+        body: Vec::new(),
+        content_length: None,
+        extended_connect_protocol: None,
+      };
+      assert_eq!(Some(value), request.header("Connection"));
+      assert!(
+        request.closes_connection(),
+        "HTTP/1.1 edge OWS-padded close should close: {value:?}"
+      );
+    }
+
+    const NBSP: char = '\u{00a0}';
+    const OBS_TEXT: char = '\u{00ff}';
+    for padding in [NBSP, OBS_TEXT] {
+      for value in [
+        format!("{padding}close"),
+        format!("close{padding}"),
+        format!("{padding}close{padding}"),
+        format!("keep-alive,{padding}close"),
+      ] {
+        let raw = format!(
+          "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: {value}\r\n\r\n"
+        );
+        let request = Request::from_raw_frame(raw.as_bytes()).expect("request should parse");
+        assert_eq!(Some(value.as_str()), request.header("Connection"));
+        assert!(
+          !request.closes_connection(),
+          "HTTP/1.1 non-OWS-padded close must not close: {value:?}"
+        );
+      }
+    }
+
+    const VT: char = '\u{000b}';
+    const FF: char = '\u{000c}';
+    for padding in [VT, FF] {
+      for value in [format!("{padding}close"), format!("close{padding}")] {
+        let request = Request {
+          method: "GET".to_string(),
+          target: "/".to_string(),
+          version: "HTTP/1.1".to_string(),
+          headers: vec![("Connection".to_string(), value.clone())],
+          trailers: Vec::new(),
+          body: Vec::new(),
+          content_length: None,
+          extended_connect_protocol: None,
+        };
+        assert_eq!(Some(value.as_str()), request.header("Connection"));
+        assert!(
+          !request.closes_connection(),
+          "HTTP/1.1 VT/FF-padded close must not close: {value:?}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn http10_closes_connection_accepts_ows_keep_alive_and_rejects_non_ows_padding() {
+    let plain = Request::from_raw_frame(b"GET / HTTP/1.0\r\nHost: example.test\r\n\r\n")
+      .expect("HTTP/1.0 request should parse");
+    assert!(plain.closes_connection());
+
+    for value in [
+      "keep-alive",
+      "upgrade, keep-alive",
+      "upgrade,\tkeep-alive",
+      "upgrade , KEEP-ALIVE",
+    ] {
+      let raw = format!(
+        "GET / HTTP/1.0\r\nHost: example.test\r\nConnection: {value}\r\n\r\n"
+      );
+      let request = Request::from_raw_frame(raw.as_bytes()).expect("request should parse");
+      assert_eq!(Some(value), request.header("Connection"));
+      assert!(
+        !request.closes_connection(),
+        "HTTP/1.0 OWS-padded keep-alive should persist: {value:?}"
+      );
+    }
+
+    for value in [
+      " keep-alive",
+      "keep-alive ",
+      "\tKEEP-ALIVE\t",
+      " \tkeep-alive\t ",
+    ] {
+      let request = Request {
+        method: "GET".to_string(),
+        target: "/".to_string(),
+        version: "HTTP/1.0".to_string(),
+        headers: vec![("Connection".to_string(), value.to_string())],
+        trailers: Vec::new(),
+        body: Vec::new(),
+        content_length: None,
+        extended_connect_protocol: None,
+      };
+      assert_eq!(Some(value), request.header("Connection"));
+      assert!(
+        !request.closes_connection(),
+        "HTTP/1.0 edge OWS-padded keep-alive should persist: {value:?}"
+      );
+    }
+
+    const NBSP: char = '\u{00a0}';
+    const OBS_TEXT: char = '\u{00ff}';
+    for padding in [NBSP, OBS_TEXT] {
+      for value in [
+        format!("{padding}keep-alive"),
+        format!("keep-alive{padding}"),
+        format!("{padding}keep-alive{padding}"),
+        format!("upgrade,{padding}keep-alive"),
+      ] {
+        let raw = format!(
+          "GET / HTTP/1.0\r\nHost: example.test\r\nConnection: {value}\r\n\r\n"
+        );
+        let request = Request::from_raw_frame(raw.as_bytes()).expect("request should parse");
+        assert_eq!(Some(value.as_str()), request.header("Connection"));
+        assert!(
+          request.closes_connection(),
+          "HTTP/1.0 non-OWS-padded keep-alive must still close: {value:?}"
+        );
+      }
+    }
+
+    const VT: char = '\u{000b}';
+    const FF: char = '\u{000c}';
+    for padding in [VT, FF] {
+      for value in [
+        format!("{padding}keep-alive"),
+        format!("keep-alive{padding}"),
+      ] {
+        let request = Request {
+          method: "GET".to_string(),
+          target: "/".to_string(),
+          version: "HTTP/1.0".to_string(),
+          headers: vec![("Connection".to_string(), value.clone())],
+          trailers: Vec::new(),
+          body: Vec::new(),
+          content_length: None,
+          extended_connect_protocol: None,
+        };
+        assert_eq!(Some(value.as_str()), request.header("Connection"));
+        assert!(
+          request.closes_connection(),
+          "HTTP/1.0 VT/FF-padded keep-alive must still close: {value:?}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn response_closes_connection_accepts_ows_and_rejects_non_ows_padding() {
+    for value in [
+      "close",
+      " close",
+      "close ",
+      "\tclose\t",
+      " keep-alive ,\tClose\t",
+    ] {
+      let response = HttpResponse::ok([]).header("Connection", value);
+      assert!(
+        response.closes_connection(),
+        "response OWS-padded close should close: {value:?}"
+      );
+    }
+
+    const VT: char = '\u{000b}';
+    const FF: char = '\u{000c}';
+    const NBSP: char = '\u{00a0}';
+    const OBS_TEXT: char = '\u{00ff}';
+    for padding in [VT, FF, NBSP, OBS_TEXT] {
+      for value in [
+        format!("{padding}close"),
+        format!("close{padding}"),
+        format!("{padding}close{padding}"),
+      ] {
+        let response = HttpResponse::ok([]).header("Connection", &value);
+        assert!(
+          !response.closes_connection(),
+          "response non-OWS-padded close must not close: {value:?}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn handoff_upgrade_gating_accepts_ows_and_rejects_non_ows_connection_padding() {
+    let handoff = HttpHandoff::upgrade(HttpResponse::new(101, "Switching Protocols"), |_| Ok(()));
+
+    for value in [
+      "upgrade",
+      " upgrade",
+      "upgrade ",
+      "\tupgrade\t",
+      " keep-alive ,\tUpgrade\t",
+    ] {
+      let request = Request {
+        method: "GET".to_string(),
+        target: "/".to_string(),
+        version: "HTTP/1.1".to_string(),
+        headers: vec![
+          ("Connection".to_string(), value.to_string()),
+          ("Upgrade".to_string(), "websocket".to_string()),
+        ],
+        trailers: Vec::new(),
+        body: Vec::new(),
+        content_length: None,
+        extended_connect_protocol: None,
+      };
+      assert!(
+        handoff.valid_for(&request),
+        "OWS-padded Connection upgrade should gate: {value:?}"
+      );
+    }
+
+    const VT: char = '\u{000b}';
+    const FF: char = '\u{000c}';
+    const NBSP: char = '\u{00a0}';
+    const OBS_TEXT: char = '\u{00ff}';
+    for padding in [VT, FF, NBSP, OBS_TEXT] {
+      for value in [
+        format!("{padding}upgrade"),
+        format!("upgrade{padding}"),
+        format!("{padding}upgrade{padding}"),
+      ] {
+        let request = Request {
+          method: "GET".to_string(),
+          target: "/".to_string(),
+          version: "HTTP/1.1".to_string(),
+          headers: vec![
+            ("Connection".to_string(), value.clone()),
+            ("Upgrade".to_string(), "websocket".to_string()),
+          ],
+          trailers: Vec::new(),
+          body: Vec::new(),
+          content_length: None,
+          extended_connect_protocol: None,
+        };
+        assert!(
+          !handoff.valid_for(&request),
+          "non-OWS Connection upgrade padding must not gate: {value:?}"
+        );
+      }
+    }
+  }
+
+  #[test]
   fn partial_second_request_returns_unexpected_eof_after_first_frame() {
     let raw = concat!(
       "GET /first HTTP/1.1\r\n",
