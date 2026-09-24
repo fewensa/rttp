@@ -929,9 +929,9 @@ impl<'a> AsyncConnection<'a> {
     {
       let _ = url;
       let _ = stream;
-      return Err(error::no_request_features(
+      Err(error::no_request_features(
         "Not have any tls features, Can't request a https url",
-      ));
+      ))
     }
   }
 
@@ -963,9 +963,9 @@ impl<'a> AsyncConnection<'a> {
       let _ = url;
       let _ = stream;
       let _ = body;
-      return Err(error::no_request_features(
+      Err(error::no_request_features(
         "Not have any tls features, Can't request a https url",
-      ));
+      ))
     }
   }
 
