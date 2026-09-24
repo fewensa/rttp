@@ -615,8 +615,8 @@ pub(crate) fn response_body_kind(
 
     if name.eq_ignore_ascii_case("Content-Length") {
       has_content_length = true;
-      for token in value.split(',') {
-        let Ok(length) = token.trim().parse::<usize>() else {
+      for token in value.split(',').map(trim_http_ows) {
+        let Ok(length) = token.parse::<usize>() else {
           invalid_content_length = true;
           continue;
         };
@@ -1061,6 +1061,53 @@ mod tests {
         .expect("HTTP OWS should be accepted around the transfer coding");
 
       assert_eq!(ResponseBodyKind::Chunked, kind);
+    }
+  }
+
+  #[test]
+  fn test_content_length_accepts_http_ows_padding() {
+    for content_length in [
+      "2", " 2", "2 ", " 2 ", "\t2", "2\t", "\t2\t", " \t2\t ", "2,2", "2, 2", "2,\t2", " 2 , 2 ",
+      "2,\t 2\t",
+    ] {
+      let raw = format!("HTTP/1.1 200 OK\r\nContent-Length:{content_length}\r\n\r\n");
+      let kind = super::response_body_kind(raw.as_bytes(), false)
+        .expect("HTTP OWS should be accepted around Content-Length members");
+
+      assert_eq!(ResponseBodyKind::ContentLength(2), kind);
+    }
+
+    for raw in [
+      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n",
+      "HTTP/1.1 200 OK\r\nContent-Length:  2  \r\nContent-Length:\t2\t\r\n\r\n",
+      "HTTP/1.1 200 OK\r\nContent-Length: 2, 2\r\nContent-Length:\t2\r\n\r\n",
+    ] {
+      let kind = super::response_body_kind(raw.as_bytes(), false)
+        .expect("matching repeated Content-Length fields should accept HTTP OWS");
+
+      assert_eq!(ResponseBodyKind::ContentLength(2), kind);
+    }
+  }
+
+  #[test]
+  fn test_content_length_rejects_non_http_ows_padding() {
+    for content_length in [
+      "\u{000b}2\u{000b}",
+      "\u{000c}2\u{000c}",
+      "\u{00a0}2\u{00a0}",
+      "\u{2003}2\u{2003}",
+      "\u{3000}2\u{3000}",
+      "2\u{000b}, \u{000b}2",
+      "2\u{00a0}, \u{00a0}2",
+    ] {
+      let raw = format!("HTTP/1.1 200 OK\r\nContent-Length:{content_length}\r\n\r\n");
+      let error = super::response_body_kind(raw.as_bytes(), false)
+        .expect_err("non-OWS whitespace should not pad Content-Length");
+
+      assert!(
+        error.to_string().contains("Invalid Content-Length header"),
+        "unexpected error for {content_length:?}: {error}"
+      );
     }
   }
 
