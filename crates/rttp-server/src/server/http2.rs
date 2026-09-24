@@ -2457,11 +2457,7 @@ mod tests {
     h2c_upgrade_request_with_tokens("Upgrade, HTTP2-Settings", "h2c", settings)
   }
 
-  fn h2c_upgrade_request_with_tokens(
-    connection: &str,
-    upgrade: &str,
-    settings: &str,
-  ) -> Request {
+  fn h2c_upgrade_request_with_tokens(connection: &str, upgrade: &str, settings: &str) -> Request {
     Request {
       method: "GET".to_string(),
       target: "/".to_string(),
@@ -2597,7 +2593,9 @@ mod tests {
         format!("Upgrade, HTTP2-Settings{padding}"),
       ] {
         let error = h2c_upgrade_settings(&h2c_upgrade_request_with_tokens(
-          &connection, "h2c", &settings,
+          &connection,
+          "h2c",
+          &settings,
         ))
         .expect_err("non-OWS Connection token padding must invalidate h2c upgrade");
         assert_eq!(
