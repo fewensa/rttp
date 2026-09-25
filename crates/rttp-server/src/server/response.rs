@@ -4456,7 +4456,7 @@ impl HttpResponse {
         && header
           .value
           .split(',')
-          .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
+          .any(|token| trim_http_ows(token).eq_ignore_ascii_case("chunked"))
     })
   }
 
@@ -4521,6 +4521,10 @@ impl HttpResponse {
       .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
       .any(|header| connection_header_has_token(Some(header.value.as_str()), "close"))
   }
+}
+
+fn trim_http_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
