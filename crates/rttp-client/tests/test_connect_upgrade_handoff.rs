@@ -63,7 +63,7 @@ fn upgrade_returns_socket_after_101_and_does_not_parse_upgraded_bytes() {
     assert!(request.contains("\r\nUpgrade: websocket\r\n"));
     stream
       .write_all(
-        b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\nserver-bytes",
+        b"HTTP/1.1 101 Switching Protocols\r\nConnection: \tkeep-alive, \tUpGrAdE\t\r\nUpgrade: \tWebSocket \t\r\n\r\nserver-bytes",
       )
       .expect("write upgrade response and bytes");
     let mut client_bytes = [0u8; 12];
@@ -82,7 +82,7 @@ fn upgrade_returns_socket_after_101_and_does_not_parse_upgraded_bytes() {
 
   assert_eq!(101, upgraded.response().code());
   assert_eq!(
-    Some(&"websocket".to_string()),
+    Some(&"WebSocket".to_string()),
     upgraded.response().header_value("Upgrade")
   );
   let mut server_bytes = [0u8; 12];
@@ -97,6 +97,40 @@ fn upgrade_returns_socket_after_101_and_does_not_parse_upgraded_bytes() {
     .expect("write upgraded client bytes");
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn upgrade_rejects_non_ows_connection_upgrade_padding() {
+  for padding in ["\u{00a0}", "\u{2003}"] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind upgrade server");
+    let addr = listener.local_addr().expect("upgrade server addr");
+    let response = format!(
+      "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade{padding}\r\nUpgrade: websocket\r\n\r\n"
+    );
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept upgrade");
+      let _request = read_request_head(&mut stream);
+      stream
+        .write_all(response.as_bytes())
+        .expect("write invalid upgrade response");
+    });
+
+    let err = HttpClient::new()
+      .url(format!("http://{}/chat", addr))
+      .header(("Connection", "Upgrade"))
+      .header(("Upgrade", "websocket"))
+      .upgrade()
+      .expect_err("non-OWS Connection: Upgrade padding must fail");
+
+    assert!(
+      err
+        .to_string()
+        .contains("Upgrade failed with HTTP status 101"),
+      "unexpected error for padding {padding:?}: {err}"
+    );
+    handle.join().expect("server thread");
+  }
 }
 
 #[test]

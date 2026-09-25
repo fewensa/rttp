@@ -518,13 +518,15 @@ fn response_header_has_upgrade(header: &[u8]) -> error::Result<bool> {
     let Some((name, value)) = line.split_once(':') else {
       continue;
     };
-    if name.eq_ignore_ascii_case("Upgrade") && !value.trim().is_empty() {
+    if name.eq_ignore_ascii_case("Upgrade") && !value.trim_matches([' ', '\t']).is_empty() {
       has_upgrade_header = true;
     }
     if name.eq_ignore_ascii_case("Connection")
-      && value
-        .split(',')
-        .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+      && value.split(',').any(|token| {
+        token
+          .trim_matches([' ', '\t'])
+          .eq_ignore_ascii_case("upgrade")
+      })
     {
       connection_has_upgrade = true;
     }
