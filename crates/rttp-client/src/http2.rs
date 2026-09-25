@@ -702,13 +702,17 @@ fn response_header_has_h2c_upgrade(header: &[u8]) -> error::Result<bool> {
     let Some((name, value)) = line.split_once(':') else {
       continue;
     };
-    if name.eq_ignore_ascii_case("upgrade") && value.trim().eq_ignore_ascii_case("h2c") {
+    if name.eq_ignore_ascii_case("upgrade")
+      && value.trim_matches([' ', '\t']).eq_ignore_ascii_case("h2c")
+    {
       has_upgrade_h2c = true;
     }
     if name.eq_ignore_ascii_case("connection")
-      && value
-        .split(',')
-        .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+      && value.split(',').any(|token| {
+        token
+          .trim_matches([' ', '\t'])
+          .eq_ignore_ascii_case("upgrade")
+      })
     {
       connection_has_upgrade = true;
     }

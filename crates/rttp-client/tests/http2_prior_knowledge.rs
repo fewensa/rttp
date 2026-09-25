@@ -269,7 +269,9 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
     );
 
     stream
-      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+      .write_all(
+        b"HTTP/1.1 101 Switching Protocols\r\nConnection: \tUpGrAdE \t, \tkeep-alive\t\r\nUpgrade: \th2C\t\r\n\r\n",
+      )
       .expect("write upgrade response");
 
     complete_h2_handshake_without_request(&mut stream);
@@ -613,6 +615,51 @@ fn http2_upgrade_rejects_101_without_h2c_negotiation() {
   assert!(err.to_string().contains("h2c upgrade response"));
 
   handle.join().expect("h2c upgrade peer thread");
+}
+
+#[test]
+fn http2_upgrade_rejects_non_ows_response_padding_before_h2_handshake() {
+  for (connection, upgrade) in [
+    ("\u{00a0}Upgrade", "h2c"),
+    ("Upgrade\u{00a0}", "h2c"),
+    ("Upgrade", "\u{00a0}h2c"),
+    ("Upgrade", "h2c\u{2003}"),
+  ] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+    let addr = listener.local_addr().expect("h2c upgrade peer addr");
+    let response = format!(
+      "HTTP/1.1 101 Switching Protocols\r\nConnection: {connection}\r\nUpgrade: {upgrade}\r\n\r\n"
+    );
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+      let _request = read_http1_request_head(&mut stream);
+      stream
+        .write_all(response.as_bytes())
+        .expect("write invalid upgrade response");
+      stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set h2c handshake read timeout");
+
+      let mut preface = [0; 24];
+      assert!(
+        stream.read_exact(&mut preface).is_err(),
+        "invalid response padding must not start the HTTP/2 handshake"
+      );
+    });
+
+    let err = HttpClient::new()
+      .get()
+      .url(format!("http://{}/upgrade", addr))
+      .emit_http2_upgrade()
+      .expect_err("non-OWS response padding must fail h2c");
+
+    assert!(
+      err.to_string().contains("h2c upgrade response"),
+      "unexpected error for ({connection:?}, {upgrade:?}): {err}"
+    );
+    handle.join().expect("h2c upgrade peer thread");
+  }
 }
 
 #[test]
