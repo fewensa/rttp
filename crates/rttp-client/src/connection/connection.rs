@@ -286,6 +286,9 @@ impl<'a> Connection<'a> {
   }
 
   pub fn resolve_redirect_url(&self, url: &Url, location: &str) -> error::Result<RedirectUrl> {
+    if has_non_ows_padding(location) {
+      return Err(error::bad_url(url.clone(), "Bad redirect location"));
+    }
     let mut redirect = url
       .join(location)
       .map_err(|_| error::bad_url(url.clone(), "Bad redirect location"))?;
@@ -326,6 +329,17 @@ impl<'a> Connection<'a> {
   }
 }
 
+fn has_non_ows_padding(value: &str) -> bool {
+  value
+    .chars()
+    .next()
+    .is_some_and(|character| character.is_whitespace() && !matches!(character, ' ' | '\t'))
+    || value
+      .chars()
+      .next_back()
+      .is_some_and(|character| character.is_whitespace() && !matches!(character, ' ' | '\t'))
+}
+
 fn absolute_url(url: &Url) -> String {
   let mut absolute = url.clone();
   absolute.set_fragment(None);
@@ -340,7 +354,7 @@ fn raw_redirect_path_and_query(
   let (base_path, base_query) = base_request_target
     .and_then(raw_request_target_path_and_query)
     .unwrap_or_else(|| (base.path(), base.query()));
-  let location = location.trim();
+  let location = location.trim_matches([' ', '\t']);
   let location = location
     .split_once('#')
     .map_or(location, |(before, _)| before);
