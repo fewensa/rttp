@@ -1582,7 +1582,8 @@ mod tests {
     async_read_response_head_with_existing_informational, async_streaming_response_after_header,
   };
   use crate::connection::connection_reader::{
-    parse_informational_response, MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
+    parse_informational_response, response_status_code, MAX_INFORMATIONAL_RESPONSES,
+    MAX_RESPONSE_HEAD_BYTES,
   };
 
   #[test]
@@ -1646,6 +1647,69 @@ mod tests {
           error.to_string().contains("Proxy server response error"),
           "unexpected error for {header:?}: {error}"
         );
+      }
+    });
+  }
+
+  #[test]
+  fn async_response_head_rejects_non_sp_status_line_separators() {
+    block_on(async {
+      for status_line in [
+        "HTTP/1.1\t200 OK",
+        "HTTP/1.1\u{000b}200 OK",
+        "HTTP/1.1\u{000c}200 OK",
+        "HTTP/1.1\u{00a0}200 OK",
+        "HTTP/1.1\u{2003}200 OK",
+      ] {
+        let raw = format!("{status_line}\r\nContent-Length: 2\r\n\r\nOK");
+        let mut stream = AllowStdIo::new(Cursor::new(raw.into_bytes()));
+        let error = async_read_response_head(&mut stream)
+          .await
+          .expect_err("non-SP response status-line separator should be rejected");
+        assert!(
+          error.to_string().contains("Invalid response status line")
+            || error.to_string().contains("Response status"),
+          "unexpected error for {status_line:?}: {error}"
+        );
+      }
+    });
+  }
+
+  #[test]
+  fn async_response_head_accepts_ascii_sp_and_preserves_obs_text_headers() {
+    block_on(async {
+      let raw = b"HTTP/1.1 200 OK\r\nX-Obs: \xff\r\nContent-Length: 2\r\n\r\nOK".to_vec();
+      let mut stream = AllowStdIo::new(Cursor::new(raw));
+      let head = async_read_response_head(&mut stream)
+        .await
+        .expect("ASCII SP status line should parse");
+      assert_eq!(200, response_status_code(&head).unwrap());
+      let headers = crate::connection::connection_reader::response_headers(&head).unwrap();
+      assert_eq!(
+        Some("\u{00ff}"),
+        headers
+          .iter()
+          .find(|header| header.name().eq_ignore_ascii_case("X-Obs"))
+          .map(|header| header.value().as_str())
+      );
+    });
+  }
+
+  #[test]
+  fn async_informational_response_rejects_non_sp_status_line_separators() {
+    block_on(async {
+      for status_line in [
+        "HTTP/1.1\t103 Early Hints",
+        "HTTP/1.1\u{00a0}103 Early Hints",
+        "HTTP/1.1\u{2003}103 Early Hints",
+      ] {
+        let raw = format!(
+          "{status_line}\r\nX-Interim: ignored\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+        );
+        let mut stream = AllowStdIo::new(Cursor::new(raw.into_bytes()));
+        async_read_response_head(&mut stream)
+          .await
+          .expect_err("non-SP informational status-line separator should be rejected");
       }
     });
   }

@@ -2292,6 +2292,41 @@ fn test_parse_response_preserves_non_ows_obs_text_header_value_edges() {
 }
 
 #[test]
+fn test_parse_response_accepts_ascii_sp_status_line_separators() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("ASCII SP status-line separators should parse");
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.reason());
+
+  let with_htab_reason = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\tnote\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("HTAB inside reason-phrase should remain legal");
+  assert_eq!("OK\tnote", with_htab_reason.reason());
+}
+
+#[test]
+fn test_parse_response_rejects_non_sp_status_line_separators() {
+  for status_line in [
+    "HTTP/1.1\t200 OK",
+    "HTTP/1.1\u{000b}200 OK",
+    "HTTP/1.1\u{000c}200 OK",
+    "HTTP/1.1\u{00a0}200 OK",
+    "HTTP/1.1\u{2003}200 OK",
+    "HTTP/1.1200 OK",
+    "HTTP/1.1-200 OK",
+  ] {
+    let raw = format!("{status_line}\r\nContent-Length: 0\r\n\r\n");
+    Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect_err("non-SP response status-line separator should be rejected");
+  }
+}
+
+#[test]
 fn test_parse_reporting_endpoints_response_metadata() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",

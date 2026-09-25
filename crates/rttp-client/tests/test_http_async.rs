@@ -679,6 +679,50 @@ fn test_async_client_preserves_informational_response_metadata() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_client_rejects_non_sp_response_status_line_separators() {
+  for status_line in [
+    "HTTP/1.1\t200 OK",
+    "HTTP/1.1\u{00a0}200 OK",
+    "HTTP/1.1\u{2003}200 OK",
+  ] {
+    let response = format!("{status_line}\r\nContent-Length: 2\r\n\r\nOK");
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+    block_on(async {
+      client()
+        .get()
+        .url(format!("http://{addr}/"))
+        .rasync()
+        .await
+        .expect_err("non-SP response status-line separator should fail");
+    });
+  }
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_client_rejects_non_sp_informational_status_line_separators() {
+  let response = concat!(
+    "HTTP/1.1\t103 Early Hints\r\n",
+    "X-Interim: ignored\r\n",
+    "\r\n",
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+  block_on(async {
+    client()
+      .get()
+      .url(format!("http://{addr}/"))
+      .rasync()
+      .await
+      .expect_err("non-SP informational status-line separator should fail");
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_chunked() {
   let (addr, _handle) = support::spawn_chunked_server();
   block_on(async {

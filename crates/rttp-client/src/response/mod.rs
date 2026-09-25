@@ -101,7 +101,7 @@ pub use rttp_protocol::cross_origin_resource_policy::{
 };
 pub use rttp_protocol::nel::{Nel, NelParseError, NelUnknownMember};
 
-mod raw_response;
+pub(crate) mod raw_response;
 mod response;
 
 pub use rttp_protocol::accept_signature::{

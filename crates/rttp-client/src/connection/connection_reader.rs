@@ -3,8 +3,8 @@ use std::io::Read;
 
 use rttp_protocol::content_length::HttpContentLength;
 use rttp_protocol::http1::{
-  is_header_value_byte, is_reason_phrase_byte, is_token as is_http_token,
-  parse_chunk_size as parse_protocol_chunk_size, ChunkSizeError,
+  is_header_value_byte, is_token as is_http_token, parse_chunk_size as parse_protocol_chunk_size,
+  ChunkSizeError,
 };
 use url::Url;
 
@@ -560,17 +560,15 @@ pub(crate) fn append_informational_response(
 }
 
 pub(crate) fn response_status_code(header: &[u8]) -> error::Result<u16> {
-  let header = String::from_utf8_lossy(header);
   let status_line = header
-    .lines()
+    .split(|byte| *byte == b'\n')
     .next()
+    .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+    .filter(|line| !line.is_empty())
     .ok_or_else(|| error::bad_response("Response not have status line"))?;
-  status_line
-    .split_whitespace()
-    .nth(1)
-    .ok_or_else(|| error::bad_response("Response status not have code"))?
-    .parse::<u16>()
-    .map_err(|_| error::bad_response("Response status code is not a number"))
+  let (_, status_code, _) =
+    crate::response::raw_response::parse_http1_response_status_line(status_line)?;
+  Ok(status_code)
 }
 
 pub(crate) fn response_body_kind(
@@ -751,28 +749,8 @@ fn decode_http1_text(bytes: &[u8]) -> String {
 }
 
 fn parse_response_status_line(status_line: &[u8]) -> error::Result<(&str, u16, &str)> {
-  if status_line.contains(&b'\r') || status_line.contains(&b'\n') {
-    return Err(error::bad_response("Invalid informational response"));
-  }
-  let status_line = std::str::from_utf8(status_line).map_err(error::response)?;
-  let mut parts = status_line.splitn(3, ' ');
-  let version = parts
-    .next()
-    .ok_or_else(|| error::bad_response("Invalid informational response"))?;
-  let code = parts
-    .next()
-    .ok_or_else(|| error::bad_response("Invalid informational response"))?;
-  if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
-    return Err(error::bad_response("Invalid informational response"));
-  }
-  let reason = parts.next().unwrap_or_default();
-  if !reason.bytes().all(is_reason_phrase_byte) {
-    return Err(error::bad_response("Invalid informational response"));
-  }
-  let status_code = code
-    .parse::<u16>()
-    .map_err(|_| error::bad_response("Invalid informational response"))?;
-  Ok((version, status_code, reason))
+  crate::response::raw_response::parse_http1_response_status_line(status_line)
+    .map_err(|_| error::bad_response("Invalid informational response"))
 }
 
 fn validate_response_header_lines(header: &[u8]) -> error::Result<()> {
@@ -1464,10 +1442,107 @@ mod tests {
         .expect_err("malformed informational status line should be rejected");
 
       assert!(
-        error.to_string().contains("Invalid informational response"),
+        error.to_string().contains("Invalid informational response")
+          || error.to_string().contains("Invalid response status line"),
         "unexpected error for {status_line:?}: {error}"
       );
     }
+  }
+
+  #[test]
+  fn response_status_code_accepts_ascii_sp_separators() {
+    assert_eq!(
+      200,
+      super::response_status_code(b"HTTP/1.1 200 OK\r\n\r\n").unwrap()
+    );
+    assert_eq!(
+      204,
+      super::response_status_code(b"HTTP/1.1 204\r\n\r\n").unwrap()
+    );
+    assert_eq!(
+      200,
+      super::response_status_code(b"HTTP/1.1 200 OK\twith HTAB\r\n\r\n").unwrap()
+    );
+  }
+
+  #[test]
+  fn response_status_code_rejects_non_sp_separators() {
+    for header in [
+      "HTTP/1.1\t200 OK\r\n\r\n",
+      "HTTP/1.1\u{000b}200 OK\r\n\r\n",
+      "HTTP/1.1\u{000c}200 OK\r\n\r\n",
+      "HTTP/1.1\u{00a0}200 OK\r\n\r\n",
+      "HTTP/1.1\u{2003}200 OK\r\n\r\n",
+      "HTTP/1.1200 OK\r\n\r\n",
+      "HTTP/1.1-200 OK\r\n\r\n",
+      "HTTP/1.1/200 OK\r\n\r\n",
+      "HTTP/1.1 200\u{000b}OK\r\n\r\n",
+      "HTTP/1.1 200\u{000c}OK\r\n\r\n",
+      "HTTP/1.1 200\u{00a0}OK\r\n\r\n",
+      "HTTP/1.1 200\u{2003}OK\r\n\r\n",
+    ] {
+      super::response_status_code(header.as_bytes())
+        .expect_err("non-SP response status-line separator should be rejected");
+    }
+  }
+
+  #[test]
+  fn final_response_rejects_non_sp_status_line_separators() {
+    for status_line in [
+      "HTTP/1.1\t200 OK",
+      "HTTP/1.1\u{000b}200 OK",
+      "HTTP/1.1\u{000c}200 OK",
+      "HTTP/1.1\u{00a0}200 OK",
+      "HTTP/1.1\u{2003}200 OK",
+    ] {
+      let raw = format!("{status_line}\r\nContent-Length: 2\r\n\r\nOK");
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      reader
+        .response()
+        .expect_err("non-SP final status-line separator should be rejected");
+    }
+  }
+
+  #[test]
+  fn informational_response_rejects_non_sp_status_line_separators() {
+    for status_line in [
+      "HTTP/1.1\t103 Early Hints",
+      "HTTP/1.1\u{000b}103 Early Hints",
+      "HTTP/1.1\u{000c}103 Early Hints",
+      "HTTP/1.1\u{00a0}103 Early Hints",
+      "HTTP/1.1\u{2003}103 Early Hints",
+    ] {
+      let raw = format!(
+        "{status_line}\r\nX-Interim: ignored\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+      );
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      reader
+        .response()
+        .expect_err("non-SP informational status-line separator should be rejected");
+    }
+  }
+
+  #[test]
+  fn final_response_preserves_obs_text_headers_with_sp_status_line() {
+    let raw = b"HTTP/1.1 200 OK\r\nX-Obs: \xff\r\nContent-Length: 2\r\n\r\nOK";
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_slice());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let response = reader.response().unwrap();
+
+    assert_eq!(200, response.code());
+    assert_eq!(
+      Some(&"\u{00ff}".to_string()),
+      response.header_value("X-Obs")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
   }
 
   #[test]

@@ -7,7 +7,7 @@ use crate::response::ResponseBody;
 use crate::types::{is_sensitive_debug_header, Cookie, Header, RoUrl, ToUrl};
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::cookie::HttpSetCookie;
-use rttp_protocol::http1::{is_header_value_byte, is_token};
+use rttp_protocol::http1::{is_header_value_byte, is_reason_phrase_byte, is_token};
 use url::Url;
 
 static CR: u8 = b'\r';
@@ -225,24 +225,10 @@ impl Parser {
     let status_line = lines
       .next()
       .ok_or(error::bad_response("Response not have status line"))?;
-    let status_line = std::str::from_utf8(status_line).map_err(error::response)?;
-    let status_parts: Vec<&str> = status_line.splitn(3, " ").collect();
-
-    let http_version = status_parts
-      .first()
-      .ok_or(error::bad_response("Response status not have http version"))?;
-    let status_code: u32 = match status_parts
-      .get(1)
-      .ok_or(error::bad_response("Response status not have code"))?
-      .parse()
-    {
-      Ok(c) => c,
-      Err(_) => return Err(error::bad_response("Response status code is not a number")),
-    };
-    let reason = status_parts.get(2).unwrap_or(&"");
+    let (http_version, status_code, reason) = parse_http1_response_status_line(status_line)?;
     response
       .version(http_version)
-      .code(status_code)
+      .code(u32::from(status_code))
       .reason(reason);
 
     let mut headers = Vec::new();
@@ -357,6 +343,42 @@ fn has_only_crlf_line_breaks(bytes: &[u8]) -> bool {
 
 fn decode_http1_text(bytes: &[u8]) -> String {
   bytes.iter().map(|byte| *byte as char).collect()
+}
+
+/// Parse an HTTP/1 status line using only ASCII SP as field separators.
+///
+/// HTAB, VT, FF, Unicode whitespace, and other non-SP whitespace are rejected
+/// when used in place of the required SP separators (including when they appear
+/// inside the HTTP-version token). Reason-phrase bytes still follow
+/// `is_reason_phrase_byte`, which permits HTAB, SP, VCHAR, and obs-text.
+pub(crate) fn parse_http1_response_status_line(
+  status_line: &[u8],
+) -> error::Result<(&str, u16, &str)> {
+  if status_line.contains(&b'\r') || status_line.contains(&b'\n') {
+    return Err(error::bad_response("Invalid response status line"));
+  }
+  let status_line = std::str::from_utf8(status_line).map_err(error::response)?;
+  let mut parts = status_line.splitn(3, ' ');
+  let version = parts
+    .next()
+    .ok_or_else(|| error::bad_response("Response status not have http version"))?;
+  if version.is_empty() || version.chars().any(char::is_whitespace) {
+    return Err(error::bad_response("Invalid response status line"));
+  }
+  let code = parts
+    .next()
+    .ok_or_else(|| error::bad_response("Response status not have code"))?;
+  if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(error::bad_response("Response status code is not a number"));
+  }
+  let reason = parts.next().unwrap_or_default();
+  if !reason.bytes().all(is_reason_phrase_byte) {
+    return Err(error::bad_response("Invalid response status line"));
+  }
+  let status_code = code
+    .parse::<u16>()
+    .map_err(|_| error::bad_response("Response status code is not a number"))?;
+  Ok((version, status_code, reason))
 }
 
 fn response_status_has_no_body(status_code: u32) -> bool {

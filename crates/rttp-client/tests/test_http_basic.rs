@@ -1745,6 +1745,58 @@ fn test_sync_client_skips_103_early_hints_before_final_response() {
 }
 
 #[test]
+fn test_sync_client_rejects_non_sp_response_status_line_separators() {
+  for status_line in [
+    "HTTP/1.1\t200 OK",
+    "HTTP/1.1\u{000b}200 OK",
+    "HTTP/1.1\u{000c}200 OK",
+    "HTTP/1.1\u{00a0}200 OK",
+    "HTTP/1.1\u{2003}200 OK",
+  ] {
+    let response = format!("{status_line}\r\nContent-Length: 2\r\n\r\nOK");
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+    client()
+      .get()
+      .url(format!("http://{addr}/"))
+      .emit()
+      .expect_err("non-SP response status-line separator should fail");
+  }
+}
+
+#[test]
+fn test_sync_client_rejects_non_sp_informational_status_line_separators() {
+  let response = concat!(
+    "HTTP/1.1\t103 Early Hints\r\n",
+    "X-Interim: ignored\r\n",
+    "\r\n",
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+  client()
+    .get()
+    .url(format!("http://{addr}/"))
+    .emit()
+    .expect_err("non-SP informational status-line separator should fail");
+}
+
+#[test]
+fn test_sync_client_accepts_sp_status_line_and_obs_text_headers() {
+  let response = b"HTTP/1.1 200 OK\r\nX-Obs: \xff\r\nContent-Length: 2\r\n\r\nOK";
+  let (addr, _handle) = support::spawn_chunked_response_server(response.to_vec());
+  let parsed = client()
+    .get()
+    .url(format!("http://{addr}/"))
+    .emit()
+    .expect("ASCII SP status line should succeed");
+  assert_eq!(200, parsed.code());
+  assert_eq!(Some(&"\u{00ff}".to_string()), parsed.header_value("X-Obs"));
+  assert_eq!("OK", parsed.body().string().unwrap());
+}
+
+#[test]
 fn test_sync_client_returns_101_switching_protocols_as_terminal_response() {
   let (addr, _handle) = support::spawn_switching_protocols_server();
   let response = client()
