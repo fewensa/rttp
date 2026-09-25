@@ -2585,8 +2585,8 @@ fn request_facade_parses_sec_ch_ua_arch_metadata_without_negotiation() {
     .expect("Sec-CH-UA-Arch should parse")
     .expect("Sec-CH-UA-Arch should be present");
   assert_eq!("x86", arch.value());
-  assert_eq!(r#"\"x86\""#, arch.header_value());
-  assert_eq!(Some(r#"\"x86\""#), request.header("Sec-CH-UA-Arch"));
+  assert_eq!(r#""x86""#, arch.header_value());
+  assert_eq!(Some(r#""x86""#), request.header("Sec-CH-UA-Arch"));
 
   let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request without Sec-CH-UA-Arch should parse");
@@ -2610,7 +2610,7 @@ fn request_facade_parses_sec_ch_ua_arch_metadata_without_negotiation() {
   )
   .expect("duplicate Sec-CH-UA-Arch request should retain raw metadata");
   assert!(duplicate.sec_ch_ua_arch().is_err());
-  assert_eq!(Some(r#"\"x86\""#), duplicate.header("Sec-CH-UA-Arch"));
+  assert_eq!(Some(r#""x86""#), duplicate.header("Sec-CH-UA-Arch"));
 }
 
 #[test]
