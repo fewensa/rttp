@@ -58,7 +58,8 @@ use rttp_server::server::{
   HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaFormFactors,
   HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersion, HttpSecChUaFullVersionList,
   HttpSecChUaFullVersionListParseError, HttpSecChUaFullVersionParseError, HttpSecChUaModel,
-  HttpSecChUaModelParseError, HttpSecChUaParseError, HttpSecChUaPlatformVersion,
+  HttpSecChUaModelParseError, HttpSecChUaParseError, HttpSecChUaPlatform,
+  HttpSecChUaPlatformParseError, HttpSecChUaPlatformVersion,
   HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64, HttpSecChUaWow64ParseError,
   HttpSecChViewportHeight, HttpSecChViewportHeightParseError, HttpSecChViewportWidth,
   HttpSecChViewportWidthParseError, HttpSecGpc, HttpSecGpcParseError,
@@ -2571,6 +2572,62 @@ fn request_facade_parses_sec_ch_ua_form_factors_metadata_without_negotiation() {
     .sec_ch_ua_form_factors()
     .expect_err("malformed Sec-CH-UA-Form-Factors should fail");
   assert_eq!(Some("Desktop"), malformed.header("Sec-CH-UA-Form-Factors"));
+}
+
+#[test]
+fn request_facade_parses_sec_ch_ua_platform_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform: \t\"Windows\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Platform request should parse");
+  let platform: HttpSecChUaPlatform = request
+    .sec_ch_ua_platform()
+    .expect("Sec-CH-UA-Platform should parse")
+    .expect("Sec-CH-UA-Platform should be present");
+  assert_eq!("Windows", platform.value());
+  assert_eq!(r#""Windows""#, platform.header_value());
+  assert_eq!(Some(r#""Windows""#), request.header("Sec-CH-UA-Platform"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-Platform should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_ua_platform()
+      .expect("missing Sec-CH-UA-Platform should be valid")
+  );
+
+  for value in ["Windows", r#""Windows"#, r#"Linux""#, r#""Windows";v=1"#] {
+    let raw =
+      format!("GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform: {value}\r\n\r\n");
+    let malformed = HttpRequest::parse(raw.as_bytes())
+      .expect("malformed Sec-CH-UA-Platform should remain available");
+    let _: HttpSecChUaPlatformParseError = malformed
+      .sec_ch_ua_platform()
+      .expect_err("malformed Sec-CH-UA-Platform should fail");
+    assert_eq!(Some(value), malformed.header("Sec-CH-UA-Platform"));
+  }
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform: \"Windows\"\r\nsec-ch-ua-platform: \"Linux\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Platform request should retain raw metadata");
+  assert!(duplicate.sec_ch_ua_platform().is_err());
+  assert_eq!(Some(r#""Windows""#), duplicate.header("Sec-CH-UA-Platform"));
+
+  let non_ascii = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Platform: \x80\r\n\r\n",
+  )
+  .expect("non-ASCII Sec-CH-UA-Platform should remain available");
+  assert!(non_ascii.sec_ch_ua_platform().is_err());
+  assert_eq!(Some("\u{0080}"), non_ascii.header("Sec-CH-UA-Platform"));
+
+  let _: HttpSecChUaPlatformParseError =
+    HttpSecChUaPlatform::parse("Windows").expect_err("unquoted platform should fail");
+  assert!(
+    HttpSecChUaPlatform::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err(),
+    "oversized value should fail"
+  );
 }
 
 #[test]
