@@ -18,8 +18,8 @@ use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::cdn_loop::{CdnLoop, CdnLoopParseError};
 use rttp_protocol::client_hints::{
-  AcceptCh, CriticalCh, Dpr, SecChDpr, SecChUaBitness, SecChUaFormFactors, SecChUaFullVersion,
-  SecChUaModel, SecChUaPlatformVersion, SecChUaWow64,
+  AcceptCh, CriticalCh, Dpr, SecChDpr, SecChUaArch, SecChUaBitness, SecChUaFormFactors,
+  SecChUaFullVersion, SecChUaModel, SecChUaPlatformVersion, SecChUaWow64,
 };
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_disposition::ContentDisposition;
@@ -163,6 +163,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let upgrade_insecure_requests =
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
+  let sec_ch_ua_arch = SecChUaArch::parse("\"x86\"").expect("Sec-CH-UA-Arch should parse");
   let sec_ch_ua_bitness = SecChUaBitness::parse("\"64\"").expect("Sec-CH-UA-Bitness should parse");
   let sec_ch_ua_model = SecChUaModel::parse("\"Pixel 8\"").expect("Sec-CH-UA-Model should parse");
   let sec_ch_ua_platform_version =
@@ -416,6 +417,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     "en-US, fr-CA; q=0.8, *; q=0"
   );
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
+  assert_eq!(sec_ch_ua_arch.value(), "x86");
+  assert_eq!(sec_ch_ua_arch.header_value(), r#""x86""#);
   assert_eq!(sec_ch_ua_bitness.value(), "64");
   assert_eq!(sec_ch_ua_bitness.header_value(), r#""64""#);
   assert_eq!(sec_ch_ua_model.value(), "Pixel 8");
