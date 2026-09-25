@@ -98,7 +98,7 @@ pub fn split_status_line(status_line: &str) -> Option<(&str, &str, &str)> {
     Some((code, reason)) => (code, reason),
     None => (rest, ""),
   };
-  if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+  if !code.bytes().all(|byte| byte.is_ascii_digit()) {
     return None;
   }
 
