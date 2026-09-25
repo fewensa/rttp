@@ -2149,7 +2149,7 @@ impl HttpIfNoneMatch {
         ));
       }
       for member in value.split(',') {
-        let member = member.trim();
+        let member = member.trim_matches([' ', '\t']);
         if member == "*" {
           if wildcard || !tags.is_empty() {
             return Err(HttpIfNoneMatchParseError::new(
