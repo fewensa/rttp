@@ -639,10 +639,8 @@ fn proxy_connect_status_line(header: &[u8]) -> error::Result<String> {
     .next()
     .and_then(|line| line.strip_suffix(b"\r"))
     .ok_or_else(|| error::bad_proxy("Proxy server response error."))?;
-  Ok(
-    String::from_utf8(status_line.to_vec())
-      .map_err(|_| error::bad_proxy("parse proxy server response error."))?,
-  )
+  String::from_utf8(status_line.to_vec())
+    .map_err(|_| error::bad_proxy("parse proxy server response error."))
 }
 
 fn proxy_connect_status_code_from_line(status_line: &str) -> error::Result<u16> {
