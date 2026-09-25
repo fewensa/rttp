@@ -74,6 +74,30 @@ fn conditional_entity_tag_lists_parse_values_and_serialize_canonically() {
 }
 
 #[test]
+fn if_none_match_rejects_non_ows_padding_but_accepts_ows() {
+  for value in [" * ", "\t*\t"] {
+    let parsed = IfNoneMatch::parse(value).expect("OWS-padded wildcard should parse");
+    assert!(parsed.is_wildcard());
+  }
+  let parsed =
+    IfNoneMatch::parse(" \"one\" , W/\"two\"\t").expect("OWS-padded entity tags should parse");
+  assert_eq!(2, parsed.entity_tags().len());
+
+  for value in [
+    "\u{00a0}*",
+    "*\u{2003}",
+    "\u{3000}\"one\"",
+    "W/\"one\"\u{00a0}",
+    "\"one\"\u{2003}, \"two\"",
+  ] {
+    assert!(
+      IfNoneMatch::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
 fn conditional_entity_tags_reject_malformed_ambiguous_and_unbounded_inputs() {
   for value in ["abc", "W/abc", "w/\"abc\"", "\"abc", "\"a b\"", "\"a\n\""] {
     assert!(
