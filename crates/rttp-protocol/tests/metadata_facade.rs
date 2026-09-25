@@ -19,7 +19,8 @@ use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::cdn_loop::{CdnLoop, CdnLoopParseError};
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, Dpr, SecChDpr, SecChUaArch, SecChUaBitness, SecChUaFormFactors,
-  SecChUaFullVersion, SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64,
+  SecChUaFullVersion, SecChUaMobile, SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion,
+  SecChUaWow64,
 };
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_disposition::ContentDisposition;
@@ -172,6 +173,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     SecChUaPlatformVersion::parse("\"14.0.0\"").expect("Sec-CH-UA-Platform-Version should parse");
   let sec_ch_ua_full_version =
     SecChUaFullVersion::parse("\"120.0.6099.110\"").expect("Sec-CH-UA-Full-Version should parse");
+  let sec_ch_ua_mobile = SecChUaMobile::parse("\t?1\t").expect("Sec-CH-UA-Mobile should parse");
   let sec_ch_ua_wow64 = SecChUaWow64::parse("\t?1\t").expect("Sec-CH-UA-WoW64 should parse");
   let sec_ch_ua_form_factors = SecChUaFormFactors::parse("\t\"Desktop\", \"Tablet\" \t")
     .expect("Sec-CH-UA-Form-Factors should parse");
@@ -431,6 +433,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_ch_ua_platform_version.header_value(), r#""14.0.0""#);
   assert_eq!(sec_ch_ua_full_version.value(), "120.0.6099.110");
   assert_eq!(sec_ch_ua_full_version.header_value(), r#""120.0.6099.110""#);
+  assert!(sec_ch_ua_mobile.is_mobile());
+  assert_eq!(sec_ch_ua_mobile.header_value(), "?1");
   assert!(sec_ch_ua_wow64.is_wow64());
   assert_eq!(sec_ch_ua_wow64.header_value(), "?1");
   assert_eq!(sec_ch_ua_form_factors.items(), ["Desktop", "Tablet"]);
