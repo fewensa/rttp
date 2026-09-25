@@ -55,28 +55,28 @@ use rttp_server::server::{
   HttpResponseExpires, HttpResponseLastModified, HttpResponseLastModifiedParseError,
   HttpRetryAfter, HttpRetryAfterParseError, HttpRtt, HttpRttParseError, HttpSameSite, HttpSaveData,
   HttpSaveDataParseError, HttpScheduleTag, HttpSecChDpr, HttpSecChDprParseError, HttpSecChUa,
-  HttpSecChUaBitness, HttpSecChUaBitnessParseError, HttpSecChUaFormFactors,
-  HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersion, HttpSecChUaFullVersionList,
-  HttpSecChUaFullVersionListParseError, HttpSecChUaFullVersionParseError, HttpSecChUaModel,
-  HttpSecChUaModelParseError, HttpSecChUaParseError, HttpSecChUaPlatform,
-  HttpSecChUaPlatformParseError, HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError,
-  HttpSecChUaWow64, HttpSecChUaWow64ParseError, HttpSecChViewportHeight,
-  HttpSecChViewportHeightParseError, HttpSecChViewportWidth, HttpSecChViewportWidthParseError,
-  HttpSecGpc, HttpSecGpcParseError, HttpSecRequiredDocumentPolicy,
-  HttpSecRequiredDocumentPolicyDirective, HttpSecRequiredDocumentPolicyParseError,
-  HttpSecRequiredDocumentPolicyValue, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
-  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
-  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpSecChUaArch, HttpSecChUaArchParseError, HttpSecChUaBitness, HttpSecChUaBitnessParseError,
+  HttpSecChUaFormFactors, HttpSecChUaFormFactorsParseError, HttpSecChUaFullVersion,
+  HttpSecChUaFullVersionList, HttpSecChUaFullVersionListParseError,
+  HttpSecChUaFullVersionParseError, HttpSecChUaModel, HttpSecChUaModelParseError,
+  HttpSecChUaParseError, HttpSecChUaPlatform, HttpSecChUaPlatformParseError,
+  HttpSecChUaPlatformVersion, HttpSecChUaPlatformVersionParseError, HttpSecChUaWow64,
+  HttpSecChUaWow64ParseError, HttpSecChViewportHeight, HttpSecChViewportHeightParseError,
+  HttpSecChViewportWidth, HttpSecChViewportWidthParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecRequiredDocumentPolicy, HttpSecRequiredDocumentPolicyDirective,
+  HttpSecRequiredDocumentPolicyParseError, HttpSecRequiredDocumentPolicyValue,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
+  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
+  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpUserAgent, HttpUserAgentMember,
   HttpUserAgentParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaMember,
   HttpViaParseError, HttpViewportWidth, HttpViewportWidthParseError, HttpWantContentDigest,
@@ -2572,6 +2572,45 @@ fn request_facade_parses_sec_ch_ua_form_factors_metadata_without_negotiation() {
     .sec_ch_ua_form_factors()
     .expect_err("malformed Sec-CH-UA-Form-Factors should fail");
   assert_eq!(Some("Desktop"), malformed.header("Sec-CH-UA-Form-Factors"));
+}
+
+#[test]
+fn request_facade_parses_sec_ch_ua_arch_metadata_without_negotiation() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Arch: \t\"x86\" \t\r\n\r\n",
+  )
+  .expect("Sec-CH-UA-Arch request should parse");
+  let arch: HttpSecChUaArch = request
+    .sec_ch_ua_arch()
+    .expect("Sec-CH-UA-Arch should parse")
+    .expect("Sec-CH-UA-Arch should be present");
+  assert_eq!("x86", arch.value());
+  assert_eq!(r#""x86""#, arch.header_value());
+  assert_eq!(Some(r#""x86""#), request.header("Sec-CH-UA-Arch"));
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request without Sec-CH-UA-Arch should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_ch_ua_arch()
+      .expect("missing Sec-CH-UA-Arch should be valid")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Arch: x86\r\n\r\n")
+      .expect("malformed Sec-CH-UA-Arch should remain available");
+  let _: HttpSecChUaArchParseError = malformed
+    .sec_ch_ua_arch()
+    .expect_err("malformed Sec-CH-UA-Arch should fail");
+  assert_eq!(Some("x86"), malformed.header("Sec-CH-UA-Arch"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Arch: \"x86\"\r\nsec-ch-ua-arch: \"arm64\"\r\n\r\n",
+  )
+  .expect("duplicate Sec-CH-UA-Arch request should retain raw metadata");
+  assert!(duplicate.sec_ch_ua_arch().is_err());
+  assert_eq!(Some(r#""x86""#), duplicate.header("Sec-CH-UA-Arch"));
 }
 
 #[test]
