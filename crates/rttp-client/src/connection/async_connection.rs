@@ -1615,6 +1615,18 @@ mod tests {
   }
 
   #[test]
+  fn async_read_proxy_connect_response_allows_obs_text_in_interim_headers() {
+    block_on(async {
+      let raw = b"HTTP/1.1 103 Early Hints\r\nX-Proxy: \xff\r\n\r\nHTTP/1.1 200 Connection Established\r\n\r\n";
+      let mut stream = AllowStdIo::new(Cursor::new(raw.to_vec()));
+
+      async_read_proxy_connect_response(&mut stream)
+        .await
+        .unwrap();
+    });
+  }
+
+  #[test]
   fn async_read_proxy_connect_response_rejects_non_sp_status_line() {
     block_on(async {
       for header in [
