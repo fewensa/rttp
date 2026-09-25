@@ -3330,6 +3330,29 @@ fn test_async_https_proxy_with_auth_uses_connect_tunnel() {
 
 #[test]
 #[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_proxy_rejects_non_sp_connect_status_line() {
+  let response = "HTTP/1.1\t200 Connection Established\r\n\r\n";
+  let (proxy_addr, proxy_handle) = support::spawn_proxy_connect_response_server(response);
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url("https://localhost/")
+      .proxy(Proxy::http("127.0.0.1", u32::from(proxy_addr.port())))
+      .rasync()
+      .await
+      .expect_err("HTAB proxy CONNECT status-line separator should fail");
+
+    assert!(error.to_string().contains("Proxy server response error"));
+  });
+  assert!(
+    proxy_handle.join().expect("proxy response server"),
+    "async client should close the rejected proxy connection"
+  );
+}
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
 fn test_async_https_proxy_rejects_excessive_informational_connect_responses() {
   let response = "HTTP/1.1 103 Early Hints\r\n\r\n".repeat(17);
   let (proxy_addr, proxy_handle) = support::spawn_proxy_connect_response_server(response);
