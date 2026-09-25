@@ -2454,7 +2454,10 @@ pub(crate) struct EntityTagValidatorList {
 
 impl EntityTagValidatorList {
   pub(crate) fn parse(value: &str) -> Option<Self> {
-    let value = value.trim();
+    let value = trim_entity_tag_validator_ows(value);
+    if entity_tag_validator_has_non_ows_edges(value) {
+      return None;
+    }
     if value == "*" {
       return Some(Self {
         validators: vec![EntityTagValidator::Any],
@@ -2463,9 +2466,11 @@ impl EntityTagValidatorList {
 
     let mut validators = Vec::new();
     for part in value.split(',') {
-      validators.push(EntityTagValidator::Tag(
-        HttpEntityTag::parse(part.trim()).ok()?,
-      ));
+      let part = trim_entity_tag_validator_ows(part);
+      if entity_tag_validator_has_non_ows_edges(part) {
+        return None;
+      }
+      validators.push(EntityTagValidator::Tag(HttpEntityTag::parse(part).ok()?));
     }
     if validators.is_empty() {
       None
@@ -2473,6 +2478,21 @@ impl EntityTagValidatorList {
       Some(Self { validators })
     }
   }
+}
+
+fn trim_entity_tag_validator_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
+}
+
+fn entity_tag_validator_has_non_ows_edges(value: &str) -> bool {
+  value
+    .chars()
+    .next()
+    .is_some_and(|character| character.is_control() || character.is_whitespace())
+    || value
+      .chars()
+      .next_back()
+      .is_some_and(|character| character.is_control() || character.is_whitespace())
 }
 
 impl IntoIterator for EntityTagValidatorList {
