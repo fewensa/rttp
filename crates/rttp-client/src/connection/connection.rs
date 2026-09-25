@@ -5,6 +5,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use rttp_protocol::authorization::ProxyAuthorization;
+use rttp_protocol::upgrade::Upgrade;
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 
@@ -511,15 +512,15 @@ pub(crate) fn request_expects_continue(header: &str, body: Option<&RequestBody>)
 
 fn response_header_has_upgrade(header: &[u8]) -> error::Result<bool> {
   let header = String::from_utf8(header.to_vec()).map_err(error::response)?;
-  let mut has_upgrade_header = false;
+  let mut upgrade_values = Vec::new();
   let mut connection_has_upgrade = false;
 
   for line in header.lines().skip(1) {
     let Some((name, value)) = line.split_once(':') else {
       continue;
     };
-    if name.eq_ignore_ascii_case("Upgrade") && !value.trim_matches([' ', '\t']).is_empty() {
-      has_upgrade_header = true;
+    if name.eq_ignore_ascii_case("Upgrade") {
+      upgrade_values.push(value);
     }
     if name.eq_ignore_ascii_case("Connection")
       && value.split(',').any(|token| {
@@ -532,7 +533,7 @@ fn response_header_has_upgrade(header: &[u8]) -> error::Result<bool> {
     }
   }
 
-  Ok(has_upgrade_header && connection_has_upgrade)
+  Ok(Upgrade::parse_values(upgrade_values).is_ok() && connection_has_upgrade)
 }
 
 pub(crate) enum ExpectContinueResult {

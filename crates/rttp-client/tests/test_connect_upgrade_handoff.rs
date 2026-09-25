@@ -134,6 +134,45 @@ fn upgrade_rejects_non_ows_connection_upgrade_padding() {
 }
 
 #[test]
+fn upgrade_rejects_non_ows_upgrade_padding() {
+  for upgrade in [
+    "\u{00a0}websocket",
+    "websocket\u{00a0}",
+    "\u{2003}websocket",
+    "websocket\u{2003}",
+  ] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind upgrade server");
+    let addr = listener.local_addr().expect("upgrade server addr");
+    let response = format!(
+      "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: {upgrade}\r\n\r\n"
+    );
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept upgrade");
+      let _request = read_request_head(&mut stream);
+      stream
+        .write_all(response.as_bytes())
+        .expect("write invalid upgrade response");
+    });
+
+    let err = HttpClient::new()
+      .url(format!("http://{}/chat", addr))
+      .header(("Connection", "Upgrade"))
+      .header(("Upgrade", "websocket"))
+      .upgrade()
+      .expect_err("non-OWS Upgrade padding must fail");
+
+    assert!(
+      err
+        .to_string()
+        .contains("Upgrade failed with HTTP status 101"),
+      "unexpected error for Upgrade value {upgrade:?}: {err}"
+    );
+    handle.join().expect("upgrade server thread");
+  }
+}
+
+#[test]
 fn upgrade_skips_interim_responses_before_101() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind upgrade server");
   let addr = listener.local_addr().expect("upgrade server addr");
