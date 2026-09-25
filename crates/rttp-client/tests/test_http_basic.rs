@@ -2466,23 +2466,42 @@ fn test_auto_redirect_trims_only_http_ows_from_location() {
 
 #[test]
 fn test_auto_redirect_does_not_trim_non_ows_location_padding() {
-  for padding in [
-    "\u{00a0}/final\u{00a0}",
-    "\u{2003}/final\u{2003}",
-    "\u{000b}/final\u{000b}",
-    "\u{000c}/final\u{000c}",
-  ] {
-    let padding = padding.to_string();
-    let (addr, _handle) = support::spawn_redirect_target_echo_server(move |_| padding);
-    let response = client()
+  let mut response = b"HTTP/1.1 302 Found\r\nLocation: ".to_vec();
+  response.push(0xa0);
+  response.extend_from_slice(b"/final");
+  response.push(0xa0);
+  response.extend_from_slice(b"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  let error = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/redirect/from?old=1", addr))
+    .emit()
+    .expect_err("raw NBSP Location padding should be rejected");
+
+  assert!(
+    error.to_string().contains("Bad redirect location"),
+    "unexpected error for raw NBSP Location padding: {error}"
+  );
+
+  for utf8_padding in ["\u{00a0}/final\u{00a0}", "\u{2003}/final\u{2003}"] {
+    let mut response = b"HTTP/1.1 302 Found\r\nLocation: ".to_vec();
+    response.extend_from_slice(utf8_padding.as_bytes());
+    response.extend_from_slice(b"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+    let error = client()
       .config(Config::builder().auto_redirect(true))
       .get()
       .url(format!("http://{}/redirect/from?old=1", addr))
-      .emit();
+      .emit()
+      .expect_err("UTF-8 non-OWS Location padding should be rejected after Latin-1 decode");
 
-    if let Ok(response) = response {
-      assert_ne!("/final", response.body().string().unwrap());
-    }
+    assert!(
+      error.to_string().contains("Bad redirect location"),
+      "unexpected error for UTF-8 padding {utf8_padding:?}: {error}"
+    );
   }
 }
 
