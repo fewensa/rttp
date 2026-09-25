@@ -2434,6 +2434,62 @@ fn test_async_auto_redirect_resolves_absolute_location() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_auto_redirect_trims_only_http_ows_from_location() {
+  block_on(async {
+    for padding in [" /final ", "\t/final\t", " \t/final\t "] {
+      assert_async_redirect_resolves_to_target(|_| padding.to_string(), "/final").await;
+    }
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_does_not_trim_non_ows_location_padding() {
+  block_on(async {
+    let mut response = b"HTTP/1.1 302 Found\r\nLocation: ".to_vec();
+    response.push(0xa0);
+    response.extend_from_slice(b"/final");
+    response.push(0xa0);
+    response.extend_from_slice(b"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+    let error = client()
+      .config(Config::builder().auto_redirect(true))
+      .get()
+      .url(format!("http://{}/redirect/from?old=1", addr))
+      .rasync()
+      .await
+      .expect_err("raw NBSP Location padding should be rejected");
+
+    assert!(
+      error.to_string().contains("Bad redirect location"),
+      "unexpected error for raw NBSP Location padding: {error}"
+    );
+
+    for utf8_padding in ["\u{00a0}/final\u{00a0}", "\u{2003}/final\u{2003}"] {
+      let mut response = b"HTTP/1.1 302 Found\r\nLocation: ".to_vec();
+      response.extend_from_slice(utf8_padding.as_bytes());
+      response.extend_from_slice(b"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+      let error = client()
+        .config(Config::builder().auto_redirect(true))
+        .get()
+        .url(format!("http://{}/redirect/from?old=1", addr))
+        .rasync()
+        .await
+        .expect_err("UTF-8 non-OWS Location padding should be rejected after Latin-1 decode");
+
+      assert!(
+        error.to_string().contains("Bad redirect location"),
+        "unexpected error for UTF-8 padding {utf8_padding:?}: {error}"
+      );
+    }
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_auto_redirect_resolves_absolute_path_location() {
   block_on(async {
     assert_async_redirect_resolves_to_target(|_| "/absolute-path".to_string(), "/absolute-path")

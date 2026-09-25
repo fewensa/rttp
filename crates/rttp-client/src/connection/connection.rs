@@ -286,6 +286,9 @@ impl<'a> Connection<'a> {
   }
 
   pub fn resolve_redirect_url(&self, url: &Url, location: &str) -> error::Result<RedirectUrl> {
+    if has_non_ows_padding(location) {
+      return Err(error::bad_url(url.clone(), "Bad redirect location"));
+    }
     let mut redirect = url
       .join(location)
       .map_err(|_| error::bad_url(url.clone(), "Bad redirect location"))?;
@@ -326,6 +329,34 @@ impl<'a> Connection<'a> {
   }
 }
 
+fn has_non_ows_padding(value: &str) -> bool {
+  if has_non_ows_unicode_edge(value) {
+    return true;
+  }
+  // HTTP/1 header values are Latin-1-decoded wire bytes. UTF-8 whitespace
+  // padding therefore arrives as mojibake; recover the bytes and inspect the
+  // UTF-8 edges so redirect resolution still rejects that padding.
+  if value.chars().any(|character| character as u32 > 0xff) {
+    return false;
+  }
+  let bytes: Vec<u8> = value.chars().map(|character| character as u8).collect();
+  match std::str::from_utf8(&bytes) {
+    Ok(utf8) if utf8 != value => has_non_ows_unicode_edge(utf8),
+    _ => false,
+  }
+}
+
+fn has_non_ows_unicode_edge(value: &str) -> bool {
+  value
+    .chars()
+    .next()
+    .is_some_and(|character| character.is_whitespace() && !matches!(character, ' ' | '\t'))
+    || value
+      .chars()
+      .next_back()
+      .is_some_and(|character| character.is_whitespace() && !matches!(character, ' ' | '\t'))
+}
+
 fn absolute_url(url: &Url) -> String {
   let mut absolute = url.clone();
   absolute.set_fragment(None);
@@ -340,7 +371,7 @@ fn raw_redirect_path_and_query(
   let (base_path, base_query) = base_request_target
     .and_then(raw_request_target_path_and_query)
     .unwrap_or_else(|| (base.path(), base.query()));
-  let location = location.trim();
+  let location = location.trim_matches([' ', '\t']);
   let location = location
     .split_once('#')
     .map_or(location, |(before, _)| before);
@@ -1300,11 +1331,14 @@ mod tests {
   use url::Url;
 
   use super::{
-    connect_tcp_stream, parse_proxy_connect_response, prepend_informational_responses,
-    proxy_authorization_value, read_proxy_connect_response,
-    strip_userinfo_for_cross_origin_redirect, write_http_request, MAX_INFORMATIONAL_RESPONSES,
+    connect_tcp_stream, has_non_ows_padding, parse_proxy_connect_response,
+    prepend_informational_responses, proxy_authorization_value, read_proxy_connect_response,
+    strip_userinfo_for_cross_origin_redirect, write_http_request, Connection,
+    MAX_INFORMATIONAL_RESPONSES,
   };
   use crate::connection::connection_reader::MAX_RESPONSE_HEAD_BYTES;
+  use crate::request::{RawRequest, Request};
+  use crate::types::ToRoUrl;
 
   struct PartialWriter {
     max_chunk: usize,
@@ -1507,6 +1541,77 @@ mod tests {
     assert!(error
       .to_string()
       .contains("Too many informational responses"));
+  }
+
+  #[test]
+  fn has_non_ows_padding_rejects_unicode_and_http1_latin1_decoded_utf8() {
+    for value in [
+      "\u{00a0}/final\u{00a0}",
+      "\u{2003}/final\u{2003}",
+      "\u{000b}/final\u{000b}",
+      "\u{000c}/final\u{000c}",
+    ] {
+      assert!(
+        has_non_ows_padding(value),
+        "true Unicode non-OWS padding should be detected: {value:?}"
+      );
+    }
+
+    let latin1_nbsp: String = b"\xc2\xa0/final\xc2\xa0"
+      .iter()
+      .map(|&byte| byte as char)
+      .collect();
+    assert!(
+      has_non_ows_padding(&latin1_nbsp),
+      "Latin-1-decoded UTF-8 NBSP padding should be detected"
+    );
+
+    let latin1_em: String = b"\xe2\x80\x83/final\xe2\x80\x83"
+      .iter()
+      .map(|&byte| byte as char)
+      .collect();
+    assert!(
+      has_non_ows_padding(&latin1_em),
+      "Latin-1-decoded UTF-8 em space padding should be detected"
+    );
+
+    for value in [" /final ", "\t/final\t", " \t/final\t ", "/final"] {
+      assert!(
+        !has_non_ows_padding(value),
+        "HTTP OWS or bare target should be accepted: {value:?}"
+      );
+    }
+  }
+
+  #[test]
+  fn resolve_redirect_url_rejects_non_ows_unicode_padding() {
+    let mut request = Request::new();
+    request.url_set("http://example.test/redirect/from".to_rourl());
+    let raw = RawRequest::block_new(&mut request).expect("raw request should build");
+    let conn = Connection::new(raw);
+    let url = Url::parse("http://example.test/redirect/from").unwrap();
+
+    for location in [
+      "\u{00a0}/final\u{00a0}",
+      "\u{2003}/final\u{2003}",
+      "\u{000b}/final\u{000b}",
+      "\u{000c}/final\u{000c}",
+    ] {
+      let error = match conn.resolve_redirect_url(&url, location) {
+        Ok(_) => panic!("non-OWS Unicode Location padding should be rejected: {location:?}"),
+        Err(error) => error,
+      };
+      assert!(
+        error.to_string().contains("Bad redirect location"),
+        "unexpected error for {location:?}: {error}"
+      );
+    }
+
+    let redirect = match conn.resolve_redirect_url(&url, " /final ") {
+      Ok(redirect) => redirect,
+      Err(error) => panic!("HTTP OWS Location padding should resolve: {error}"),
+    };
+    assert_eq!("/final", redirect.request_target);
   }
 
   #[test]
