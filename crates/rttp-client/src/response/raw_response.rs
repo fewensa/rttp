@@ -7,7 +7,7 @@ use crate::response::ResponseBody;
 use crate::types::{is_sensitive_debug_header, Cookie, Header, RoUrl, ToUrl};
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::cookie::HttpSetCookie;
-use rttp_protocol::http1::{is_header_value_byte, is_token};
+use rttp_protocol::http1::{is_header_value_byte, is_token, split_status_line};
 use url::Url;
 
 static CR: u8 = b'\r';
@@ -226,20 +226,11 @@ impl Parser {
       .next()
       .ok_or(error::bad_response("Response not have status line"))?;
     let status_line = std::str::from_utf8(status_line).map_err(error::response)?;
-    let status_parts: Vec<&str> = status_line.splitn(3, " ").collect();
-
-    let http_version = status_parts
-      .first()
-      .ok_or(error::bad_response("Response status not have http version"))?;
-    let status_code: u32 = match status_parts
-      .get(1)
-      .ok_or(error::bad_response("Response status not have code"))?
+    let (http_version, status_code, reason) = split_status_line(status_line)
+      .ok_or_else(|| error::bad_response("Response status not have code"))?;
+    let status_code: u32 = status_code
       .parse()
-    {
-      Ok(c) => c,
-      Err(_) => return Err(error::bad_response("Response status code is not a number")),
-    };
-    let reason = status_parts.get(2).unwrap_or(&"");
+      .map_err(|_| error::bad_response("Response status code is not a number"))?;
     response
       .version(http_version)
       .code(status_code)

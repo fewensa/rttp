@@ -4,7 +4,7 @@ use std::io::Read;
 use rttp_protocol::content_length::HttpContentLength;
 use rttp_protocol::http1::{
   is_header_value_byte, is_reason_phrase_byte, is_token as is_http_token,
-  parse_chunk_size as parse_protocol_chunk_size, ChunkSizeError,
+  parse_chunk_size as parse_protocol_chunk_size, split_status_line, ChunkSizeError,
 };
 use url::Url;
 
@@ -565,10 +565,9 @@ pub(crate) fn response_status_code(header: &[u8]) -> error::Result<u16> {
     .lines()
     .next()
     .ok_or_else(|| error::bad_response("Response not have status line"))?;
-  status_line
-    .split_whitespace()
-    .nth(1)
-    .ok_or_else(|| error::bad_response("Response status not have code"))?
+  let (_version, code, _reason) = split_status_line(status_line)
+    .ok_or_else(|| error::bad_response("Response status not have code"))?;
+  code
     .parse::<u16>()
     .map_err(|_| error::bad_response("Response status code is not a number"))
 }
@@ -755,17 +754,8 @@ fn parse_response_status_line(status_line: &[u8]) -> error::Result<(&str, u16, &
     return Err(error::bad_response("Invalid informational response"));
   }
   let status_line = std::str::from_utf8(status_line).map_err(error::response)?;
-  let mut parts = status_line.splitn(3, ' ');
-  let version = parts
-    .next()
+  let (version, code, reason) = split_status_line(status_line)
     .ok_or_else(|| error::bad_response("Invalid informational response"))?;
-  let code = parts
-    .next()
-    .ok_or_else(|| error::bad_response("Invalid informational response"))?;
-  if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
-    return Err(error::bad_response("Invalid informational response"));
-  }
-  let reason = parts.next().unwrap_or_default();
   if !reason.bytes().all(is_reason_phrase_byte) {
     return Err(error::bad_response("Invalid informational response"));
   }
@@ -935,7 +925,8 @@ mod tests {
   use std::io::{self, Cursor, Read};
 
   use super::{
-    ConnectionReader, ResponseBodyKind, MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
+    response_headers, response_status_code, ConnectionReader, ResponseBodyKind,
+    MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
   };
 
   #[test]
@@ -1446,6 +1437,79 @@ mod tests {
   }
 
   #[test]
+  fn response_status_code_accepts_ascii_sp_separator() {
+    assert_eq!(
+      response_status_code(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").unwrap(),
+      200
+    );
+    assert_eq!(response_status_code(b"HTTP/1.1 204\r\n\r\n").unwrap(), 204);
+  }
+
+  #[test]
+  fn response_status_code_rejects_non_sp_whitespace() {
+    for header in [
+      "HTTP/1.1\t200 OK\r\n\r\n",
+      "HTTP/1.1\u{000b}200 OK\r\n\r\n",
+      "HTTP/1.1\u{000c}200 OK\r\n\r\n",
+      "HTTP/1.1\u{00a0}200 OK\r\n\r\n",
+      "HTTP/1.1\u{2003}200 OK\r\n\r\n",
+      "HTTP/1.1200 OK\r\n\r\n",
+      "HTTP/1.1-200 OK\r\n\r\n",
+      "HTTP/1.1/200 OK\r\n\r\n",
+      "HTTP/1.1 200 Connection\tEstablished\r\n\r\n",
+      "HTTP/1.1 200 Connection\u{00a0}Established\r\n\r\n",
+      "HTTP/1.1 200 Connection\u{2003}Established\r\n\r\n",
+    ] {
+      let error = response_status_code(header.as_bytes())
+        .expect_err("non-SP origin status-line separator should be rejected");
+      assert!(
+        error.to_string().contains("Response status not have code")
+          || error
+            .to_string()
+            .contains("Response status code is not a number"),
+        "unexpected error for {header:?}: {error}"
+      );
+    }
+  }
+
+  #[test]
+  fn response_headers_preserve_obs_text_with_sp_status_line() {
+    let headers = response_headers(b"HTTP/1.1 200 OK\r\nX-Trial: \xff\r\n\r\n")
+      .expect("SP status line with obs-text header should parse");
+    assert_eq!(1, headers.len());
+    assert_eq!("X-Trial", headers[0].name());
+    assert_eq!("\u{00ff}", headers[0].value());
+  }
+
+  #[test]
+  fn origin_response_rejects_non_sp_status_line_before_body() {
+    for status_line in [
+      "HTTP/1.1\t200 OK",
+      "HTTP/1.1\u{000b}200 OK",
+      "HTTP/1.1\u{000c}200 OK",
+      "HTTP/1.1\u{00a0}200 OK",
+      "HTTP/1.1\u{2003}200 OK",
+      "HTTP/1.1200 OK",
+    ] {
+      let raw = format!("{status_line}\r\nContent-Length: 2\r\n\r\nOK");
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      let error = reader
+        .response()
+        .expect_err("non-SP origin status-line separator should be rejected");
+      assert!(
+        error.to_string().contains("Response status not have code")
+          || error
+            .to_string()
+            .contains("Response status code is not a number"),
+        "unexpected error for {status_line:?}: {error}"
+      );
+    }
+  }
+
+  #[test]
   fn malformed_informational_status_line_is_rejected() {
     for status_line in [
       "HTTP/1.1 103 Early\x7fHints",
@@ -1465,6 +1529,35 @@ mod tests {
 
       assert!(
         error.to_string().contains("Invalid informational response"),
+        "unexpected error for {status_line:?}: {error}"
+      );
+    }
+  }
+
+  #[test]
+  fn informational_response_rejects_non_sp_status_line() {
+    for status_line in [
+      "HTTP/1.1\t103 Early Hints",
+      "HTTP/1.1\u{000b}103 Early Hints",
+      "HTTP/1.1\u{000c}103 Early Hints",
+      "HTTP/1.1\u{00a0}103 Early Hints",
+      "HTTP/1.1\u{2003}103 Early Hints",
+      "HTTP/1.1 103 Early\tHints",
+    ] {
+      let raw = format!(
+        "{status_line}\r\nX-Interim: ignored\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+      );
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      let error = reader
+        .response()
+        .expect_err("non-SP informational status-line separator should be rejected");
+
+      assert!(
+        error.to_string().contains("Response status not have code")
+          || error.to_string().contains("Invalid informational response"),
         "unexpected error for {status_line:?}: {error}"
       );
     }
