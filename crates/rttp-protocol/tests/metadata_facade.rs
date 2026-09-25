@@ -19,7 +19,7 @@ use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::cdn_loop::{CdnLoop, CdnLoopParseError};
 use rttp_protocol::client_hints::{
   AcceptCh, CriticalCh, Dpr, SecChDpr, SecChUaArch, SecChUaBitness, SecChUaFormFactors,
-  SecChUaFullVersion, SecChUaModel, SecChUaPlatformVersion, SecChUaWow64,
+  SecChUaFullVersion, SecChUaModel, SecChUaPlatform, SecChUaPlatformVersion, SecChUaWow64,
 };
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_disposition::ContentDisposition;
@@ -166,6 +166,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let sec_ch_ua_arch = SecChUaArch::parse("\"x86\"").expect("Sec-CH-UA-Arch should parse");
   let sec_ch_ua_bitness = SecChUaBitness::parse("\"64\"").expect("Sec-CH-UA-Bitness should parse");
   let sec_ch_ua_model = SecChUaModel::parse("\"Pixel 8\"").expect("Sec-CH-UA-Model should parse");
+  let sec_ch_ua_platform =
+    SecChUaPlatform::parse("\"Windows\"").expect("Sec-CH-UA-Platform should parse");
   let sec_ch_ua_platform_version =
     SecChUaPlatformVersion::parse("\"14.0.0\"").expect("Sec-CH-UA-Platform-Version should parse");
   let sec_ch_ua_full_version =
@@ -423,6 +425,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_ch_ua_bitness.header_value(), r#""64""#);
   assert_eq!(sec_ch_ua_model.value(), "Pixel 8");
   assert_eq!(sec_ch_ua_model.header_value(), r#""Pixel 8""#);
+  assert_eq!(sec_ch_ua_platform.value(), "Windows");
+  assert_eq!(sec_ch_ua_platform.header_value(), r#""Windows""#);
   assert_eq!(sec_ch_ua_platform_version.value(), "14.0.0");
   assert_eq!(sec_ch_ua_platform_version.header_value(), r#""14.0.0""#);
   assert_eq!(sec_ch_ua_full_version.value(), "120.0.6099.110");
