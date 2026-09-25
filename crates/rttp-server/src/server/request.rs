@@ -2074,7 +2074,18 @@ impl HttpIfRange {
         "If-Range header value is too large",
       ));
     }
-    let value = value.trim();
+    let value = value.trim_matches([' ', '\t']);
+    if value
+      .chars()
+      .next()
+      .is_some_and(|character| character.is_control() || character.is_whitespace())
+      || value
+        .chars()
+        .next_back()
+        .is_some_and(|character| character.is_control() || character.is_whitespace())
+    {
+      return Err(HttpIfRangeParseError::new("invalid If-Range validator"));
+    }
     if let Ok(entity_tag) = HttpEntityTag::parse(value) {
       if entity_tag.is_weak() {
         return Err(HttpIfRangeParseError::new(
