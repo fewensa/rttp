@@ -6219,6 +6219,41 @@ fn serializes_chunked_response_body_when_transfer_encoding_is_chunked() {
 }
 
 #[test]
+fn response_transfer_encoding_chunked_matching_uses_only_ows_padding() {
+  let cases = [
+    ("CHUNKED", true),
+    (" \tChUnKeD\t ", true),
+    ("gzip, \tchunked\t, deflate", true),
+    ("\u{000b}chunked", false),
+    ("chunked\u{000c}", false),
+    ("\u{00a0}chunked", false),
+    ("chunked\u{0085}", false),
+  ];
+
+  for (transfer_encoding, chunked) in cases {
+    let response = HttpResponse::new(200, "OK")
+      .header("Transfer-Encoding", transfer_encoding)
+      .body("hello");
+    let expected_body = if chunked {
+      "5\r\nhello\r\n0\r\n\r\n"
+    } else {
+      "Content-Length: 5\r\n\r\nhello"
+    };
+    let expected = if chunked {
+      format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: {transfer_encoding}\r\n\r\n{expected_body}")
+    } else {
+      format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: {transfer_encoding}\r\n{expected_body}")
+    };
+
+    assert_eq!(
+      expected.as_bytes(),
+      response.to_bytes().as_slice(),
+      "{transfer_encoding:?}"
+    );
+  }
+}
+
+#[test]
 fn serializes_chunked_response_trailers() {
   let response = HttpResponse::new(200, "OK")
     .header("Transfer-Encoding", "chunked")
