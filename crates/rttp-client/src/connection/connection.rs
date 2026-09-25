@@ -634,13 +634,15 @@ pub(crate) fn proxy_connect_response_status_code(header: &[u8]) -> error::Result
 }
 
 fn proxy_connect_status_line(header: &[u8]) -> error::Result<String> {
-  let header = String::from_utf8(header.to_vec())
-    .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
-  header
-    .lines()
+  let status_line = header
+    .split(|byte| *byte == b'\n')
     .next()
-    .map(str::to_owned)
-    .ok_or_else(|| error::bad_proxy("Proxy server response error."))
+    .and_then(|line| line.strip_suffix(b"\r"))
+    .ok_or_else(|| error::bad_proxy("Proxy server response error."))?;
+  Ok(
+    String::from_utf8(status_line.to_vec())
+      .map_err(|_| error::bad_proxy("parse proxy server response error."))?,
+  )
 }
 
 fn proxy_connect_status_code_from_line(status_line: &str) -> error::Result<u16> {
@@ -1448,6 +1450,15 @@ mod tests {
       "\r\n"
     );
     let mut reader = Cursor::new(raw.as_bytes());
+
+    read_proxy_connect_response(&mut reader).unwrap();
+    assert_eq!(raw.len() as u64, reader.position());
+  }
+
+  #[test]
+  fn test_read_proxy_connect_response_allows_obs_text_in_interim_headers() {
+    let raw = b"HTTP/1.1 103 Early Hints\r\nX-Proxy: \xff\r\n\r\nHTTP/1.1 200 Connection Established\r\n\r\n";
+    let mut reader = Cursor::new(raw);
 
     read_proxy_connect_response(&mut reader).unwrap();
     assert_eq!(raw.len() as u64, reader.position());
