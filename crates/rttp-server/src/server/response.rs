@@ -4803,7 +4803,7 @@ impl HttpVary {
       }
 
       for field in value.split(',') {
-        let field = field.trim();
+        let field = field.trim_matches([' ', '\t']);
         if field.is_empty() {
           return Err(HttpVaryParseError::new("invalid Vary field name"));
         }
