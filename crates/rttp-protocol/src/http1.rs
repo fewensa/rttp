@@ -76,6 +76,35 @@ pub fn is_reason_phrase_byte(byte: u8) -> bool {
   is_header_value_byte(byte)
 }
 
+/// Split an HTTP/1 status-line on literal ASCII SP separators only.
+///
+/// Returns `(HTTP-version, status-code, reason-phrase)`. HTAB, vertical tab,
+/// form feed, Unicode whitespace, and other non-SP whitespace anywhere in the
+/// line are rejected. A missing reason-phrase is returned as `""`.
+pub fn split_status_line(status_line: &str) -> Option<(&str, &str, &str)> {
+  if status_line
+    .chars()
+    .any(|character| character != ' ' && character.is_whitespace())
+  {
+    return None;
+  }
+
+  let (version, rest) = status_line.split_once(' ')?;
+  if version.is_empty() || version.chars().any(char::is_whitespace) {
+    return None;
+  }
+
+  let (code, reason) = match rest.split_once(' ') {
+    Some((code, reason)) => (code, reason),
+    None => (rest, ""),
+  };
+  if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+    return None;
+  }
+
+  Some((version, code, reason))
+}
+
 pub fn is_tchar(byte: u8) -> bool {
   is_token_byte(byte)
 }
@@ -164,7 +193,9 @@ fn trim_bws(bytes: &[u8]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
-  use super::{is_header_value_byte, is_token, parse_chunk_size, ChunkSizeError};
+  use super::{
+    is_header_value_byte, is_token, parse_chunk_size, split_status_line, ChunkSizeError,
+  };
 
   #[test]
   fn parses_plain_chunk_sizes_and_valid_extensions() {
@@ -214,5 +245,44 @@ mod tests {
     assert!(!is_token("bad name"));
     assert!(is_header_value_byte(0x80));
     assert!(!is_header_value_byte(b'\n'));
+  }
+
+  #[test]
+  fn split_status_line_accepts_ascii_sp_separators() {
+    assert_eq!(
+      split_status_line("HTTP/1.1 200 OK"),
+      Some(("HTTP/1.1", "200", "OK"))
+    );
+    assert_eq!(
+      split_status_line("HTTP/1.1 200"),
+      Some(("HTTP/1.1", "200", ""))
+    );
+    assert_eq!(
+      split_status_line("HTTP/1.1 103 Early Hints"),
+      Some(("HTTP/1.1", "103", "Early Hints"))
+    );
+  }
+
+  #[test]
+  fn split_status_line_rejects_non_sp_whitespace() {
+    for status_line in [
+      "HTTP/1.1\t200 OK",
+      "HTTP/1.1\u{000b}200 OK",
+      "HTTP/1.1\u{000c}200 OK",
+      "HTTP/1.1\u{00a0}200 OK",
+      "HTTP/1.1\u{2003}200 OK",
+      "HTTP/1.1200 OK",
+      "HTTP/1.1-200 OK",
+      "HTTP/1.1/200 OK",
+      "HTTP/1.1 200 Connection\tEstablished",
+      "HTTP/1.1 200 Connection\u{00a0}Established",
+      "HTTP/1.1 200 Connection\u{2003}Established",
+    ] {
+      assert_eq!(
+        split_status_line(status_line),
+        None,
+        "expected rejection for {status_line:?}"
+      );
+    }
   }
 }

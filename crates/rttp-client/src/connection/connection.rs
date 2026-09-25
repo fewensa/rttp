@@ -644,27 +644,8 @@ fn proxy_connect_status_line(header: &[u8]) -> error::Result<String> {
 }
 
 fn proxy_connect_status_code_from_line(status_line: &str) -> error::Result<u16> {
-  if status_line
-    .chars()
-    .any(|character| character != ' ' && character.is_whitespace())
-  {
-    return Err(error::bad_proxy("Proxy server response error."));
-  }
-
-  let Some((version, rest)) = status_line.split_once(' ') else {
-    return Err(error::bad_proxy("Proxy server response error."));
-  };
-  if version.is_empty() || version.chars().any(char::is_whitespace) {
-    return Err(error::bad_proxy("Proxy server response error."));
-  }
-
-  let code = match rest.split_once(' ') {
-    Some((code, _)) => code,
-    None => rest,
-  };
-  if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
-    return Err(error::bad_proxy("Proxy server response error."));
-  }
+  let (_version, code, _reason) = rttp_protocol::http1::split_status_line(status_line)
+    .ok_or_else(|| error::bad_proxy("Proxy server response error."))?;
 
   code
     .parse::<u16>()
