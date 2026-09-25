@@ -579,18 +579,8 @@ pub(crate) enum StreamingRequestBody<'a> {
 }
 
 pub(crate) fn parse_proxy_connect_response(header: &[u8]) -> error::Result<()> {
-  let header = String::from_utf8(header.to_vec())
-    .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
-  let status_line = header
-    .lines()
-    .next()
-    .ok_or_else(|| error::bad_proxy("Proxy server response error."))?;
-  let status_code = status_line
-    .split_whitespace()
-    .nth(1)
-    .ok_or_else(|| error::bad_proxy("Proxy server response error."))?
-    .parse::<u16>()
-    .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
+  let status_line = proxy_connect_status_line(header)?;
+  let status_code = proxy_connect_status_code_from_line(&status_line)?;
 
   if status_code == 200 {
     Ok(())
@@ -638,14 +628,38 @@ where
   }
 }
 
-fn proxy_connect_response_status_code(header: &[u8]) -> error::Result<u16> {
+pub(crate) fn proxy_connect_response_status_code(header: &[u8]) -> error::Result<u16> {
+  let status_line = proxy_connect_status_line(header)?;
+  proxy_connect_status_code_from_line(&status_line)
+}
+
+fn proxy_connect_status_line(header: &[u8]) -> error::Result<String> {
   let header = String::from_utf8(header.to_vec())
     .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
   header
     .lines()
     .next()
-    .and_then(|line| line.split_whitespace().nth(1))
-    .ok_or_else(|| error::bad_proxy("Proxy server response error."))?
+    .map(str::to_owned)
+    .ok_or_else(|| error::bad_proxy("Proxy server response error."))
+}
+
+fn proxy_connect_status_code_from_line(status_line: &str) -> error::Result<u16> {
+  let Some((version, rest)) = status_line.split_once(' ') else {
+    return Err(error::bad_proxy("Proxy server response error."));
+  };
+  if version.is_empty() || version.chars().any(char::is_whitespace) {
+    return Err(error::bad_proxy("Proxy server response error."));
+  }
+
+  let code = match rest.split_once(' ') {
+    Some((code, _)) => code,
+    None => rest,
+  };
+  if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(error::bad_proxy("Proxy server response error."));
+  }
+
+  code
     .parse::<u16>()
     .map_err(|_| error::bad_proxy("parse proxy server response error."))
 }
@@ -1365,11 +1379,62 @@ mod tests {
   }
 
   #[test]
+  fn test_parse_proxy_connect_response_accepts_ascii_sp_separator() {
+    parse_proxy_connect_response(b"HTTP/1.1 200 Connection Established\r\n\r\n").unwrap();
+    parse_proxy_connect_response(b"HTTP/1.1 200\r\n\r\n").unwrap();
+  }
+
+  #[test]
+  fn test_parse_proxy_connect_response_rejects_non_sp_separators() {
+    for header in [
+      "HTTP/1.1\t200 Connection Established\r\n\r\n",
+      "HTTP/1.1\u{000b}200 Connection Established\r\n\r\n",
+      "HTTP/1.1\u{000c}200 Connection Established\r\n\r\n",
+      "HTTP/1.1\u{00a0}200 Connection Established\r\n\r\n",
+      "HTTP/1.1\u{2003}200 Connection Established\r\n\r\n",
+      "HTTP/1.1200 Connection Established\r\n\r\n",
+      "HTTP/1.1-200 Connection Established\r\n\r\n",
+      "HTTP/1.1/200 Connection Established\r\n\r\n",
+    ] {
+      let error = parse_proxy_connect_response(header.as_bytes())
+        .expect_err("non-SP CONNECT status-line separator should be rejected");
+      assert!(
+        error.to_string().contains("Proxy server response error"),
+        "unexpected error for {header:?}: {error}"
+      );
+    }
+  }
+
+  #[test]
   fn test_read_proxy_connect_response_waits_for_complete_headers() {
     let header = b"HTTP/1.1 200 Connection Established\r\nProxy-Agent: test\r\n\r\n";
     let mut reader = Cursor::new(header);
 
     read_proxy_connect_response(&mut reader).unwrap();
+  }
+
+  #[test]
+  fn test_read_proxy_connect_response_rejects_incomplete_headers() {
+    let header = b"HTTP/1.1 200 Connection Established\r\nProxy-Agent: test\r\n";
+    let mut reader = Cursor::new(header);
+
+    let error = read_proxy_connect_response(&mut reader)
+      .expect_err("incomplete proxy CONNECT headers should be rejected");
+
+    assert!(error
+      .to_string()
+      .contains("Incomplete proxy response headers"));
+  }
+
+  #[test]
+  fn test_read_proxy_connect_response_rejects_non_sp_status_line() {
+    let header = b"HTTP/1.1\t200 Connection Established\r\nProxy-Agent: test\r\n\r\n";
+    let mut reader = Cursor::new(header);
+
+    let error = read_proxy_connect_response(&mut reader)
+      .expect_err("HTAB CONNECT status-line separator should be rejected");
+
+    assert!(error.to_string().contains("Proxy server response error"));
   }
 
   #[test]

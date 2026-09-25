@@ -2871,6 +2871,26 @@ fn test_https_proxy_with_auth_uses_connect_tunnel() {
 
 #[test]
 #[cfg(feature = "tls-rustls")]
+fn test_https_proxy_rejects_non_sp_connect_status_line_and_closes_connection() {
+  let response = "HTTP/1.1\t200 Connection Established\r\n\r\n";
+  let (proxy_addr, proxy_handle) = support::spawn_proxy_connect_response_server(response);
+
+  let error = client()
+    .get()
+    .url("https://localhost/")
+    .proxy(Proxy::http("127.0.0.1", u32::from(proxy_addr.port())))
+    .emit()
+    .expect_err("HTAB proxy CONNECT status-line separator should fail");
+
+  assert!(error.to_string().contains("Proxy server response error"));
+  assert!(
+    proxy_handle.join().expect("proxy response server"),
+    "client should close the rejected proxy connection"
+  );
+}
+
+#[test]
+#[cfg(feature = "tls-rustls")]
 fn test_https_proxy_rejects_oversized_connect_response_and_closes_connection() {
   let response = format!(
     "HTTP/1.1 200 Connection Established\r\nX-Fill: {}",

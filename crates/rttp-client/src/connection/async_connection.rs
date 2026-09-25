@@ -17,8 +17,8 @@ use url::Url;
 use std::sync::Arc;
 
 use crate::connection::connection::{
-  connect_tcp_stream, parse_proxy_connect_response, request_expects_continue, Connection,
-  ExpectContinueResult,
+  connect_tcp_stream, parse_proxy_connect_response, proxy_connect_response_status_code,
+  request_expects_continue, Connection, ExpectContinueResult,
 };
 use crate::connection::connection_reader::{
   append_informational_response, content_length_from_response_body_kind,
@@ -1223,8 +1223,7 @@ where
         break;
       }
     }
-    let status_code = response_status_code(&header)
-      .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
+    let status_code = proxy_connect_response_status_code(&header)?;
     if is_skippable_informational_status(status_code) {
       if informational_responses == MAX_INFORMATIONAL_RESPONSES {
         return Err(error::bad_proxy("Too many informational proxy responses"));
@@ -1579,12 +1578,110 @@ mod tests {
   use futures::io::AllowStdIo;
 
   use super::{
-    async_read_response_head, async_read_response_head_with_existing_informational,
-    async_streaming_response_after_header,
+    async_read_proxy_connect_response, async_read_response_head,
+    async_read_response_head_with_existing_informational, async_streaming_response_after_header,
   };
   use crate::connection::connection_reader::{
-    parse_informational_response, MAX_INFORMATIONAL_RESPONSES,
+    parse_informational_response, MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
   };
+
+  #[test]
+  fn async_read_proxy_connect_response_accepts_ascii_sp_success() {
+    block_on(async {
+      let header = b"HTTP/1.1 200 Connection Established\r\nProxy-Agent: test\r\n\r\n";
+      let mut stream = AllowStdIo::new(Cursor::new(header.to_vec()));
+      async_read_proxy_connect_response(&mut stream)
+        .await
+        .unwrap();
+    });
+  }
+
+  #[test]
+  fn async_read_proxy_connect_response_skips_interim_headers() {
+    block_on(async {
+      let raw = concat!(
+        "HTTP/1.1 103 Early Hints\r\n",
+        "Link: </proxy.css>; rel=preload\r\n",
+        "\r\n",
+        "HTTP/1.1 200 Connection Established\r\n",
+        "Proxy-Agent: test\r\n",
+        "\r\n"
+      );
+      let mut stream = AllowStdIo::new(Cursor::new(raw.as_bytes().to_vec()));
+      async_read_proxy_connect_response(&mut stream)
+        .await
+        .unwrap();
+    });
+  }
+
+  #[test]
+  fn async_read_proxy_connect_response_rejects_non_sp_status_line() {
+    block_on(async {
+      for header in [
+        "HTTP/1.1\t200 Connection Established\r\n\r\n",
+        "HTTP/1.1\u{000b}200 Connection Established\r\n\r\n",
+        "HTTP/1.1\u{000c}200 Connection Established\r\n\r\n",
+        "HTTP/1.1\u{00a0}200 Connection Established\r\n\r\n",
+        "HTTP/1.1\u{2003}200 Connection Established\r\n\r\n",
+        "HTTP/1.1200 Connection Established\r\n\r\n",
+        "HTTP/1.1-200 Connection Established\r\n\r\n",
+      ] {
+        let mut stream = AllowStdIo::new(Cursor::new(header.as_bytes().to_vec()));
+        let error = async_read_proxy_connect_response(&mut stream)
+          .await
+          .expect_err("non-SP CONNECT status-line separator should be rejected");
+        assert!(
+          error.to_string().contains("Proxy server response error"),
+          "unexpected error for {header:?}: {error}"
+        );
+      }
+    });
+  }
+
+  #[test]
+  fn async_read_proxy_connect_response_rejects_incomplete_headers() {
+    block_on(async {
+      let header = b"HTTP/1.1 200 Connection Established\r\nProxy-Agent: test\r\n";
+      let mut stream = AllowStdIo::new(Cursor::new(header.to_vec()));
+      let error = async_read_proxy_connect_response(&mut stream)
+        .await
+        .expect_err("incomplete proxy CONNECT headers should be rejected");
+      assert!(error
+        .to_string()
+        .contains("Incomplete proxy response headers"));
+    });
+  }
+
+  #[test]
+  fn async_read_proxy_connect_response_rejects_oversized_head() {
+    block_on(async {
+      let raw = format!(
+        "HTTP/1.1 200 Connection Established\r\nX-Fill: {}",
+        "a".repeat(MAX_RESPONSE_HEAD_BYTES)
+      );
+      let mut stream = AllowStdIo::new(Cursor::new(raw.into_bytes()));
+      let error = async_read_proxy_connect_response(&mut stream)
+        .await
+        .expect_err("oversized proxy response head should be rejected");
+      assert!(error
+        .to_string()
+        .contains("Proxy response head is too large"));
+    });
+  }
+
+  #[test]
+  fn async_read_proxy_connect_response_reports_non_200_status() {
+    block_on(async {
+      let header = b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n";
+      let mut stream = AllowStdIo::new(Cursor::new(header.to_vec()));
+      let error = async_read_proxy_connect_response(&mut stream)
+        .await
+        .expect_err("non-200 proxy CONNECT status should be reported");
+      assert!(error
+        .to_string()
+        .contains("407 Proxy Authentication Required"));
+    });
+  }
 
   #[test]
   fn async_streaming_response_reads_fixed_length_body_incrementally() {
