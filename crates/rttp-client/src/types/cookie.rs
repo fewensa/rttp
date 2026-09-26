@@ -53,12 +53,19 @@ impl Cookie {
   }
 
   pub fn string(&self) -> String {
-    let mut text = format!("{}={}", self.name, serialize_cookie_value(&self.value),);
+    let mut text = format!(
+      "{}={}",
+      serialize_legacy_cookie_field(&self.name),
+      serialize_legacy_cookie_field(&self.value),
+    );
     if let Some(path) = &self.path {
-      text.push_str(&format!("; path={}", path));
+      text.push_str(&format!("; path={}", serialize_legacy_cookie_field(path)));
     }
     if let Some(domain) = &self.domain {
-      text.push_str(&format!("; domain={}", domain));
+      text.push_str(&format!(
+        "; domain={}",
+        serialize_legacy_cookie_field(domain)
+      ));
     }
     if self.persistent {
       if let Some(expires) = self.expires {
@@ -80,20 +87,27 @@ impl Cookie {
       text.push_str("; hostOnly")
     }
     if let Some(same_site) = &self.same_site {
-      text.push_str(&format!("; SameSite={}", same_site));
+      text.push_str(&format!(
+        "; SameSite={}",
+        serialize_legacy_cookie_field(same_site)
+      ));
     }
     text
   }
 }
 
-fn serialize_cookie_value(value: &str) -> String {
+fn serialize_legacy_cookie_field(value: &str) -> String {
   if value.bytes().all(is_cookie_octet) {
     return value.to_owned();
   }
   if value.bytes().all(is_generated_quoted_cookie_value_byte) {
     return format!("\"{}\"", value);
   }
-  value.to_owned()
+  value
+    .bytes()
+    .filter(|&byte| is_cookie_octet(byte))
+    .map(char::from)
+    .collect()
 }
 
 fn is_cookie_octet(byte: u8) -> bool {
@@ -204,6 +218,84 @@ impl Cookie {
 #[cfg(test)]
 mod tests {
   use super::Cookie;
+
+  fn assert_no_forbidden_wire_bytes(serialized: &str) {
+    assert!(
+      !serialized.bytes().any(|byte| {
+        byte == b'\r'
+          || byte == b'\n'
+          || byte == b'\0'
+          || byte == 0x7f
+          || (byte < 0x20 && byte != b'\t')
+          || byte > 0x7e
+      }),
+      "serialized cookie must not emit forbidden control or non-ASCII bytes: {serialized:?}"
+    );
+  }
+
+  #[test]
+  fn string_preserves_valid_cookie_octets() {
+    let cookie = Cookie::builder()
+      .name("token")
+      .value("a!#$%&'()*+-./:<=>?@[]^_`{|}~")
+      .build();
+
+    assert_eq!(cookie.string(), "token=a!#$%&'()*+-./:<=>?@[]^_`{|}~");
+    assert_no_forbidden_wire_bytes(&cookie.string());
+  }
+
+  #[test]
+  fn string_quotes_safe_printable_values() {
+    let cookie = Cookie::builder()
+      .name("token")
+      .value("abc def")
+      .path("/with space")
+      .build();
+
+    assert_eq!(cookie.string(), "token=\"abc def\"; path=\"/with space\"");
+    assert_no_forbidden_wire_bytes(&cookie.string());
+  }
+
+  #[test]
+  fn string_strips_cr_lf_nul_controls_and_invalid_bytes() {
+    let cookie = Cookie::builder()
+      .name("tok\ren")
+      .value("a\nb\0c\"d\\e\u{7f}f\u{00a0}g")
+      .path("/p\r\nath")
+      .domain("ex\0ample.com")
+      .same_site("La\nx")
+      .build();
+
+    let serialized = cookie.string();
+    assert_eq!(
+      serialized,
+      "token=abcdefg; path=/path; domain=example.com; SameSite=Lax"
+    );
+    assert_no_forbidden_wire_bytes(&serialized);
+    assert!(!serialized.contains('"'));
+    assert!(!serialized.contains('\\'));
+  }
+
+  #[test]
+  fn string_round_trips_parsed_valid_cookie_wire_form() {
+    let cookie = Cookie::parse(
+      "session=abc123; Path=/app; Domain=example.com; Secure; HttpOnly; SameSite=Lax",
+    )
+    .unwrap();
+
+    assert_eq!(
+      cookie.string(),
+      "session=abc123; path=/app; domain=example.com; secure; httpOnly; SameSite=Lax"
+    );
+    assert_eq!(cookie.name(), "session");
+    assert_eq!(cookie.value(), "abc123");
+    assert_eq!(cookie.path().as_deref(), Some("/app"));
+    assert_eq!(cookie.domain().as_deref(), Some("example.com"));
+    assert!(cookie.secure());
+    assert!(cookie.http_only());
+    assert_eq!(cookie.same_site().as_deref(), Some("Lax"));
+    assert_no_forbidden_wire_bytes(&cookie.string());
+  }
 
   #[test]
   fn parse_preserves_embedded_equals_in_cookie_value() {
