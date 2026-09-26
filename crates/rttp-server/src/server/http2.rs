@@ -1066,6 +1066,12 @@ pub(crate) fn decode_http2_request_headers(
           "HTTP/2 request header name must be lowercase",
         ));
       }
+      name if !is_http_token(name) => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "invalid HTTP/2 request header name",
+        ));
+      }
       name if is_forbidden_http2_request_header_name(name) => {
         return Err(io::Error::new(
           io::ErrorKind::InvalidData,
@@ -2695,6 +2701,22 @@ mod tests {
       "HTTP/2 request header name must be lowercase",
       error.to_string()
     );
+  }
+
+  #[test]
+  fn decode_http2_request_headers_rejects_non_token_names() {
+    let block = encode_literal_fields(&[
+      (b":method", b"GET"),
+      (b":path", b"/"),
+      (b":scheme", b"https"),
+      (b"bad name", b"value"),
+    ]);
+    let error = expect_decode_error(
+      decode_request_headers(&block, false),
+      "non-token request header names must be rejected",
+    );
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("invalid HTTP/2 request header name", error.to_string());
   }
 
   #[test]
