@@ -263,6 +263,33 @@ fn http2_outbound_headers_are_rejected_before_connecting() {
   assert!(request.is_empty());
 }
 
+#[cfg(feature = "http2")]
+#[test]
+fn http2_request_headers_reject_non_ows_whitespace_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n"] {
+    for (name, value) in [
+      (format!("{whitespace}X-Request"), "keep-me".to_string()),
+      ("X-Request".to_string(), format!("{whitespace}keep-me")),
+      ("Connection".to_string(), format!("{whitespace}close")),
+      ("TE".to_string(), format!("{whitespace}trailers")),
+    ] {
+      let request = capture_optional_request(|base_url| {
+        let error = client()
+          .get()
+          .url(format!("{}/http2-non-ows", base_url))
+          .header((name.as_str(), value.as_str()))
+          .emit_http2_prior_knowledge()
+          .expect_err("non-OWS HTTP/2 request padding must be rejected");
+        assert!(error.is_builder());
+      });
+      assert!(
+        request.is_empty(),
+        "non-OWS HTTP/2 request padding opened a socket: {name:?}={value:?}"
+      );
+    }
+  }
+}
+
 fn read_request_head(stream: &mut TcpStream) -> Vec<u8> {
   let mut request = Vec::new();
   let mut byte = [0u8; 1];

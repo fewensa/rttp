@@ -1761,6 +1761,254 @@ fn prior_knowledge_request_strips_non_trailers_te() {
 }
 
 #[test]
+fn prior_knowledge_request_accepts_http_ows_header_padding() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"padded");
+    request_headers.payload
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/ows", addr))
+    .header(("Connection", " \tKeep-Alive, X-Hop\t "))
+    .header(("X-Hop", "remove-me"))
+    .header(("X-End-To-End", " \tkeep-me\t "))
+    .header(("TE", " \tgzip,\t trailers\t "))
+    .emit_http2_prior_knowledge()
+    .expect("h2 GET response");
+  assert_eq!(200, response.code());
+
+  let request_header_block = handle.join().expect("h2 peer thread");
+  assert!(find_header_value(&request_header_block, b"x-hop").is_none());
+  assert_eq!(
+    b"keep-me",
+    find_header_value(&request_header_block, b"x-end-to-end")
+      .expect("OWS-padded field value should convert")
+      .value
+      .as_slice()
+  );
+  assert_eq!(
+    b"trailers",
+    find_header_value(&request_header_block, b"te")
+      .expect("OWS-padded TE trailers should convert")
+      .value
+      .as_slice()
+  );
+}
+
+#[test]
+fn prior_knowledge_request_rejects_control_whitespace_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n"] {
+    for (name, value) in [
+      (format!("{whitespace}X-End-To-End"), "keep-me".to_string()),
+      (format!("X-End-To-End{whitespace}"), "keep-me".to_string()),
+      ("X-End-To-End".to_string(), format!("{whitespace}keep-me")),
+      ("X-End-To-End".to_string(), format!("keep-me{whitespace}")),
+      ("Connection".to_string(), format!("{whitespace}close")),
+      ("TE".to_string(), format!("{whitespace}trailers")),
+    ] {
+      let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+      listener
+        .set_nonblocking(true)
+        .expect("set h2 listener nonblocking");
+      let addr = listener.local_addr().expect("h2 peer addr");
+
+      let err = HttpClient::new()
+        .get()
+        .url(format!("http://{}/non-ows", addr))
+        .header((name.as_str(), value.as_str()))
+        .emit_http2_prior_knowledge()
+        .expect_err("control whitespace in HTTP/2 request fields must fail");
+      assert!(err.is_builder(), "unexpected error: {err}");
+      assert!(
+        matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+        "control whitespace must not open a server connection: {name:?}={value:?}"
+      );
+    }
+  }
+}
+
+#[test]
+fn prior_knowledge_request_rejects_non_ows_value_padding_before_headers() {
+  for whitespace in ["\u{00a0}", "\u{2003}"] {
+    for (name, value) in [
+      ("X-End-To-End", format!("{whitespace}keep-me")),
+      ("X-End-To-End", format!("keep-me{whitespace}")),
+      ("Connection", format!("{whitespace}close")),
+      ("Connection", format!("close{whitespace}")),
+      ("TE", format!("{whitespace}trailers")),
+      ("TE", format!("trailers{whitespace}")),
+    ] {
+      let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+      let addr = listener.local_addr().expect("h2 peer addr");
+      let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept h2 client");
+        stream
+          .set_read_timeout(Some(Duration::from_millis(200)))
+          .expect("set read timeout");
+        complete_h2_handshake_without_request(&mut stream);
+        let next_frame = try_read_frame(&mut stream).expect("check for refused request HEADERS");
+        assert!(
+          next_frame.is_none(),
+          "client must not encode non-OWS padded HTTP/2 fields"
+        );
+      });
+
+      let err = HttpClient::new()
+        .get()
+        .url(format!("http://{}/non-ows", addr))
+        .header(Header::new(name, value))
+        .emit_http2_prior_knowledge()
+        .expect_err("non-OWS HTTP/2 request padding must fail");
+      assert!(err.is_builder(), "unexpected error: {err}");
+      handle.join().expect("h2 peer thread");
+    }
+  }
+}
+
+#[test]
+fn http2_upgrade_request_accepts_http_ows_header_padding() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+    let _request = read_http1_request_head(&mut stream);
+    stream
+      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+      .expect("write upgrade response");
+
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(3, request_headers.stream_id);
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 3, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 3, b"padded");
+    request_headers.payload
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/upgrade-ows", addr))
+    .header(("Connection", " \tKeep-Alive, X-Hop\t "))
+    .header(("X-Hop", "remove-me"))
+    .header(("X-End-To-End", " \tkeep-me\t "))
+    .header(("TE", " \ttrailers\t "))
+    .emit_http2_upgrade()
+    .expect("h2c upgrade response");
+  assert_eq!(200, response.code());
+
+  let request_header_block = handle.join().expect("h2c upgrade peer thread");
+  assert!(find_header_value(&request_header_block, b"x-hop").is_none());
+  assert_eq!(
+    b"keep-me",
+    find_header_value(&request_header_block, b"x-end-to-end")
+      .expect("OWS-padded field value should convert after h2c upgrade")
+      .value
+      .as_slice()
+  );
+  assert_eq!(
+    b"trailers",
+    find_header_value(&request_header_block, b"te")
+      .expect("OWS-padded TE trailers should convert after h2c upgrade")
+      .value
+      .as_slice()
+  );
+}
+
+#[test]
+fn http2_upgrade_request_rejects_control_whitespace_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n"] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+    listener
+      .set_nonblocking(true)
+      .expect("set h2c listener nonblocking");
+    let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+    let err = HttpClient::new()
+      .get()
+      .url(format!("http://{}/upgrade-non-ows", addr))
+      .header(Header::new("X-End-To-End", format!("{whitespace}keep-me")))
+      .emit_http2_upgrade()
+      .expect_err("control whitespace in HTTP/2 upgrade request fields must fail");
+    assert!(err.is_builder(), "unexpected error: {err}");
+    assert!(
+      matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+      "control whitespace must not open a server connection"
+    );
+  }
+}
+
+#[test]
+fn http2_upgrade_request_rejects_non_ows_value_padding_before_headers() {
+  for whitespace in ["\u{00a0}", "\u{2003}"] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+    let addr = listener.local_addr().expect("h2c upgrade peer addr");
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+      let _request = read_http1_request_head(&mut stream);
+      stream
+        .write_all(
+          b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n",
+        )
+        .expect("write upgrade response");
+      stream
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("set read timeout");
+      complete_h2_handshake_without_request(&mut stream);
+      let next_frame = try_read_frame(&mut stream).expect("check for refused request HEADERS");
+      assert!(
+        next_frame.is_none(),
+        "client must not encode non-OWS padded HTTP/2 fields after h2c upgrade"
+      );
+    });
+
+    let err = HttpClient::new()
+      .get()
+      .url(format!("http://{}/upgrade-non-ows", addr))
+      .header(Header::new("X-End-To-End", format!("{whitespace}keep-me")))
+      .emit_http2_upgrade()
+      .expect_err("non-OWS HTTP/2 upgrade request padding must fail");
+    assert!(err.is_builder(), "unexpected error: {err}");
+    handle.join().expect("h2c upgrade peer thread");
+  }
+}
+
+#[test]
+fn http2_upgrade_request_rejects_non_ows_connection_and_te_padding_before_connecting() {
+  for whitespace in ["\u{00a0}", "\u{2003}"] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+    listener
+      .set_nonblocking(true)
+      .expect("set h2c listener nonblocking");
+    let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+    let err = HttpClient::new()
+      .get()
+      .url(format!("http://{}/upgrade-non-ows", addr))
+      .header(Header::new("Connection", format!("{whitespace}close")))
+      .header(Header::new("TE", format!("{whitespace}trailers")))
+      .emit_http2_upgrade()
+      .expect_err("non-OWS Connection and TE padding must fail");
+    assert!(err.is_builder(), "unexpected error: {err}");
+    assert!(
+      matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+      "non-OWS Connection and TE padding must not open a server connection"
+    );
+  }
+}
+
+#[test]
 fn prior_knowledge_post_sends_request_trailers_after_body_data_frame() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
