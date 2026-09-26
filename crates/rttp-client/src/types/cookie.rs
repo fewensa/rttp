@@ -97,15 +97,21 @@ impl Cookie {
 }
 
 fn serialize_legacy_cookie_field(value: &str) -> String {
-  let sanitized: String = value
+  let quoted = value.len() >= 2 && value.starts_with('"') && value.ends_with('"');
+  let payload = if quoted {
+    &value[1..value.len() - 1]
+  } else {
+    value
+  };
+  let sanitized: String = payload
     .bytes()
     .filter(|&byte| is_generated_quoted_cookie_value_byte(byte))
     .map(char::from)
     .collect();
-  if sanitized.bytes().all(is_cookie_octet) {
-    sanitized
-  } else {
+  if quoted || !sanitized.bytes().all(is_cookie_octet) {
     format!("\"{}\"", sanitized)
+  } else {
+    sanitized
   }
 }
 
@@ -273,6 +279,15 @@ mod tests {
     assert_no_forbidden_wire_bytes(&serialized);
     assert!(!serialized.contains('"'));
     assert!(!serialized.contains('\\'));
+  }
+
+  #[test]
+  fn string_preserves_parsed_quoted_token_safe_value() {
+    let cookie = Cookie::parse(r#"session="abc123""#).unwrap();
+
+    assert_eq!(cookie.value(), r#""abc123""#);
+    assert_eq!(cookie.string(), r#"session="abc123""#);
+    assert_no_forbidden_wire_bytes(&cookie.string());
   }
 
   #[test]
