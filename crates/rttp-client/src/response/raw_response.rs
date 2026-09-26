@@ -379,3 +379,26 @@ fn content_decoders(headers: &[Header]) -> Option<Vec<ContentDecoder>> {
   }
   Some(decoders)
 }
+
+#[cfg(test)]
+mod tests {
+  use super::RawResponse;
+  use crate::types::{Header, ToRoUrl};
+
+  #[test]
+  fn raw_response_debug_redacts_ows_padded_header_names() {
+    let mut response = RawResponse::new("http://example.test/".to_rourl(), Vec::new())
+      .expect("empty response should build");
+    response.headers(vec![
+      Header::new("\tAuthorization ", "Bearer response-secret"),
+      Header::new(" Accept ", "application/json"),
+      Header::new("\u{2003}Authorization", "Bearer visible"),
+    ]);
+
+    let debug = format!("{response:?}");
+    assert!(debug.contains("[REDACTED]"));
+    assert!(!debug.contains("response-secret"));
+    assert!(debug.contains("application/json"));
+    assert!(debug.contains("Bearer visible"));
+  }
+}

@@ -117,7 +117,12 @@ impl fmt::Debug for DebugHeaderValue<'_> {
   }
 }
 
+pub(crate) fn trim_http_ows(name: &str) -> &str {
+  name.trim_matches([' ', '\t'])
+}
+
 pub(crate) fn is_sensitive_debug_header(name: &str) -> bool {
+  let name = trim_http_ows(name);
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
@@ -328,5 +333,23 @@ mod tests {
     let if_match = format!("{:?}", Header::new("If-Match", "\"revision-42\""));
     assert!(if_match.contains("If-Match"));
     assert!(if_match.contains("revision-42"));
+  }
+
+  #[test]
+  fn debug_redacts_ows_padded_sensitive_names_without_unicode_trimming() {
+    for name in [" Authorization", "Authorization ", "\tAuthorization\t"] {
+      let debug = format!("{:?}", Header::new(name, "Bearer private"));
+      assert!(debug.contains("[REDACTED]"));
+      assert!(!debug.contains("Bearer private"));
+    }
+
+    let non_sensitive = format!("{:?}", Header::new(" Accept ", "application/json"));
+    assert!(non_sensitive.contains("application/json"));
+
+    let unicode_lookalike = format!(
+      "{:?}",
+      Header::new("\u{2003}Authorization", "Bearer private")
+    );
+    assert!(unicode_lookalike.contains("Bearer private"));
   }
 }

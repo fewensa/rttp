@@ -1,9 +1,10 @@
 use std::fmt;
 
-use crate::types::{FormData, Header, Para, Proxy, RoUrl, ToRoUrl};
+use crate::types::{trim_http_ows, FormData, Header, Para, Proxy, RoUrl, ToRoUrl};
 use crate::{error, Config};
 
 pub(crate) fn is_sensitive_redirect_header(name: &str) -> bool {
+  let name = trim_http_ows(name);
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("proxy-authorization")
@@ -90,12 +91,12 @@ fn raw_request_has_sensitive_header(raw: &str) -> bool {
     let Some((name, _)) = line.split_once(':') else {
       return false;
     };
-    is_sensitive_redirect_header(name.trim())
-      || name.trim().eq_ignore_ascii_case("set-cookie")
-      || name.trim().eq_ignore_ascii_case("sec-websocket-accept")
-      || name.trim().eq_ignore_ascii_case("sec-websocket-key")
-      || name.trim().eq_ignore_ascii_case("lock-token")
-      || name.trim().eq_ignore_ascii_case("if")
+    is_sensitive_redirect_header(name)
+      || trim_http_ows(name).eq_ignore_ascii_case("set-cookie")
+      || trim_http_ows(name).eq_ignore_ascii_case("sec-websocket-accept")
+      || trim_http_ows(name).eq_ignore_ascii_case("sec-websocket-key")
+      || trim_http_ows(name).eq_ignore_ascii_case("lock-token")
+      || trim_http_ows(name).eq_ignore_ascii_case("if")
   })
 }
 
@@ -468,5 +469,18 @@ mod tests {
     ] {
       assert!(!debug.contains(secret));
     }
+  }
+
+  #[test]
+  fn request_debug_redacts_ows_padded_raw_sensitive_names() {
+    let mut request = Request::new();
+    request.raw_set("GET / HTTP/1.1\r\n\tAuthorization \t: Bearer raw-secret\r\n\r\n");
+
+    let debug = format!("{request:?}");
+    assert!(debug.contains("[REDACTED]"));
+    assert!(!debug.contains("raw-secret"));
+
+    request.raw_set("GET / HTTP/1.1\r\n\u{2003}Authorization: Bearer visible\r\n\r\n");
+    assert!(format!("{request:?}").contains("Bearer visible"));
   }
 }

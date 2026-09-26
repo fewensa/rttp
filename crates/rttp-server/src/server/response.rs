@@ -5679,6 +5679,7 @@ impl fmt::Debug for DebugHeaderValue<'_> {
 }
 
 fn is_sensitive_debug_header(name: &str) -> bool {
+  let name = trim_http_ows(name);
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
@@ -5693,6 +5694,28 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
     || name.eq_ignore_ascii_case("baggage")
+}
+
+#[cfg(test)]
+mod debug_header_tests {
+  use super::HttpHeader;
+
+  #[test]
+  fn debug_redacts_ows_padded_names_without_unicode_trimming() {
+    for name in [" Authorization", "Authorization ", "\tAuthorization\t"] {
+      let debug = format!("{:?}", HttpHeader::new(name, "Bearer secret"));
+      assert!(debug.contains("[REDACTED]"));
+      assert!(!debug.contains("Bearer secret"));
+    }
+
+    let non_sensitive = format!("{:?}", HttpHeader::new(" Accept ", "application/json"));
+    assert!(non_sensitive.contains("application/json"));
+    let unicode_lookalike = format!(
+      "{:?}",
+      HttpHeader::new("\u{2003}Authorization", "Bearer visible")
+    );
+    assert!(unicode_lookalike.contains("Bearer visible"));
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -358,7 +358,12 @@ impl fmt::Debug for DebugHeaderValue<'_> {
   }
 }
 
+fn trim_http_ows(name: &str) -> &str {
+  name.trim_matches([' ', '\t'])
+}
+
 fn is_sensitive_debug_header(name: &str) -> bool {
+  let name = trim_http_ows(name);
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
@@ -371,6 +376,29 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
     || name.eq_ignore_ascii_case("baggage")
+}
+
+#[cfg(test)]
+mod debug_header_tests {
+  use super::{is_sensitive_debug_header, DebugHeaderPair};
+
+  #[test]
+  fn debug_redacts_ows_padded_names_without_unicode_trimming() {
+    for name in [" Authorization", "Authorization ", "\tAuthorization\t"] {
+      let debug = format!(
+        "{:?}",
+        DebugHeaderPair {
+          name,
+          value: "secret"
+        }
+      );
+      assert!(debug.contains("[REDACTED]"));
+      assert!(!debug.contains("secret"));
+    }
+
+    assert!(!is_sensitive_debug_header(" Accept "));
+    assert!(!is_sensitive_debug_header("\u{2003}Authorization"));
+  }
 }
 
 impl Request {

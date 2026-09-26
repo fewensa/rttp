@@ -2,8 +2,8 @@ use crate::error;
 use crate::request::builder::RawBuilder;
 use crate::request::is_sensitive_redirect_header;
 use crate::request::{Request, RequestBody};
-use crate::types::Header;
 use crate::types::RoUrl;
+use crate::types::{trim_http_ows, Header};
 use crate::types::{ToRoUrl, ToUrl};
 use std::fmt;
 
@@ -238,6 +238,7 @@ impl fmt::Debug for RedactedHeaderBlock<'_> {
 }
 
 fn is_sensitive_debug_header(name: &str) -> bool {
+  let name = trim_http_ows(name);
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
@@ -319,5 +320,21 @@ mod tests {
     assert!(!debug.contains("t61rcWkgMzE"));
     assert!(!debug.contains("acme-secret"));
     assert!(!debug.contains("gateway"));
+  }
+
+  #[test]
+  fn raw_request_debug_redacts_ows_padded_header_names() {
+    let debug = format!(
+      "{:?}",
+      RedactedHeaderBlock("GET / HTTP/1.1\r\n\tAuthorization \t: Bearer raw-secret\r\n\r\n")
+    );
+    assert!(debug.contains("[REDACTED]"));
+    assert!(!debug.contains("raw-secret"));
+
+    let debug = format!(
+      "{:?}",
+      RedactedHeaderBlock("GET / HTTP/1.1\r\n\u{2003}Authorization: Bearer visible\r\n\r\n")
+    );
+    assert!(debug.contains("Bearer visible"));
   }
 }
