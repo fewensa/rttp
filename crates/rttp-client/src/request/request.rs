@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::types::{trim_http_ows, FormData, Header, Para, Proxy, RoUrl, ToRoUrl};
 use crate::{error, Config};
+use rttp_protocol::is_sensitive_debug_header;
 
 pub(crate) fn is_sensitive_redirect_header(name: &str) -> bool {
   let name = trim_http_ows(name);
@@ -91,12 +92,7 @@ fn raw_request_has_sensitive_header(raw: &str) -> bool {
     let Some((name, _)) = line.split_once(':') else {
       return false;
     };
-    is_sensitive_redirect_header(name)
-      || trim_http_ows(name).eq_ignore_ascii_case("set-cookie")
-      || trim_http_ows(name).eq_ignore_ascii_case("sec-websocket-accept")
-      || trim_http_ows(name).eq_ignore_ascii_case("sec-websocket-key")
-      || trim_http_ows(name).eq_ignore_ascii_case("lock-token")
-      || trim_http_ows(name).eq_ignore_ascii_case("if")
+    is_sensitive_debug_header(name)
   })
 }
 
@@ -453,7 +449,7 @@ mod tests {
       .trailers_mut()
       .push(Header::new("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"));
     request.raw_set(
-      "GET / HTTP/1.1\r\nAuthorization: Bearer raw-token\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nHost: example.test\r\n\r\n",
+      "GET / HTTP/1.1\r\nAuthorization: Bearer raw-token\r\nOrigin-Trial: origin-trial-secret\r\nSpeculation-Rules: speculation-rules-secret\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nHost: example.test\r\n\r\n",
     );
 
     let debug = format!("{request:?}");
@@ -466,6 +462,8 @@ mod tests {
       "charge-2026-08-19-9f3c",
       "550e8400-e29b-41d4-a716-446655440000",
       "dGhlIHNhbXBsZSBub25jZQ==",
+      "origin-trial-secret",
+      "speculation-rules-secret",
     ] {
       assert!(!debug.contains(secret));
     }

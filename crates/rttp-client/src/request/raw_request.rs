@@ -2,9 +2,10 @@ use crate::error;
 use crate::request::builder::RawBuilder;
 use crate::request::is_sensitive_redirect_header;
 use crate::request::{Request, RequestBody};
+use crate::types::Header;
 use crate::types::RoUrl;
-use crate::types::{trim_http_ows, Header};
 use crate::types::{ToRoUrl, ToUrl};
+use rttp_protocol::is_sensitive_debug_header;
 use std::fmt;
 
 pub struct RawRequest<'a> {
@@ -237,22 +238,6 @@ impl fmt::Debug for RedactedHeaderBlock<'_> {
   }
 }
 
-fn is_sensitive_debug_header(name: &str) -> bool {
-  let name = trim_http_ows(name);
-  name.eq_ignore_ascii_case("authorization")
-    || name.eq_ignore_ascii_case("cookie")
-    || name.eq_ignore_ascii_case("idempotency-key")
-    || name.eq_ignore_ascii_case("if")
-    || name.eq_ignore_ascii_case("lock-token")
-    || name.eq_ignore_ascii_case("proxy-authorization")
-    || name.eq_ignore_ascii_case("sec-websocket-accept")
-    || name.eq_ignore_ascii_case("sec-websocket-key")
-    || name.eq_ignore_ascii_case("set-cookie")
-    || name.eq_ignore_ascii_case("traceparent")
-    || name.eq_ignore_ascii_case("tracestate")
-    || name.eq_ignore_ascii_case("baggage")
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -264,6 +249,12 @@ mod tests {
     request
       .headers_mut()
       .push(Header::new("Authorization", "Bearer origin-secret-token"));
+    request
+      .headers_mut()
+      .push(Header::new("Origin-Trial", "origin-trial-secret"));
+    request
+      .headers_mut()
+      .push(Header::new("Speculation-Rules", "speculation-rules-secret"));
     request
       .headers_mut()
       .push(Header::new("Proxy-Authorization", "Basic cHJveHktc2VjcmV0"));
@@ -300,6 +291,8 @@ mod tests {
     let debug = format!("{raw_request:?}");
 
     assert!(debug.contains("Authorization"));
+    assert!(debug.contains("Origin-Trial"));
+    assert!(debug.contains("Speculation-Rules"));
     assert!(debug.contains("Proxy-Authorization"));
     assert!(debug.contains("Idempotency-Key"));
     assert!(debug.contains("Lock-Token"));
@@ -311,6 +304,8 @@ mod tests {
     assert!(debug.contains("[REDACTED]"));
     assert!(debug.contains("\\\"revision-42\\\""));
     assert!(!debug.contains("origin-secret-token"));
+    assert!(!debug.contains("origin-trial-secret"));
+    assert!(!debug.contains("speculation-rules-secret"));
     assert!(!debug.contains("cHJveHktc2VjcmV0"));
     assert!(!debug.contains("charge-2026-08-19-9f3c"));
     assert!(!debug.contains("550e8400-e29b-41d4-a716-446655440000"));
