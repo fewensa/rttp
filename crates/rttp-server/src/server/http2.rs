@@ -1060,6 +1060,12 @@ pub(crate) fn decode_http2_request_headers(
           "unknown HTTP/2 request pseudo-header",
         ));
       }
+      name if !is_http2_lowercase_field_name(name) => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "HTTP/2 request header name must be lowercase",
+        ));
+      }
       name if !is_http_token(name) => {
         return Err(io::Error::new(
           io::ErrorKind::InvalidData,
@@ -2692,6 +2698,25 @@ mod tests {
     );
     assert_eq!(io::ErrorKind::InvalidData, error.kind());
     assert_eq!("invalid HTTP/2 request header name", error.to_string());
+  }
+
+  #[test]
+  fn decode_http2_request_headers_rejects_uppercase_names() {
+    let block = encode_literal_fields(&[
+      (b":method", b"GET"),
+      (b":path", b"/"),
+      (b":scheme", b"https"),
+      (b"X-Test", b"value"),
+    ]);
+    let error = expect_decode_error(
+      decode_request_headers(&block, false),
+      "uppercase request header names must be rejected",
+    );
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!(
+      "HTTP/2 request header name must be lowercase",
+      error.to_string()
+    );
   }
 
   #[test]
