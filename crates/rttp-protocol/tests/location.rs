@@ -43,6 +43,10 @@ fn location_rejects_malformed_uri_references() {
     "/ok\n",
     "/ok\u{7f}",
     "/ok\tinner",
+    "\u{00a0}/next\u{00a0}",
+    "\u{2003}/next\u{2003}",
+    "\u{000b}/next\u{000b}",
+    "\u{000c}/next\u{000c}",
   ] {
     assert!(
       Location::parse(value).is_err(),

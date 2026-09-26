@@ -2503,6 +2503,27 @@ fn test_auto_redirect_does_not_trim_non_ows_location_padding() {
       "unexpected error for UTF-8 padding {utf8_padding:?}: {error}"
     );
   }
+
+  for control in [0x0bu8, 0x0cu8] {
+    let mut response = b"HTTP/1.1 302 Found\r\nLocation: ".to_vec();
+    response.push(control);
+    response.extend_from_slice(b"/final");
+    response.push(control);
+    response.extend_from_slice(b"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+    let error = client()
+      .config(Config::builder().auto_redirect(true))
+      .get()
+      .url(format!("http://{}/redirect/from?old=1", addr))
+      .emit()
+      .expect_err("control Location padding should be rejected");
+
+    assert!(
+      !error.to_string().is_empty(),
+      "unexpectedly accepted control Location padding {control:#x}"
+    );
+  }
 }
 
 #[test]
