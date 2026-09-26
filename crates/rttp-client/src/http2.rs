@@ -3,6 +3,7 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use base64::Engine;
+use rttp_protocol::http1::split_status_line;
 use url::Url;
 
 use crate::connection::connect_tcp_stream_with_io_timeouts;
@@ -683,11 +684,16 @@ fn read_http1_response_head(stream: &mut TcpStream) -> error::Result<Vec<u8>> {
 fn http1_status_code(header: &[u8]) -> error::Result<u16> {
   let header = String::from_utf8(header.to_vec())
     .map_err(|_| error::bad_response("Invalid h2c upgrade response"))?;
-  header
+  let status_line = header
     .lines()
     .next()
-    .and_then(|line| line.split_whitespace().nth(1))
-    .ok_or_else(|| error::bad_response("Invalid h2c upgrade response"))?
+    .ok_or_else(|| error::bad_response("Invalid h2c upgrade response"))?;
+  let (_version, code, _reason) = split_status_line(status_line)
+    .ok_or_else(|| error::bad_response("Invalid h2c upgrade response"))?;
+  if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(error::bad_response("Invalid h2c upgrade response"));
+  }
+  code
     .parse::<u16>()
     .map_err(|_| error::bad_response("Invalid h2c upgrade response"))
 }
@@ -2651,6 +2657,39 @@ fn is_forbidden_response_trailer_name(name: &str) -> bool {
 #[allow(clippy::items_after_test_module)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn http1_status_code_accepts_ascii_sp_status_lines() {
+    assert_eq!(
+      http1_status_code(b"HTTP/1.1 101 Switching Protocols\r\n\r\n").unwrap(),
+      101
+    );
+    assert_eq!(
+      http1_status_code(b"HTTP/1.1 103 Early Hints\r\n\r\n").unwrap(),
+      103
+    );
+  }
+
+  #[test]
+  fn http1_status_code_rejects_non_sp_or_malformed_status_lines() {
+    for status_line in [
+      "HTTP/1.1\t101 Switching Protocols",
+      "HTTP/1.1\u{000b}101 Switching Protocols",
+      "HTTP/1.1\u{000c}101 Switching Protocols",
+      "HTTP/1.1\u{00a0}101 Switching Protocols",
+      "HTTP/1.1\u{2003}101 Switching Protocols",
+      "HTTP/1.1 10 Switching Protocols",
+      "HTTP/1.1 1011 Switching Protocols",
+      "HTTP/1.1 x01 Switching Protocols",
+      "HTTP/1.1101 Switching Protocols",
+    ] {
+      let header = format!("{status_line}\r\n\r\n");
+      assert!(
+        http1_status_code(header.as_bytes()).is_err(),
+        "expected rejection for {status_line:?}"
+      );
+    }
+  }
 
   #[test]
   fn encode_request_trailers_rejects_pseudo_headers() {
