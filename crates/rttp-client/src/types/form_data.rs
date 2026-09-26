@@ -140,6 +140,19 @@ impl ToFormData for FormData {
   }
 }
 
+/// Parse an `@`-prefixed FormData shorthand value.
+///
+/// `@path` is a file path. `@filename#path` uses only the first `#` as the
+/// filename/path delimiter so later `#` characters stay in the path. The path
+/// portion is trimmed; the filename is not.
+fn form_data_from_file_shorthand<S: AsRef<str>>(name: S, value: &str) -> FormData {
+  let rest = &value[1..];
+  match rest.split_once("#") {
+    None => FormData::with_file(name, Path::new(rest)),
+    Some((filename, path)) => FormData::with_file_and_name(name, Path::new(path.trim()), filename),
+  }
+}
+
 impl ToFormData for &str {
   /// Support format text
   /// ## sample
@@ -159,24 +172,7 @@ impl ToFormData for &str {
         if !value.starts_with("@") {
           return FormData::with_text(name, value);
         }
-        if !value.contains("#") {
-          let path = Path::new(&value[1..]);
-          return FormData::with_file(name, path);
-        }
-        let hasps: Vec<&str> = value[1..].split("#").collect::<Vec<&str>>();
-        let len = hasps.len();
-        let filename = hasps
-          .iter()
-          .enumerate()
-          .filter(|(ix, _)| ix + 1 < len)
-          .map(|(_, &v)| v)
-          .collect::<Vec<&str>>()
-          .join("#");
-        let path = hasps
-          .get(len - 1)
-          .map_or("".to_string(), |v| v.trim().to_string());
-        let path = Path::new(&path);
-        FormData::with_file_and_name(name, path, filename)
+        form_data_from_file_shorthand(name, &value)
       })
       .filter(|para: &FormData| !para.name.is_empty())
       .collect::<Vec<FormData>>()
@@ -199,25 +195,7 @@ impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> ToFormData for HashMap
           rets.push(FormData::with_text(name, value));
           continue;
         }
-        if !value.contains("#") {
-          let path = Path::new(&value[1..]);
-          rets.push(FormData::with_file(name, path));
-          continue;
-        }
-        let hasps: Vec<&str> = value[1..].split("#").collect::<Vec<&str>>();
-        let len = hasps.len();
-        let filename = hasps
-          .iter()
-          .enumerate()
-          .filter(|(ix, _)| ix + 1 < len)
-          .map(|(_, &v)| v)
-          .collect::<Vec<&str>>()
-          .join("#");
-        let path = hasps
-          .get(len - 1)
-          .map_or("".to_string(), |v| v.trim().to_string());
-        let path = Path::new(&path);
-        rets.push(FormData::with_file_and_name(name, path, filename));
+        rets.push(form_data_from_file_shorthand(name, value));
       }
     }
     rets
@@ -286,20 +264,7 @@ macro_rules! tuple_to_formdata {
                   if !value.starts_with("@") {
                     rets.push(FormData::with_text(&_name, value));
                   } else {
-                    if !value.contains("#") {
-                      let path = Path::new(&value[1..]);
-                      rets.push(FormData::with_file(&_name, path));
-                    } else {
-                      let hasps: Vec<&str> = (&value[1..]).split("#").collect::<Vec<&str>>();
-                      let len = hasps.len();
-                      let filename = hasps.iter().enumerate().filter(|(ix, _)| ix + 1 < len)
-                        .map(|(_, &v)| v)
-                        .collect::<Vec<&str>>()
-                        .join("#");
-                      let path = hasps.get(len - 1).map_or("".to_string(), |v| v.trim().to_string());
-                      let path = Path::new(&path);
-                      rets.push(FormData::with_file_and_name(&_name, path, filename));
-                    }
+                    rets.push(form_data_from_file_shorthand(&_name, value));
                   }
                   _position = 0;
                 }
@@ -410,5 +375,62 @@ mod tests {
     assert_eq!(file.type_(), &FormDataType::FILE);
     assert_eq!(file.file(), &Some(PathBuf::from("/tmp/input.txt")));
     assert_eq!(file.filename(), &Some("download.txt".to_string()));
+  }
+
+  #[test]
+  fn preserves_hashes_in_named_file_paths_for_string_hashmap_and_tuple() {
+    let path = "/tmp/dir#with#hash/input.txt";
+    let shorthand = "@download.txt#/tmp/dir#with#hash/input.txt";
+
+    let string_formdata = format!("file={}", shorthand).to_formdatas();
+    assert_eq!(string_formdata.len(), 1);
+    assert_eq!(string_formdata[0].name(), "file");
+    assert_eq!(string_formdata[0].type_(), &FormDataType::FILE);
+    assert_eq!(
+      string_formdata[0].filename(),
+      &Some("download.txt".to_string())
+    );
+    assert_eq!(string_formdata[0].file(), &Some(PathBuf::from(path)));
+
+    let mut values = HashMap::new();
+    values.insert("file", shorthand);
+    let hashmap_formdata = values.to_formdatas();
+    assert_eq!(hashmap_formdata.len(), 1);
+    assert_eq!(hashmap_formdata[0].type_(), &FormDataType::FILE);
+    assert_eq!(
+      hashmap_formdata[0].filename(),
+      &Some("download.txt".to_string())
+    );
+    assert_eq!(hashmap_formdata[0].file(), &Some(PathBuf::from(path)));
+
+    let tuple_formdata = ("file", shorthand).to_formdatas();
+    assert_eq!(tuple_formdata.len(), 1);
+    assert_eq!(tuple_formdata[0].name(), "file");
+    assert_eq!(tuple_formdata[0].type_(), &FormDataType::FILE);
+    assert_eq!(
+      tuple_formdata[0].filename(),
+      &Some("download.txt".to_string())
+    );
+    assert_eq!(tuple_formdata[0].file(), &Some(PathBuf::from(path)));
+  }
+
+  #[test]
+  fn trims_named_file_path_whitespace_and_keeps_plain_file_filename() {
+    let named = " named = @download.txt# /tmp/input.txt ".to_formdatas();
+    assert_eq!(named.len(), 1);
+    assert_eq!(named[0].name(), "named");
+    assert_eq!(named[0].type_(), &FormDataType::FILE);
+    assert_eq!(named[0].filename(), &Some("download.txt".to_string()));
+    assert_eq!(named[0].file(), &Some(PathBuf::from("/tmp/input.txt")));
+
+    let plain = "file=@/tmp/input.txt".to_formdatas();
+    assert_eq!(plain.len(), 1);
+    assert_eq!(plain[0].type_(), &FormDataType::FILE);
+    assert_eq!(plain[0].file(), &Some(PathBuf::from("/tmp/input.txt")));
+    assert_eq!(plain[0].filename(), &Some("input.txt".to_string()));
+
+    let text = "token=plain".to_formdatas();
+    assert_eq!(text[0].text(), &Some("plain".to_string()));
+    assert_eq!(text[0].file(), &None);
   }
 }
