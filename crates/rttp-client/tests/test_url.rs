@@ -164,6 +164,54 @@ fn rourl_preserves_hashes_inside_initial_url_fragment() {
 }
 
 #[test]
+fn string_form_parameters_trim_ascii_whitespace_only() {
+  let paras = " \tname\t = \tvalue\n & empty-name=value &key-only ".into_paras();
+  let parsed: Vec<_> = paras
+    .iter()
+    .map(|para| {
+      (
+        para.name().to_string(),
+        para.value().clone().unwrap_or_default(),
+      )
+    })
+    .collect();
+
+  assert_eq!(
+    parsed,
+    vec![
+      ("name".to_string(), "value".to_string()),
+      ("empty-name".to_string(), "value".to_string()),
+      ("key-only".to_string(), "".to_string()),
+    ]
+  );
+}
+
+#[test]
+fn string_form_parameters_preserve_non_ascii_boundary_data() {
+  let nbsp = '\u{00a0}';
+  let em_space = '\u{2003}';
+  let ideographic_space = '\u{3000}';
+  let input = format!("{nbsp}name{nbsp}={em_space}value{ideographic_space}&other=ok");
+  let paras = input.into_paras();
+
+  assert_eq!(paras[0].name(), &format!("{nbsp}name{nbsp}"));
+  assert_eq!(
+    paras[0].value(),
+    &Some(format!("{em_space}value{ideographic_space}"))
+  );
+
+  let url = RoUrl::with("https://example.test/get")
+    .para(format!(
+      "{nbsp}name{nbsp}={em_space}value{ideographic_space}"
+    ))
+    .to_url()
+    .expect("BAD URL");
+  assert!(url
+    .as_str()
+    .contains("%C2%A0name%C2%A0=%E2%80%83value%E3%80%80"));
+}
+
+#[test]
 fn string_form_parameters_preserve_equals_signs_in_values() {
   let paras = "token=a=b&empty=&key-only&signed=part1=part2".into_paras();
   let parsed: Vec<_> = paras

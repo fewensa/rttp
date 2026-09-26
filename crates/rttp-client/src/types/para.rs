@@ -102,7 +102,10 @@ impl IntoPara for &str {
       .iter()
       .map(|part: &&str| {
         let (name, value) = part.split_once("=").unwrap_or((part, ""));
-        Para::with_form(name.trim(), value.trim())
+        Para::with_form(
+          name.trim_matches(|character: char| character.is_ascii_whitespace()),
+          value.trim_matches(|character: char| character.is_ascii_whitespace()),
+        )
       })
       .filter(|para: &Para| !para.name.is_empty())
       .collect::<Vec<Para>>()
