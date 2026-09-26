@@ -194,10 +194,7 @@ impl Cookie {
         "same_site" | "samesite" => {
           builder.same_site(value);
         }
-        _ => {
-          builder.name(name);
-          builder.value(value);
-        }
+        _ => {}
       }
     }
     Ok(builder.build())
@@ -223,6 +220,35 @@ mod tests {
     assert!(cookie.secure());
     assert!(cookie.http_only());
     assert!(cookie.host_only());
+  }
+
+  #[test]
+  fn parse_ignores_unknown_attribute_before_recognized_attributes() {
+    let cookie = Cookie::parse("token=value; Unknown=discard; Path=/; Secure").unwrap();
+
+    assert_eq!(cookie.name(), "token");
+    assert_eq!(cookie.value(), "value");
+    assert_eq!(cookie.path().as_deref(), Some("/"));
+    assert!(cookie.secure());
+  }
+
+  #[test]
+  fn parse_ignores_unknown_attribute_between_recognized_attributes() {
+    let cookie = Cookie::parse("token=value; Path=/; Unknown=discard; HttpOnly").unwrap();
+
+    assert_eq!(cookie.name(), "token");
+    assert_eq!(cookie.value(), "value");
+    assert_eq!(cookie.path().as_deref(), Some("/"));
+    assert!(cookie.http_only());
+  }
+
+  #[test]
+  fn parse_ignores_unknown_attribute_after_recognized_attributes() {
+    let cookie = Cookie::parse("token=value; Secure; Unknown").unwrap();
+
+    assert_eq!(cookie.name(), "token");
+    assert_eq!(cookie.value(), "value");
+    assert!(cookie.secure());
   }
 
   #[test]
