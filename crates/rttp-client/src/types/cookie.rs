@@ -276,7 +276,8 @@ mod tests {
 
   #[test]
   fn parse_only_trims_http_whitespace() {
-    let cookie = Cookie::parse("token=\u{00a0}value\u{00a0};\u{000b}Path=/;\u{000c}Secure").unwrap();
+    let cookie =
+      Cookie::parse("token=\u{00a0}value\u{00a0};\u{000b}Path=/;\u{000c}Secure").unwrap();
 
     assert_eq!(cookie.value(), "\u{00a0}value\u{00a0}");
     assert!(cookie.path().is_none());
