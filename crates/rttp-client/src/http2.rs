@@ -1399,9 +1399,16 @@ fn regular_headers(header: &str) -> error::Result<Vec<(String, String)>> {
   let mut regular = Vec::with_capacity(fields.len());
   for (name, value) in fields {
     if name == "te" {
-      let te = Te::parse(&value).map_err(|error| error::builder_with_message(error.to_string()))?;
-      if te.codings().iter().any(|coding| coding.is_trailers()) {
-        regular.push((name, "trailers".to_string()));
+      let trailers = value.split(',').find(|member| {
+        let coding = member.split_once(';').map_or(*member, |(coding, _)| coding);
+        trim_http_ows(coding).eq_ignore_ascii_case("trailers")
+      });
+      if let Some(trailers) = trailers {
+        let te =
+          Te::parse(trailers).map_err(|error| error::builder_with_message(error.to_string()))?;
+        if te.codings().iter().any(|coding| coding.is_trailers()) {
+          regular.push((name, "trailers".to_string()));
+        }
       }
       continue;
     }
@@ -2735,7 +2742,7 @@ mod tests {
       "Connection: \tKeep-Alive, X-Hop, upgrade\t \r\n",
       "Keep-Alive: timeout=5\r\n",
       "Host: example.test\r\n",
-      "TE: \tgzip,\t trailers\t \r\n",
+      "TE: \tcustom;level=1,\t trailers\t \r\n",
       "X-Hop: remove-me\r\n",
       "\r\n",
     ))
