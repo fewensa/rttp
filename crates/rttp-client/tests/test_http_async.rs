@@ -15,7 +15,7 @@ use futures::executor::block_on;
 #[cfg(feature = "async")]
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, Cursor as AsyncCursor};
 #[cfg(feature = "async")]
-use rttp_client::types::{Proxy, StatusCode};
+use rttp_client::types::{Header, Proxy, StatusCode};
 #[cfg(feature = "async")]
 use rttp_client::{
   async_streaming_response_after_header, Config, HttpClient,
@@ -311,6 +311,31 @@ fn spawn_stalled_http_server() -> (std::net::SocketAddr, thread::JoinHandle<()>)
     thread::sleep(Duration::from_millis(250));
   });
   (addr, handle)
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_outbound_headers_reject_non_ows_whitespace_before_connecting() {
+  for whitespace in ["\u{000b}", "\u{000c}", "\r", "\n"] {
+    let (addr, handle) = support::capture_optional_raw_http_request(Duration::from_millis(250));
+    block_on(async {
+      let error = client()
+        .get()
+        .url(format!("http://{}/async-non-ows", addr))
+        .header(Header::new("X-Request", format!("{whitespace}keep-me")))
+        .rasync()
+        .await
+        .expect_err("non-OWS async request padding must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      handle
+        .join()
+        .expect("optional async request capture server")
+        .is_empty(),
+      "non-OWS async request padding opened a socket"
+    );
+  }
 }
 
 #[test]

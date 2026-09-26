@@ -3,7 +3,9 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use base64::Engine;
+use rttp_protocol::connection::Connection;
 use rttp_protocol::http1::split_status_line;
+use rttp_protocol::te::Te;
 use url::Url;
 
 use crate::connection::connect_tcp_stream_with_io_timeouts;
@@ -824,7 +826,7 @@ fn write_request(
       .header_table_size
       .min(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE),
   );
-  let regular_header_fields = regular_headers(request.header());
+  let regular_header_fields = regular_headers(request.header())?;
   let trailer_fields = request_trailer_fields(request);
   enforce_peer_request_header_list_size(request, url, &regular_header_fields, peer_settings)?;
   let mut dynamic_field_plan = Vec::new();
@@ -1357,36 +1359,77 @@ fn authority(url: &Url) -> error::Result<String> {
   })
 }
 
-fn regular_headers(header: &str) -> Vec<(String, String)> {
-  let connection_tokens = header
-    .lines()
-    .skip(1)
-    .filter_map(|line| line.split_once(':'))
-    .filter(|(name, _)| name.trim().eq_ignore_ascii_case("connection"))
-    .flat_map(|(_, value)| value.split(','))
-    .map(|token| token.trim().to_ascii_lowercase())
-    .filter(|token| !token.is_empty())
-    .collect::<Vec<_>>();
+fn regular_headers(header: &str) -> error::Result<Vec<(String, String)>> {
+  let mut connection_values = Vec::new();
+  let mut fields = Vec::new();
 
-  header
-    .lines()
-    .skip(1)
-    .filter_map(|line| line.split_once(':'))
-    .filter_map(|(name, value)| {
-      let name = name.trim().to_ascii_lowercase();
-      let value = value.trim();
-      if name.eq_ignore_ascii_case("te") {
-        return value
-          .split(',')
-          .any(|member| member.trim().eq_ignore_ascii_case("trailers"))
-          .then_some((name, "trailers".to_string()));
+  for line in header.lines().skip(1) {
+    if line.is_empty() {
+      continue;
+    }
+    let Some((name, value)) = line.split_once(':') else {
+      return Err(invalid_http2_request_header());
+    };
+    if has_non_ows_padding(name) || has_non_ows_padding(value) {
+      return Err(invalid_http2_request_header());
+    }
+    let name = trim_http_ows(name);
+    let value = trim_http_ows(value);
+    if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
+      return Err(invalid_http2_request_header());
+    }
+    if name.eq_ignore_ascii_case("connection") {
+      connection_values.push(value);
+      continue;
+    }
+    fields.push((name.to_ascii_lowercase(), value.to_string()));
+  }
+
+  let connection_tokens = if connection_values.is_empty() {
+    Vec::new()
+  } else {
+    Connection::parse_values(connection_values)
+      .map_err(|error| error::builder_with_message(error.to_string()))?
+      .tokens()
+      .into_iter()
+      .map(|token| token.to_ascii_lowercase())
+      .collect::<Vec<_>>()
+  };
+
+  let mut regular = Vec::with_capacity(fields.len());
+  for (name, value) in fields {
+    if name == "te" {
+      let trailers = value.split(',').find(|member| {
+        let coding = member.split_once(';').map_or(*member, |(coding, _)| coding);
+        trim_http_ows(coding).eq_ignore_ascii_case("trailers")
+      });
+      if let Some(trailers) = trailers {
+        let te =
+          Te::parse(trailers).map_err(|error| error::builder_with_message(error.to_string()))?;
+        if te.codings().iter().any(|coding| coding.is_trailers()) {
+          regular.push((name, "trailers".to_string()));
+        }
       }
-      if is_forbidden_request_header_name(&name, &connection_tokens) {
-        return None;
-      }
-      Some((name, value.to_string()))
-    })
-    .collect()
+      continue;
+    }
+    if is_forbidden_request_header_name(&name, &connection_tokens) {
+      continue;
+    }
+    regular.push((name, value));
+  }
+  Ok(regular)
+}
+
+fn invalid_http2_request_header() -> error::Error {
+  error::builder_with_message("Invalid HTTP/2 request header")
+}
+
+fn trim_http_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
+}
+
+fn has_non_ows_padding(value: &str) -> bool {
+  trim_http_ows(value) != value.trim()
 }
 
 fn is_forbidden_request_header_name(name: &str, connection_tokens: &[String]) -> bool {
@@ -2688,6 +2731,49 @@ mod tests {
         http1_status_code(header.as_bytes()).is_err(),
         "expected rejection for {status_line:?}"
       );
+    }
+  }
+
+  #[test]
+  fn regular_headers_accepts_http_ows_and_preserves_filtering() {
+    let fields = regular_headers(concat!(
+      "GET / HTTP/1.1\r\n",
+      " \tX-End-To-End\t : \tkeep-me\t \r\n",
+      "Connection: \tKeep-Alive, X-Hop, upgrade\t \r\n",
+      "Keep-Alive: timeout=5\r\n",
+      "Host: example.test\r\n",
+      "TE: \tcustom;level=1,\t trailers\t \r\n",
+      "X-Hop: remove-me\r\n",
+      "\r\n",
+    ))
+    .expect("HTTP OWS padding should convert");
+
+    assert_eq!(
+      fields,
+      vec![
+        ("x-end-to-end".to_string(), "keep-me".to_string()),
+        ("te".to_string(), "trailers".to_string()),
+      ]
+    );
+  }
+
+  #[test]
+  fn regular_headers_rejects_non_ows_whitespace_padding() {
+    for whitespace in ["\u{000b}", "\u{000c}", "\u{00a0}", "\u{2003}"] {
+      for header in [
+        format!("GET / HTTP/1.1\r\n{whitespace}X-End-To-End: keep-me\r\n\r\n"),
+        format!("GET / HTTP/1.1\r\nX-End-To-End{whitespace}: keep-me\r\n\r\n"),
+        format!("GET / HTTP/1.1\r\nX-End-To-End: {whitespace}keep-me\r\n\r\n"),
+        format!("GET / HTTP/1.1\r\nX-End-To-End: keep-me{whitespace}\r\n\r\n"),
+        format!("GET / HTTP/1.1\r\nConnection: {whitespace}close\r\nX-End-To-End: keep-me\r\n\r\n"),
+        format!("GET / HTTP/1.1\r\nConnection: close{whitespace}\r\nX-End-To-End: keep-me\r\n\r\n"),
+        format!("GET / HTTP/1.1\r\nTE: {whitespace}trailers\r\n\r\n"),
+        format!("GET / HTTP/1.1\r\nTE: trailers{whitespace}\r\n\r\n"),
+      ] {
+        let err = regular_headers(&header)
+          .expect_err("non-OWS whitespace must not convert into HTTP/2 fields");
+        assert!(err.is_builder(), "unexpected error: {err}");
+      }
     }
   }
 
