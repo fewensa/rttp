@@ -152,9 +152,10 @@ impl ToFormData for &str {
       .collect::<Vec<&str>>()
       .iter()
       .map(|part: &&str| {
-        let pvs: Vec<&str> = part.split("=").collect::<Vec<&str>>();
-        let name = pvs.first().map_or("".to_string(), |v| v.trim().to_string());
-        let value = pvs.get(1).map_or("".to_string(), |v| v.trim().to_string());
+        let (name, value) = part.split_once("=").map_or_else(
+          || (part.trim().to_string(), "".to_string()),
+          |(name, value)| (name.trim().to_string(), value.trim().to_string()),
+        );
         if !value.starts_with("@") {
           return FormData::with_text(name, value);
         }
@@ -338,3 +339,44 @@ tuple_to_formdata! { a b c d e f g h i j k l m n o p q r s t u v w }
 tuple_to_formdata! { a b c d e f g h i j k l m n o p q r s t u v w x }
 tuple_to_formdata! { a b c d e f g h i j k l m n o p q r s t u v w x y }
 tuple_to_formdata! { a b c d e f g h i j k l m n o p q r s t u v w x y z }
+
+#[cfg(test)]
+mod tests {
+  use super::{FormDataType, ToFormData};
+  use std::path::PathBuf;
+
+  #[test]
+  fn preserves_equals_in_shorthand_values_and_trims_whitespace() {
+    let formdata = " token = a=b=c & other = spaced = value ".to_formdatas();
+
+    assert_eq!(formdata.len(), 2);
+    assert_eq!(formdata[0].name(), "token");
+    assert_eq!(formdata[0].text(), &Some("a=b=c".to_string()));
+    assert_eq!(formdata[1].name(), "other");
+    assert_eq!(formdata[1].text(), &Some("spaced = value".to_string()));
+  }
+
+  #[test]
+  fn keeps_file_forms_and_filters_empty_names() {
+    let formdata =
+      "=ignored&file=@/tmp/input.txt&named=@download.txt#/tmp/input.txt".to_formdatas();
+
+    assert_eq!(formdata.len(), 2);
+    assert_eq!(formdata[0].name(), "file");
+    assert_eq!(formdata[0].type_(), &FormDataType::FILE);
+    assert_eq!(formdata[0].file(), &Some(PathBuf::from("/tmp/input.txt")));
+    assert_eq!(formdata[1].name(), "named");
+    assert_eq!(formdata[1].filename(), &Some("download.txt".to_string()));
+    assert_eq!(formdata[1].file(), &Some(PathBuf::from("/tmp/input.txt")));
+  }
+
+  #[test]
+  fn reuses_shorthand_parsing_for_string_and_tuples() {
+    let value = "token=a=b=c".to_string();
+    let string_formdata = value.to_formdatas();
+    let tuple_formdata = ("token=a=b=c",).to_formdatas();
+
+    assert_eq!(string_formdata[0].text(), &Some("a=b=c".to_string()));
+    assert_eq!(tuple_formdata[0].text(), &Some("a=b=c".to_string()));
+  }
+}
