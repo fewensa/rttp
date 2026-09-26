@@ -1054,7 +1054,18 @@ pub(crate) fn decode_http2_request_headers(
         }
         decoded.extended_connect_protocol = Some(value);
       }
-      name if name.starts_with(':') => {}
+      name if name.starts_with(':') => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "unknown HTTP/2 request pseudo-header",
+        ));
+      }
+      name if !is_http2_lowercase_field_name(name) => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "HTTP/2 request header name must be lowercase",
+        ));
+      }
       name if is_forbidden_http2_request_header_name(name) => {
         return Err(io::Error::new(
           io::ErrorKind::InvalidData,
@@ -1075,6 +1086,10 @@ pub(crate) fn decode_http2_request_headers(
   }
 
   Ok(decoded)
+}
+
+pub(crate) fn is_http2_lowercase_field_name(name: &str) -> bool {
+  !name.bytes().any(|byte| byte.is_ascii_uppercase())
 }
 
 pub(crate) fn is_forbidden_http2_request_header_name(name: &str) -> bool {
@@ -1101,6 +1116,12 @@ pub(crate) fn decode_http2_request_trailers(
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
         "HTTP/2 request trailer contained pseudo-header",
+      ));
+    }
+    if !is_http2_lowercase_field_name(name) {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "HTTP/2 request trailer name must be lowercase",
       ));
     }
     if !is_http_token(name)
@@ -2605,5 +2626,100 @@ mod tests {
         );
       }
     }
+  }
+
+  fn encode_minimal_http2_get_headers() -> Vec<u8> {
+    // Indexed :method GET, :path /, :scheme http
+    vec![0x82, 0x84, 0x86]
+  }
+
+  #[test]
+  fn decode_http2_request_headers_rejects_unknown_status_pseudo_header() {
+    let mut block = encode_minimal_http2_get_headers();
+    encode_http2_literal_new_name_without_indexing(&mut block, b":status", b"200")
+      .expect(":status literal should encode");
+    let mut decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
+    let error =
+      match decode_http2_request_headers(&block, &mut decoder, HTTP2_MAX_HEADER_LIST_SIZE, false) {
+        Ok(_) => panic!("unknown request pseudo-header :status must be rejected"),
+        Err(error) => error,
+      };
+    assert_eq!("unknown HTTP/2 request pseudo-header", error.to_string());
+  }
+
+  #[test]
+  fn decode_http2_request_headers_rejects_uppercase_header_name() {
+    let mut block = encode_minimal_http2_get_headers();
+    encode_http2_literal_new_name_without_indexing(&mut block, b"Header", b"value")
+      .expect("Header literal should encode");
+    let mut decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
+    let error =
+      match decode_http2_request_headers(&block, &mut decoder, HTTP2_MAX_HEADER_LIST_SIZE, false) {
+        Ok(_) => panic!("uppercase HTTP/2 request header name must be rejected"),
+        Err(error) => error,
+      };
+    assert_eq!(
+      "HTTP/2 request header name must be lowercase",
+      error.to_string()
+    );
+  }
+
+  #[test]
+  fn decode_http2_request_trailers_rejects_uppercase_trailer_name() {
+    let mut block = Vec::new();
+    encode_http2_literal_new_name_without_indexing(&mut block, b"X-Trailer", b"value")
+      .expect("X-Trailer literal should encode");
+    let mut decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
+    let error =
+      match decode_http2_request_trailers(&block, &mut decoder, HTTP2_MAX_HEADER_LIST_SIZE) {
+        Ok(_) => panic!("uppercase HTTP/2 request trailer name must be rejected"),
+        Err(error) => error,
+      };
+    assert_eq!(
+      "HTTP/2 request trailer name must be lowercase",
+      error.to_string()
+    );
+  }
+
+  #[test]
+  fn decode_http2_request_headers_keeps_path_and_lowercase_fields() {
+    let mut block = encode_minimal_http2_get_headers();
+    encode_http2_literal_new_name_without_indexing(&mut block, b"te", b"trailers")
+      .expect("te: trailers literal should encode");
+    encode_http2_literal_new_name_without_indexing(&mut block, b"x-custom", b"ok")
+      .expect("x-custom literal should encode");
+    let mut decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
+    let decoded =
+      match decode_http2_request_headers(&block, &mut decoder, HTTP2_MAX_HEADER_LIST_SIZE, false) {
+        Ok(decoded) => decoded,
+        Err(error) => panic!("supported pseudos and lowercase headers must decode: {error}"),
+      };
+    assert_eq!(decoded.method.as_deref(), Some("GET"));
+    assert_eq!(decoded.target.as_deref(), Some("/"));
+    assert_eq!(decoded.scheme.as_deref(), Some("http"));
+    assert_eq!(
+      decoded.headers,
+      vec![
+        ("te".to_string(), "trailers".to_string()),
+        ("x-custom".to_string(), "ok".to_string()),
+      ]
+    );
+
+    let mut trailers = Vec::new();
+    encode_http2_literal_new_name_without_indexing(&mut trailers, b"x-trailer", b"done")
+      .expect("x-trailer literal should encode");
+    let mut trailer_decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
+    let decoded_trailers = match decode_http2_request_trailers(
+      &trailers,
+      &mut trailer_decoder,
+      HTTP2_MAX_HEADER_LIST_SIZE,
+    ) {
+      Ok(decoded) => decoded,
+      Err(error) => panic!("lowercase request trailers must decode: {error}"),
+    };
+    assert_eq!(
+      decoded_trailers,
+      vec![("x-trailer".to_string(), "done".to_string())]
+    );
   }
 }
