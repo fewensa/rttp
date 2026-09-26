@@ -270,7 +270,7 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
 
     stream
       .write_all(
-        b"HTTP/1.1 101 Switching Protocols\r\nConnection: \tUpGrAdE \t, \tkeep-alive\t\r\nUpgrade: \th2C\t\r\n\r\n",
+        b"HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 101 Switching Protocols\r\nConnection: \tUpGrAdE \t, \tkeep-alive\t\r\nUpgrade: \th2C\t\r\n\r\n",
       )
       .expect("write upgrade response");
 
@@ -322,6 +322,34 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
   assert_eq!(200, response.code());
   assert_eq!("HTTP/2", response.version());
   assert_eq!("h2c upgrade", response.body().string().unwrap());
+
+  handle.join().expect("h2c upgrade peer thread");
+}
+
+#[test]
+fn http2_upgrade_rejects_non_sp_status_line() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+    let _request = read_http1_request_head(&mut stream);
+    stream
+      .write_all(
+        b"HTTP/1.1\t101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n",
+      )
+      .expect("write malformed upgrade response");
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/reject-non-sp", addr))
+    .emit_http2_upgrade()
+    .expect_err("non-SP status separator must reject h2c upgrade");
+  assert!(
+    error.to_string().contains("Invalid h2c upgrade response"),
+    "unexpected error: {error}"
+  );
 
   handle.join().expect("h2c upgrade peer thread");
 }
