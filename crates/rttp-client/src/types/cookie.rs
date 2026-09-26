@@ -138,8 +138,8 @@ impl Cookie {
       let (name, value) = item
         .split_once('=')
         .map_or((item, ""), |(name, value)| (name, value));
-      let name = name.trim();
-      let value = value.trim();
+      let name = name.trim_matches([' ', '\t']);
+      let value = value.trim_matches([' ', '\t']);
       if index == 0 {
         builder.name(name);
         builder.value(value);
@@ -272,6 +272,25 @@ mod tests {
     assert!(cookie.persistent());
     assert_eq!(cookie.name(), "token");
     assert_eq!(cookie.value(), "value");
+  }
+
+  #[test]
+  fn parse_only_trims_http_whitespace() {
+    let cookie = Cookie::parse("token=\u{00a0}value\u{00a0};\u{000b}Path=/;\u{000c}Secure").unwrap();
+
+    assert_eq!(cookie.value(), "\u{00a0}value\u{00a0}");
+    assert!(cookie.path().is_none());
+    assert!(!cookie.secure());
+  }
+
+  #[test]
+  fn parse_trims_space_and_horizontal_tab() {
+    let cookie = Cookie::parse("\t token \t=\tvalue\t;\t Path\t=\t/\t;\t Secure\t").unwrap();
+
+    assert_eq!(cookie.name(), "token");
+    assert_eq!(cookie.value(), "value");
+    assert_eq!(cookie.path().as_deref(), Some("/"));
+    assert!(cookie.secure());
   }
 }
 
