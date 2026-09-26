@@ -358,7 +358,8 @@ mod tests {
 
   #[test]
   fn keeps_file_forms_and_filters_empty_names() {
-    let formdata = "=ignored&file=@/tmp/input.txt&named=@download.txt#/tmp/input.txt".to_formdatas();
+    let formdata =
+      "=ignored&file=@/tmp/input.txt&named=@download.txt#/tmp/input.txt".to_formdatas();
 
     assert_eq!(formdata.len(), 2);
     assert_eq!(formdata[0].name(), "file");
