@@ -148,11 +148,8 @@ impl Cookie {
       match name.to_ascii_lowercase().as_str() {
         "expires" => {
           let value = value.replace("-", " ");
-          match httpdate::parse_http_date(&value[..]) {
-            Ok(v) => {
-              builder.expires(v);
-            }
-            Err(e) => eprintln!("=> {:?}", e),
+          if let Ok(v) = httpdate::parse_http_date(&value[..]) {
+            builder.expires(v);
           }
         }
         "path" => {
@@ -226,6 +223,29 @@ mod tests {
     assert!(cookie.secure());
     assert!(cookie.http_only());
     assert!(cookie.host_only());
+  }
+
+  #[test]
+  fn parse_malformed_expires_keeps_cookie_without_persistence() {
+    let cookie = Cookie::parse("token=value; Expires=not-a-date; Path=/; Secure").unwrap();
+
+    assert_eq!(cookie.name(), "token");
+    assert_eq!(cookie.value(), "value");
+    assert!(cookie.expires().is_none());
+    assert!(!cookie.persistent());
+    assert_eq!(cookie.path().as_deref(), Some("/"));
+    assert!(cookie.secure());
+  }
+
+  #[test]
+  fn parse_valid_imf_fixdate_expires_sets_persistence() {
+    let cookie =
+      Cookie::parse("token=value; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/").unwrap();
+
+    assert!(cookie.expires().is_some());
+    assert!(cookie.persistent());
+    assert_eq!(cookie.name(), "token");
+    assert_eq!(cookie.value(), "value");
   }
 }
 
