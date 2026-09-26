@@ -2046,6 +2046,43 @@ fn supports_loading_mode_metadata_is_absent_without_a_header() {
 }
 
 #[test]
+fn buffered_response_accepts_exact_http10_and_http11_version_tokens() {
+  for version in ["HTTP/1.0", "HTTP/1.1"] {
+    let raw = format!("{version} 200 OK\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .unwrap_or_else(|_| panic!("{version} buffered response should parse"));
+
+    assert_eq!(200, response.code());
+    assert_eq!(version, response.version());
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+}
+
+#[test]
+fn buffered_response_rejects_invalid_http_version_tokens() {
+  for status_line in [
+    "http/1.1 200 OK",
+    "Http/1.1 200 OK",
+    "HtTp/1.1 200 OK",
+    "HTTP/1.2 200 OK",
+    "HTTP/2.0 200 OK",
+    "HTTP/2 200 OK",
+    "HTTP/0.9 200 OK",
+    "HTTP/9.9 200 OK",
+    "200 OK",
+  ] {
+    let raw = format!("{status_line}\r\nContent-Length: 2\r\n\r\nOK");
+    let error = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect_err("invalid HTTP-version token should be rejected");
+
+    assert!(
+      error.to_string().contains("Response status not have code"),
+      "unexpected error for {status_line:?}: {error}"
+    );
+  }
+}
+
+#[test]
 fn test_parse_response() {
   let s = "HTTP/1.1 200 OK\r\n\
         Content-Length: 18\r\n\

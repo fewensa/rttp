@@ -90,7 +90,7 @@ pub fn split_status_line(status_line: &str) -> Option<(&str, &str, &str)> {
   }
 
   let (version, rest) = status_line.split_once(' ')?;
-  if version.is_empty() || version.chars().any(char::is_whitespace) {
+  if version != "HTTP/1.0" && version != "HTTP/1.1" {
     return None;
   }
 
@@ -254,6 +254,10 @@ mod tests {
       Some(("HTTP/1.1", "200", "OK"))
     );
     assert_eq!(
+      split_status_line("HTTP/1.0 200 OK"),
+      Some(("HTTP/1.0", "200", "OK"))
+    );
+    assert_eq!(
       split_status_line("HTTP/1.1 200"),
       Some(("HTTP/1.1", "200", ""))
     );
@@ -261,6 +265,30 @@ mod tests {
       split_status_line("HTTP/1.1 103 Early Hints"),
       Some(("HTTP/1.1", "103", "Early Hints"))
     );
+  }
+
+  #[test]
+  fn split_status_line_rejects_invalid_http_version_tokens() {
+    for status_line in [
+      "http/1.1 200 OK",
+      "Http/1.1 200 OK",
+      "HtTp/1.1 200 OK",
+      "HTTP/1.2 200 OK",
+      "HTTP/2.0 200 OK",
+      "HTTP/2 200 OK",
+      "HTTP/0.9 200 OK",
+      "HTTP/9.9 200 OK",
+      "HTTPS/1.1 200 OK",
+      "200 OK",
+      " 200 OK",
+      "HTTP/1.1",
+    ] {
+      assert_eq!(
+        split_status_line(status_line),
+        None,
+        "expected rejection for {status_line:?}"
+      );
+    }
   }
 
   #[test]
