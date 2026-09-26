@@ -97,17 +97,16 @@ impl Cookie {
 }
 
 fn serialize_legacy_cookie_field(value: &str) -> String {
-  if value.bytes().all(is_cookie_octet) {
-    return value.to_owned();
-  }
-  if value.bytes().all(is_generated_quoted_cookie_value_byte) {
-    return format!("\"{}\"", value);
-  }
-  value
+  let sanitized: String = value
     .bytes()
-    .filter(|&byte| is_cookie_octet(byte))
+    .filter(|&byte| is_generated_quoted_cookie_value_byte(byte))
     .map(char::from)
-    .collect()
+    .collect();
+  if sanitized.bytes().all(is_cookie_octet) {
+    sanitized
+  } else {
+    format!("\"{}\"", sanitized)
+  }
 }
 
 fn is_cookie_octet(byte: u8) -> bool {
@@ -217,7 +216,7 @@ impl Cookie {
 
 #[cfg(test)]
 mod tests {
-  use super::Cookie;
+  use super::{Cookie, ToCookie};
 
   fn assert_no_forbidden_wire_bytes(serialized: &str) {
     assert!(
@@ -274,6 +273,31 @@ mod tests {
     assert_no_forbidden_wire_bytes(&serialized);
     assert!(!serialized.contains('"'));
     assert!(!serialized.contains('\\'));
+  }
+
+  #[test]
+  fn string_preserves_parsed_quoted_value_with_space() {
+    let cookie = Cookie::parse(r#"session="abc def""#).unwrap();
+
+    assert_eq!(cookie.value(), r#""abc def""#);
+    assert_eq!(cookie.string(), r#"session="abc def""#);
+    assert_no_forbidden_wire_bytes(&cookie.string());
+  }
+
+  #[test]
+  fn string_preserves_quoted_value_from_str_to_cookie() {
+    let cookie = r#"session="abc def""#.to_cookie().unwrap();
+
+    assert_eq!(cookie.string(), r#"session="abc def""#);
+    assert_no_forbidden_wire_bytes(&cookie.string());
+  }
+
+  #[test]
+  fn string_quotes_remaining_safe_printables_after_stripping_forbidden_bytes() {
+    let cookie = Cookie::builder().name("token").value("ab\nc def").build();
+
+    assert_eq!(cookie.string(), r#"token="abc def""#);
+    assert_no_forbidden_wire_bytes(&cookie.string());
   }
 
   #[test]
