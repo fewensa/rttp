@@ -670,7 +670,7 @@ pub(crate) fn parse_informational_response(header: &[u8]) -> error::Result<Infor
   }
   let (status_line, header_lines) = split_response_head_lines(header)?;
   let (version, status_code, reason) = parse_response_status_line(status_line)?;
-  if !version.eq_ignore_ascii_case("HTTP/1.1") || !(100..200).contains(&status_code) {
+  if version != "HTTP/1.1" || !(100..200).contains(&status_code) {
     return Err(error::bad_response("Invalid informational response"));
   }
 
@@ -1482,6 +1482,52 @@ mod tests {
   }
 
   #[test]
+  fn origin_response_accepts_exact_http10_and_http11_version_tokens() {
+    for version in ["HTTP/1.0", "HTTP/1.1"] {
+      let raw = format!("{version} 200 OK\r\nContent-Length: 2\r\n\r\nOK");
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      let response = reader
+        .response()
+        .unwrap_or_else(|_| panic!("{version} final response should parse"));
+
+      assert_eq!(200, response.code());
+      assert_eq!(version, response.version());
+      assert_eq!("OK", response.body().string().unwrap());
+    }
+  }
+
+  #[test]
+  fn origin_response_rejects_invalid_http_version_tokens() {
+    for status_line in [
+      "http/1.1 200 OK",
+      "Http/1.1 200 OK",
+      "HtTp/1.1 200 OK",
+      "HTTP/1.2 200 OK",
+      "HTTP/2.0 200 OK",
+      "HTTP/2 200 OK",
+      "HTTP/0.9 200 OK",
+      "HTTP/9.9 200 OK",
+      "200 OK",
+    ] {
+      let raw = format!("{status_line}\r\nContent-Length: 2\r\n\r\nOK");
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      let error = reader
+        .response()
+        .expect_err("invalid HTTP-version token should be rejected");
+      assert!(
+        error.to_string().contains("Response status not have code"),
+        "unexpected error for {status_line:?}: {error}"
+      );
+    }
+  }
+
+  #[test]
   fn origin_response_rejects_non_sp_status_line_before_body() {
     for status_line in [
       "HTTP/1.1\t200 OK",
@@ -1514,7 +1560,13 @@ mod tests {
     for status_line in [
       "HTTP/1.1 103 Early\x7fHints",
       "HTTP/1.0 103 Early Hints",
+      "http/1.1 103 Early Hints",
+      "Http/1.1 103 Early Hints",
+      "HtTp/1.1 103 Early Hints",
+      "HTTP/1.2 103 Early Hints",
+      "HTTP/2.0 103 Early Hints",
       "HTTP/9.9 103 Early Hints",
+      "103 Early Hints",
     ] {
       let raw = format!(
         "{status_line}\r\nX-Interim: ignored\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
@@ -1528,7 +1580,8 @@ mod tests {
         .expect_err("malformed informational status line should be rejected");
 
       assert!(
-        error.to_string().contains("Invalid informational response"),
+        error.to_string().contains("Response status not have code")
+          || error.to_string().contains("Invalid informational response"),
         "unexpected error for {status_line:?}: {error}"
       );
     }
