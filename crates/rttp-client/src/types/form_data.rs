@@ -140,16 +140,22 @@ impl ToFormData for FormData {
   }
 }
 
+fn trim_ascii_whitespace(value: &str) -> &str {
+  value.trim_matches(|character: char| character.is_ascii_whitespace())
+}
+
 /// Parse an `@`-prefixed FormData shorthand value.
 ///
 /// `@path` is a file path. `@filename#path` uses only the first `#` as the
 /// filename/path delimiter so later `#` characters stay in the path. The path
-/// portion is trimmed; the filename is not.
+/// portion is trimmed of ASCII whitespace only; the filename is not.
 fn form_data_from_file_shorthand<S: AsRef<str>>(name: S, value: &str) -> FormData {
   let rest = &value[1..];
   match rest.split_once("#") {
     None => FormData::with_file(name, Path::new(rest)),
-    Some((filename, path)) => FormData::with_file_and_name(name, Path::new(path.trim()), filename),
+    Some((filename, path)) => {
+      FormData::with_file_and_name(name, Path::new(trim_ascii_whitespace(path)), filename)
+    }
   }
 }
 
@@ -166,8 +172,13 @@ impl ToFormData for &str {
       .iter()
       .map(|part: &&str| {
         let (name, value) = part.split_once("=").map_or_else(
-          || (part.trim().to_string(), "".to_string()),
-          |(name, value)| (name.trim().to_string(), value.trim().to_string()),
+          || (trim_ascii_whitespace(part).to_string(), "".to_string()),
+          |(name, value)| {
+            (
+              trim_ascii_whitespace(name).to_string(),
+              trim_ascii_whitespace(value).to_string(),
+            )
+          },
         );
         if !value.starts_with("@") {
           return FormData::with_text(name, value);
@@ -308,7 +319,7 @@ tuple_to_formdata! { a b c d e f g h i j k l m n o p q r s t u v w x y z }
 
 #[cfg(test)]
 mod tests {
-  use super::{FormDataType, ToFormData};
+  use super::{FormData, FormDataType, ToFormData};
   use std::collections::HashMap;
   use std::path::PathBuf;
 
@@ -432,5 +443,56 @@ mod tests {
     let text = "token=plain".to_formdatas();
     assert_eq!(text[0].text(), &Some("plain".to_string()));
     assert_eq!(text[0].file(), &None);
+  }
+
+  fn assert_named_file(formdata: &[FormData], name: &str, filename: &str, path: &str) {
+    assert_eq!(formdata.len(), 1);
+    assert_eq!(formdata[0].name(), name);
+    assert_eq!(formdata[0].type_(), &FormDataType::FILE);
+    assert_eq!(formdata[0].filename(), &Some(filename.to_string()));
+    assert_eq!(formdata[0].file(), &Some(PathBuf::from(path)));
+  }
+
+  #[test]
+  fn named_file_path_trims_ascii_edge_whitespace_only() {
+    let named = " named = @download.txt# \t/tmp/input.txt\t ".to_formdatas();
+    assert_named_file(&named, "named", "download.txt", "/tmp/input.txt");
+
+    let plain = "file=@ /tmp/input.txt ".to_formdatas();
+    assert_eq!(plain.len(), 1);
+    assert_eq!(plain[0].type_(), &FormDataType::FILE);
+    assert_eq!(plain[0].file(), &Some(PathBuf::from(" /tmp/input.txt")));
+    assert_eq!(plain[0].filename(), &Some("input.txt".to_string()));
+  }
+
+  #[test]
+  fn named_file_path_preserves_non_ascii_and_later_hashes_across_shorthand() {
+    let nbsp = '\u{00a0}';
+    let em_space = '\u{2003}';
+    let path = format!("{nbsp}/tmp/dir{em_space}#with#hash/input.txt{nbsp}");
+    let shorthand = format!("@download.txt#{path}");
+
+    let str_formdata = format!("file={shorthand}").as_str().to_formdatas();
+    assert_named_file(&str_formdata, "file", "download.txt", &path);
+
+    let string_formdata = format!("file={shorthand}").to_formdatas();
+    assert_named_file(&string_formdata, "file", "download.txt", &path);
+
+    let mut values = HashMap::new();
+    values.insert("file", shorthand.as_str());
+    let hashmap_formdata = values.to_formdatas();
+    assert_named_file(&hashmap_formdata, "file", "download.txt", &path);
+
+    let plain_path = format!("{nbsp}/tmp/plain{em_space}.txt");
+    let plain_shorthand = format!("@{plain_path}");
+    let plain = format!("file={plain_shorthand}").to_formdatas();
+    assert_eq!(plain[0].file(), &Some(PathBuf::from(&plain_path)));
+
+    let mut plain_values = HashMap::new();
+    plain_values.insert("file", plain_shorthand.as_str());
+    assert_eq!(
+      plain_values.to_formdatas()[0].file(),
+      &Some(PathBuf::from(&plain_path))
+    );
   }
 }
