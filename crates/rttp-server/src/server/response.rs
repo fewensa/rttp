@@ -1,4 +1,5 @@
 use super::*;
+use rttp_protocol::is_sensitive_debug_header;
 
 pub use rttp_protocol::accept_patch::{
   AcceptPatch as HttpAcceptPatch, AcceptPatchParseError as HttpAcceptPatchParseError,
@@ -5678,31 +5679,19 @@ impl fmt::Debug for DebugHeaderValue<'_> {
   }
 }
 
-fn is_sensitive_debug_header(name: &str) -> bool {
-  let name = trim_http_ows(name);
-  name.eq_ignore_ascii_case("authorization")
-    || name.eq_ignore_ascii_case("cookie")
-    || name.eq_ignore_ascii_case("idempotency-key")
-    || name.eq_ignore_ascii_case("if")
-    || name.eq_ignore_ascii_case("lock-token")
-    || name.eq_ignore_ascii_case("origin-trial")
-    || name.eq_ignore_ascii_case("proxy-authorization")
-    || name.eq_ignore_ascii_case("sec-websocket-accept")
-    || name.eq_ignore_ascii_case("sec-websocket-key")
-    || name.eq_ignore_ascii_case("set-cookie")
-    || name.eq_ignore_ascii_case("speculation-rules")
-    || name.eq_ignore_ascii_case("traceparent")
-    || name.eq_ignore_ascii_case("tracestate")
-    || name.eq_ignore_ascii_case("baggage")
-}
-
 #[cfg(test)]
 mod debug_header_tests {
   use super::HttpHeader;
 
   #[test]
   fn debug_redacts_ows_padded_names_without_unicode_trimming() {
-    for name in [" Authorization", "Authorization ", "\tAuthorization\t"] {
+    for name in [
+      " Authorization",
+      "Authorization ",
+      "\tAuthorization\t",
+      "Origin-Trial",
+      "Speculation-Rules",
+    ] {
       let debug = format!("{:?}", HttpHeader::new(name, "Bearer secret"));
       assert!(debug.contains("[REDACTED]"));
       assert!(!debug.contains("Bearer secret"));

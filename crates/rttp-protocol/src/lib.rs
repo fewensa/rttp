@@ -120,6 +120,7 @@ pub mod sec_websocket_extensions;
 pub mod sec_websocket_key;
 pub mod sec_websocket_protocol;
 pub mod sec_websocket_version;
+pub mod sensitive_debug_header;
 pub mod server_timing;
 pub mod service_worker_allowed;
 pub mod signature;
@@ -151,3 +152,5 @@ pub mod x_forwarded_for;
 pub mod x_forwarded_host;
 pub mod x_forwarded_proto;
 pub mod x_frame_options;
+
+pub use sensitive_debug_header::is_sensitive_debug_header;

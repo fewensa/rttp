@@ -4,10 +4,11 @@ use std::io::Read;
 use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
 use crate::error;
 use crate::response::ResponseBody;
-use crate::types::{is_sensitive_debug_header, Cookie, Header, RoUrl, ToUrl};
+use crate::types::{Cookie, Header, RoUrl, ToUrl};
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::cookie::HttpSetCookie;
 use rttp_protocol::http1::{is_header_value_byte, is_token, split_status_line};
+use rttp_protocol::is_sensitive_debug_header;
 use url::Url;
 
 static CR: u8 = b'\r';
@@ -391,6 +392,8 @@ mod tests {
       .expect("empty response should build");
     response.headers(vec![
       Header::new("\tAuthorization ", "Bearer response-secret"),
+      Header::new("Origin-Trial", "origin-trial-response-secret"),
+      Header::new("Speculation-Rules", "speculation-rules-response-secret"),
       Header::new(" Accept ", "application/json"),
       Header::new("\u{2003}Authorization", "Bearer visible"),
     ]);
@@ -398,6 +401,8 @@ mod tests {
     let debug = format!("{response:?}");
     assert!(debug.contains("[REDACTED]"));
     assert!(!debug.contains("response-secret"));
+    assert!(!debug.contains("origin-trial-response-secret"));
+    assert!(!debug.contains("speculation-rules-response-secret"));
     assert!(debug.contains("application/json"));
     assert!(debug.contains("Bearer visible"));
   }
