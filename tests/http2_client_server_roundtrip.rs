@@ -4553,7 +4553,7 @@ fn send_h2c_prior_knowledge_headers(
   let mut block = Vec::new();
   for (name, value) in fields {
     block.push(0);
-    encode_hpack_string(&mut block, name.as_bytes());
+    encode_hpack_string(&mut block, name.to_ascii_lowercase().as_bytes());
     encode_hpack_string(&mut block, value.as_bytes());
   }
   write_http2_frame(&mut stream, 0x1, 0x1 | 0x4, 1, &block);

@@ -1054,7 +1054,24 @@ pub(crate) fn decode_http2_request_headers(
         }
         decoded.extended_connect_protocol = Some(value);
       }
-      name if name.starts_with(':') => {}
+      name if name.starts_with(':') => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "unknown HTTP/2 request pseudo-header",
+        ));
+      }
+      name if !is_http2_lowercase_field_name(name) => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "HTTP/2 request header name must be lowercase",
+        ));
+      }
+      name if !is_http_token(name) => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "invalid HTTP/2 request header name",
+        ));
+      }
       name if is_forbidden_http2_request_header_name(name) => {
         return Err(io::Error::new(
           io::ErrorKind::InvalidData,
@@ -1075,6 +1092,10 @@ pub(crate) fn decode_http2_request_headers(
   }
 
   Ok(decoded)
+}
+
+pub(crate) fn is_http2_lowercase_field_name(name: &str) -> bool {
+  name.bytes().all(|byte| !byte.is_ascii_uppercase())
 }
 
 pub(crate) fn is_forbidden_http2_request_header_name(name: &str) -> bool {
@@ -1101,6 +1122,12 @@ pub(crate) fn decode_http2_request_trailers(
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
         "HTTP/2 request trailer contained pseudo-header",
+      ));
+    }
+    if !is_http2_lowercase_field_name(name) {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "HTTP/2 request trailer name must be lowercase",
       ));
     }
     if !is_http_token(name)
@@ -2605,5 +2632,227 @@ mod tests {
         );
       }
     }
+  }
+
+  fn encode_literal_fields(fields: &[(&[u8], &[u8])]) -> Vec<u8> {
+    let mut block = Vec::new();
+    for (name, value) in fields {
+      encode_http2_literal_new_name_without_indexing(&mut block, name, value)
+        .expect("literal field should encode");
+    }
+    block
+  }
+
+  fn decode_request_headers(
+    block: &[u8],
+    enable_connect_protocol: bool,
+  ) -> io::Result<DecodedHttp2RequestHeaders> {
+    let mut decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
+    decode_http2_request_headers(
+      block,
+      &mut decoder,
+      HTTP2_MAX_HEADER_LIST_SIZE,
+      enable_connect_protocol,
+    )
+  }
+
+  fn decode_request_trailers(block: &[u8]) -> io::Result<Vec<(String, String)>> {
+    let mut decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
+    decode_http2_request_trailers(block, &mut decoder, HTTP2_MAX_HEADER_LIST_SIZE)
+  }
+
+  fn expect_decode_error<T>(result: io::Result<T>, message: &str) -> io::Error {
+    match result {
+      Ok(_) => panic!("{message}"),
+      Err(error) => error,
+    }
+  }
+
+  #[test]
+  fn decode_http2_request_headers_rejects_unknown_pseudo_headers() {
+    let block = encode_literal_fields(&[
+      (b":method", b"GET"),
+      (b":path", b"/"),
+      (b":scheme", b"https"),
+      (b":custom", b"value"),
+    ]);
+    let error = expect_decode_error(
+      decode_request_headers(&block, false),
+      "unknown request pseudo-headers must be rejected",
+    );
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("unknown HTTP/2 request pseudo-header", error.to_string());
+  }
+
+  #[test]
+  fn decode_http2_request_headers_rejects_non_token_names() {
+    let block = encode_literal_fields(&[
+      (b":method", b"GET"),
+      (b":path", b"/"),
+      (b":scheme", b"https"),
+      (b"bad name", b"value"),
+    ]);
+    let error = expect_decode_error(
+      decode_request_headers(&block, false),
+      "non-token request header names must be rejected",
+    );
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("invalid HTTP/2 request header name", error.to_string());
+  }
+
+  #[test]
+  fn decode_http2_request_headers_rejects_uppercase_names() {
+    let block = encode_literal_fields(&[
+      (b":method", b"GET"),
+      (b":path", b"/"),
+      (b":scheme", b"https"),
+      (b"X-Test", b"value"),
+    ]);
+    let error = expect_decode_error(
+      decode_request_headers(&block, false),
+      "uppercase request header names must be rejected",
+    );
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!(
+      "HTTP/2 request header name must be lowercase",
+      error.to_string()
+    );
+  }
+
+  #[test]
+  fn decode_http2_request_headers_accepts_supported_pseudos_te_trailers_and_protocol_gate() {
+    let accepted = encode_literal_fields(&[
+      (b":method", b"GET"),
+      (b":scheme", b"https"),
+      (b":authority", b"example.test"),
+      (b":path", b"/"),
+      (b"te", b"trailers"),
+      (b"accept", b"*/*"),
+    ]);
+    let decoded = decode_request_headers(&accepted, false)
+      .expect("supported lowercase request headers should decode");
+    assert_eq!(Some("GET"), decoded.method.as_deref());
+    assert_eq!(Some("/"), decoded.target.as_deref());
+    assert_eq!(Some("https"), decoded.scheme.as_deref());
+    assert_eq!(Some("example.test"), decoded.authority.as_deref());
+    assert_eq!(None, decoded.extended_connect_protocol);
+    assert_eq!(
+      vec![
+        ("te".to_string(), "trailers".to_string()),
+        ("accept".to_string(), "*/*".to_string()),
+      ],
+      decoded.headers
+    );
+
+    let protocol_without_setting = encode_literal_fields(&[
+      (b":method", b"CONNECT"),
+      (b":authority", b"example.test"),
+      (b":protocol", b"websocket"),
+    ]);
+    let error = expect_decode_error(
+      decode_request_headers(&protocol_without_setting, false),
+      ":protocol without SETTINGS_ENABLE_CONNECT_PROTOCOL must be rejected",
+    );
+    assert_eq!(
+      "HTTP/2 extended CONNECT :protocol requires SETTINGS_ENABLE_CONNECT_PROTOCOL",
+      error.to_string()
+    );
+
+    let protocol_with_setting = encode_literal_fields(&[
+      (b":method", b"CONNECT"),
+      (b":authority", b"example.test"),
+      (b":protocol", b"websocket"),
+    ]);
+    let decoded = decode_request_headers(&protocol_with_setting, true)
+      .expect(":protocol should decode when SETTINGS_ENABLE_CONNECT_PROTOCOL is enabled");
+    assert_eq!(
+      Some("websocket"),
+      decoded.extended_connect_protocol.as_deref()
+    );
+  }
+
+  #[test]
+  fn decode_http2_request_headers_preserves_order_duplicate_and_forbidden_checks() {
+    let after_regular =
+      encode_literal_fields(&[(b":method", b"GET"), (b"accept", b"*/*"), (b":path", b"/")]);
+    let error = expect_decode_error(
+      decode_request_headers(&after_regular, false),
+      "pseudo-headers after regular headers must be rejected",
+    );
+    assert_eq!(
+      "HTTP/2 pseudo-header appeared after a regular header",
+      error.to_string()
+    );
+
+    let duplicate = encode_literal_fields(&[
+      (b":method", b"GET"),
+      (b":method", b"POST"),
+      (b":path", b"/"),
+      (b":scheme", b"https"),
+    ]);
+    let error = expect_decode_error(
+      decode_request_headers(&duplicate, false),
+      "duplicate pseudo-headers must be rejected",
+    );
+    assert_eq!("duplicate HTTP/2 pseudo-header", error.to_string());
+
+    let forbidden = encode_literal_fields(&[
+      (b":method", b"GET"),
+      (b":path", b"/"),
+      (b":scheme", b"https"),
+      (b"connection", b"keep-alive"),
+    ]);
+    let error = expect_decode_error(
+      decode_request_headers(&forbidden, false),
+      "forbidden request headers must be rejected",
+    );
+    assert_eq!("forbidden HTTP/2 request header", error.to_string());
+
+    let forbidden_te = encode_literal_fields(&[
+      (b":method", b"GET"),
+      (b":path", b"/"),
+      (b":scheme", b"https"),
+      (b"te", b"gzip"),
+    ]);
+    let error = expect_decode_error(
+      decode_request_headers(&forbidden_te, false),
+      "TE values other than trailers must be rejected",
+    );
+    assert_eq!("forbidden HTTP/2 request header", error.to_string());
+  }
+
+  #[test]
+  fn decode_http2_request_trailers_rejects_uppercase_names_and_preserves_checks() {
+    let uppercase = encode_literal_fields(&[(b"X-Trailer", b"1")]);
+    let error = expect_decode_error(
+      decode_request_trailers(&uppercase),
+      "uppercase request trailer names must be rejected",
+    );
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!(
+      "HTTP/2 request trailer name must be lowercase",
+      error.to_string()
+    );
+
+    let accepted = decode_request_trailers(&encode_literal_fields(&[(b"x-trailer", b"1")]))
+      .expect("lowercase request trailers should decode");
+    assert_eq!(vec![("x-trailer".to_string(), "1".to_string())], accepted);
+
+    let pseudo = encode_literal_fields(&[(b":path", b"/")]);
+    let error = expect_decode_error(
+      decode_request_trailers(&pseudo),
+      "pseudo-headers in trailers must be rejected",
+    );
+    assert_eq!(
+      "HTTP/2 request trailer contained pseudo-header",
+      error.to_string()
+    );
+
+    let forbidden = encode_literal_fields(&[(b"content-length", b"1")]);
+    let error = expect_decode_error(
+      decode_request_trailers(&forbidden),
+      "forbidden request trailers must be rejected",
+    );
+    assert_eq!("forbidden request trailer", error.to_string());
   }
 }
