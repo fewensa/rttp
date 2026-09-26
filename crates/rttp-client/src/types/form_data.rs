@@ -202,6 +202,7 @@ impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> ToFormData for HashMap
         if !value.contains("#") {
           let path = Path::new(&value[1..]);
           rets.push(FormData::with_file(name, path));
+          continue;
         }
         let hasps: Vec<&str> = value[1..].split("#").collect::<Vec<&str>>();
         let len = hasps.len();
@@ -343,6 +344,7 @@ tuple_to_formdata! { a b c d e f g h i j k l m n o p q r s t u v w x y z }
 #[cfg(test)]
 mod tests {
   use super::{FormDataType, ToFormData};
+  use std::collections::HashMap;
   use std::path::PathBuf;
 
   #[test]
@@ -378,5 +380,35 @@ mod tests {
 
     assert_eq!(string_formdata[0].text(), &Some("a=b=c".to_string()));
     assert_eq!(tuple_formdata[0].text(), &Some("a=b=c".to_string()));
+  }
+
+  #[test]
+  fn keeps_hashmap_plain_file_shorthand_to_one_part() {
+    let mut values = HashMap::new();
+    values.insert("file", "@/tmp/input.txt");
+
+    let formdata = values.to_formdatas();
+
+    assert_eq!(formdata.len(), 1);
+    assert_eq!(formdata[0].type_(), &FormDataType::FILE);
+    assert_eq!(formdata[0].file(), &Some(PathBuf::from("/tmp/input.txt")));
+    assert_eq!(formdata[0].filename(), &Some("input.txt".to_string()));
+  }
+
+  #[test]
+  fn keeps_hashmap_text_and_named_file_to_one_part_each() {
+    let mut values = HashMap::new();
+    values.insert("token", "value");
+    values.insert("file", "@download.txt#/tmp/input.txt");
+
+    let formdata = values.to_formdatas();
+
+    assert_eq!(formdata.len(), 2);
+    let text = formdata.iter().find(|part| part.name() == "token").unwrap();
+    assert_eq!(text.text(), &Some("value".to_string()));
+    let file = formdata.iter().find(|part| part.name() == "file").unwrap();
+    assert_eq!(file.type_(), &FormDataType::FILE);
+    assert_eq!(file.file(), &Some(PathBuf::from("/tmp/input.txt")));
+    assert_eq!(file.filename(), &Some("download.txt".to_string()));
   }
 }
