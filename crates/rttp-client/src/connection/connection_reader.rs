@@ -1087,7 +1087,8 @@ mod tests {
         .expect_err("non-OWS whitespace should not pad Content-Length");
 
       assert!(
-        error.to_string().contains("Invalid Content-Length header"),
+        error.to_string().contains("Invalid Content-Length header")
+          || error.to_string().contains("Invalid response header"),
         "unexpected error for {content_length:?}: {error}"
       );
     }
@@ -1107,7 +1108,8 @@ mod tests {
       assert!(
         error
           .to_string()
-          .contains("Unsupported Transfer-Encoding response body"),
+          .contains("Unsupported Transfer-Encoding response body")
+          || error.to_string().contains("Invalid response header"),
         "unexpected error for {transfer_encoding:?}: {error}"
       );
     }
@@ -1162,9 +1164,20 @@ mod tests {
     for connection in [
       "\u{000b}close\u{000b}",
       "\u{000c}close\u{000c}",
+      "close\u{000b}",
+    ] {
+      let raw = format!("HTTP/1.1 200 OK\r\nConnection:{connection}\r\n\r\n");
+      let error = super::response_connection_should_close(raw.as_bytes())
+        .expect_err("prohibited control bytes in Connection values must be rejected");
+      assert!(
+        error.to_string().contains("Invalid response header"),
+        "unexpected error for {connection:?}: {error}"
+      );
+    }
+
+    for connection in [
       "\u{00a0}close\u{00a0}",
       "\u{2003}close\u{2003}",
-      "close\u{000b}",
       "\u{00a0}close",
     ] {
       let raw = format!("HTTP/1.1 200 OK\r\nConnection:{connection}\r\n\r\n");
@@ -1174,9 +1187,17 @@ mod tests {
       );
     }
 
+    for connection in ["\u{000b}keep-alive\u{000b}", "\u{000c}keep-alive\u{000c}"] {
+      let raw = format!("HTTP/1.0 200 OK\r\nConnection:{connection}\r\n\r\n");
+      let error = super::response_connection_should_close(raw.as_bytes())
+        .expect_err("prohibited control bytes in Connection values must be rejected");
+      assert!(
+        error.to_string().contains("Invalid response header"),
+        "unexpected error for {connection:?}: {error}"
+      );
+    }
+
     for connection in [
-      "\u{000b}keep-alive\u{000b}",
-      "\u{000c}keep-alive\u{000c}",
       "\u{00a0}keep-alive\u{00a0}",
       "keep-alive\u{00a0}",
       "\u{00a0}keep-alive",
@@ -1188,7 +1209,34 @@ mod tests {
       );
     }
 
-    for padding in [0x0bu8, 0x0cu8, 0xa0u8] {
+    for padding in [0x0bu8, 0x0cu8] {
+      let mut close_head = b"HTTP/1.1 200 OK\r\nConnection: ".to_vec();
+      close_head.push(padding);
+      close_head.extend_from_slice(b"close");
+      close_head.push(padding);
+      close_head.extend_from_slice(b"\r\n\r\n");
+      let error = super::response_connection_should_close(&close_head)
+        .expect_err("prohibited control bytes in Connection values must be rejected");
+      assert!(
+        error.to_string().contains("Invalid response header"),
+        "unexpected error for padding {padding:#x}: {error}"
+      );
+
+      let mut keep_alive_head = b"HTTP/1.0 200 OK\r\nConnection: ".to_vec();
+      keep_alive_head.push(padding);
+      keep_alive_head.extend_from_slice(b"keep-alive");
+      keep_alive_head.push(padding);
+      keep_alive_head.extend_from_slice(b"\r\n\r\n");
+      let error = super::response_connection_should_close(&keep_alive_head)
+        .expect_err("prohibited control bytes in Connection values must be rejected");
+      assert!(
+        error.to_string().contains("Invalid response header"),
+        "unexpected error for padding {padding:#x}: {error}"
+      );
+    }
+
+    {
+      let padding = 0xa0u8;
       let mut close_head = b"HTTP/1.1 200 OK\r\nConnection: ".to_vec();
       close_head.push(padding);
       close_head.extend_from_slice(b"close");
@@ -1196,7 +1244,7 @@ mod tests {
       close_head.extend_from_slice(b"\r\n\r\n");
       assert!(
         !super::response_connection_should_close(&close_head).unwrap(),
-        "raw obs-text/non-OWS padding {padding:#x} must not count as close"
+        "raw obs-text padding {padding:#x} must not count as close"
       );
 
       let mut keep_alive_head = b"HTTP/1.0 200 OK\r\nConnection: ".to_vec();
@@ -1206,7 +1254,7 @@ mod tests {
       keep_alive_head.extend_from_slice(b"\r\n\r\n");
       assert!(
         super::response_connection_should_close(&keep_alive_head).unwrap(),
-        "raw obs-text/non-OWS padding {padding:#x} must not count as keep-alive"
+        "raw obs-text padding {padding:#x} must not count as keep-alive"
       );
     }
   }

@@ -1786,7 +1786,8 @@ mod tests {
         assert!(
           error
             .to_string()
-            .contains("Unsupported Transfer-Encoding response body"),
+            .contains("Unsupported Transfer-Encoding response body")
+            || error.to_string().contains("Invalid response header"),
           "unexpected error for {transfer_encoding:?}: {error}"
         );
       }
