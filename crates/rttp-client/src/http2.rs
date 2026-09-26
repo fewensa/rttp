@@ -2018,7 +2018,10 @@ fn build_response(
   trailers: Vec<Header>,
   max_body_bytes: usize,
 ) -> error::Result<Response> {
-  let mut binary = format!("HTTP/2 {}\r\n", status).into_bytes();
+  // The shared response parser validates HTTP/1 status lines. HTTP/2 has no
+  // wire status line, so use the parser-compatible synthetic form and restore
+  // the public HTTP/2 version after parsing.
+  let mut binary = format!("HTTP/1.1 {}\r\n", status).into_bytes();
   for (name, value) in headers {
     binary.extend_from_slice(name.as_bytes());
     binary.extend_from_slice(b": ");
@@ -2027,7 +2030,8 @@ fn build_response(
   }
   binary.extend_from_slice(b"\r\n");
   binary.extend_from_slice(&body);
-  Response::with_trailers_and_limit(url, binary, trailers, max_body_bytes)
+  let response = Response::with_trailers_and_limit(url, binary, trailers, max_body_bytes)?;
+  Ok(Response::with_version(response, "HTTP/2"))
 }
 
 struct Frame {
