@@ -22,10 +22,10 @@ use crate::connection::connection::{
 };
 use crate::connection::connection_reader::{
   append_informational_response, content_length_from_response_body_kind,
-  is_skippable_informational_status, response_body_kind, response_connection_reusable,
-  response_connection_should_close, response_headers, response_status_code,
-  validate_response_trailer_header, ResponseBodyKind, ResponseParts,
-  MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
+  is_skippable_informational_status, parse_response_trailer_line, response_body_kind,
+  response_connection_reusable, response_connection_should_close, response_headers,
+  response_status_code, ResponseBodyKind, ResponseParts, MAX_CHUNKED_RESPONSE_LINE_BYTES,
+  MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::error;
 use crate::request::RawRequest;
@@ -815,19 +815,8 @@ where
       return Ok(trailers);
     }
 
-    trailers.push(parse_trailer_line(&line)?);
+    trailers.push(parse_response_trailer_line(&line)?);
   }
-}
-
-fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
-  let line = std::str::from_utf8(line).map_err(error::response)?;
-  let line = line.trim_end_matches("\r\n");
-  let (name, value) = line
-    .split_once(':')
-    .ok_or_else(|| error::bad_response("Invalid trailer header"))?;
-  validate_response_trailer_header(name, value)?;
-
-  Ok(Header::from_http1(name, value))
 }
 
 // connection send
@@ -1807,30 +1796,34 @@ mod tests {
   #[test]
   fn async_streaming_response_rejects_malformed_header_without_colon() {
     block_on(async {
-      let raw = concat!(
-        "HTTP/1.1 200 OK\r\n",
-        "BrokenHeader\r\n",
-        "Content-Length: 2\r\n",
-        "\r\n",
-        "OK"
-      );
-      let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
-      let head = async_read_response_head(&mut cursor).await.unwrap();
+      for field in [
+        b"BrokenHeader\r\n".as_slice(),
+        b": value\r\n".as_slice(),
+        b"Bad Name: value\r\n".as_slice(),
+        b"X-Test: value\x00\r\n".as_slice(),
+        b"X-Test: value\x7f\r\n".as_slice(),
+      ] {
+        let mut raw = b"HTTP/1.1 200 OK\r\n".to_vec();
+        raw.extend_from_slice(field);
+        raw.extend_from_slice(b"Content-Length: 2\r\n\r\nOK");
+        let mut cursor = AllowStdIo::new(Cursor::new(raw.as_slice()));
+        let head = async_read_response_head(&mut cursor).await.unwrap();
 
-      let error = match async_streaming_response_after_header(&mut cursor, false, head).await {
-        Ok(_) => panic!("malformed response header should be rejected"),
-        Err(error) => error,
-      };
+        let error = match async_streaming_response_after_header(&mut cursor, false, head).await {
+          Ok(_) => panic!("malformed response header should be rejected"),
+          Err(error) => error,
+        };
 
-      assert!(
-        error.to_string().contains("Invalid response header"),
-        "unexpected error: {error}"
-      );
-      assert_eq!(
-        (raw.len() - "OK".len()) as u64,
-        cursor.get_ref().position(),
-        "malformed response headers must be rejected before body bytes are consumed"
-      );
+        assert!(
+          error.to_string().contains("Invalid response header"),
+          "unexpected error: {error}"
+        );
+        assert_eq!(
+          (raw.len() - "OK".len()) as u64,
+          cursor.get_ref().position(),
+          "malformed response headers must be rejected before body bytes are consumed"
+        );
+      }
     });
   }
 

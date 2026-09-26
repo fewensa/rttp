@@ -986,7 +986,8 @@ fn test_content_length_rejects_non_http_ows_padding() {
       .expect_err("non-OWS whitespace should not pad Content-Length");
 
     assert!(
-      error.to_string().contains("Invalid Content-Length header"),
+      error.to_string().contains("Invalid Content-Length header")
+        || error.to_string().contains("Invalid response header"),
       "unexpected error for {content_length:?}: {error}"
     );
   }
@@ -1004,7 +1005,8 @@ fn test_content_length_rejects_non_http_ows_padding() {
       .expect_err("raw non-OWS/obs-text Content-Length padding should be rejected");
 
     assert!(
-      error.to_string().contains("Invalid Content-Length header"),
+      error.to_string().contains("Invalid Content-Length header")
+        || error.to_string().contains("Invalid response header"),
       "unexpected error for padding {padding:#x}: {error}"
     );
 
@@ -1020,7 +1022,8 @@ fn test_content_length_rejects_non_http_ows_padding() {
       .expect_err("raw trailing non-OWS/obs-text Content-Length padding should be rejected");
 
     assert!(
-      error.to_string().contains("Invalid Content-Length header"),
+      error.to_string().contains("Invalid Content-Length header")
+        || error.to_string().contains("Invalid response header"),
       "unexpected error for trailing padding {padding:#x}: {error}"
     );
   }
@@ -1327,6 +1330,30 @@ fn test_malformed_response_header_without_colon_is_rejected() {
     error.to_string().contains("Invalid response header"),
     "unexpected error: {error}"
   );
+}
+
+#[test]
+fn test_malformed_response_header_name_or_value_is_rejected() {
+  for field in [
+    b": value\r\n".as_slice(),
+    b"Bad Name: value\r\n".as_slice(),
+    b"X-Test: value\x00\r\n".as_slice(),
+    b"X-Test: value\x7f\r\n".as_slice(),
+  ] {
+    let mut response = b"HTTP/1.1 200 OK\r\n".to_vec();
+    response.extend_from_slice(field);
+    response.extend_from_slice(b"Content-Length: 2\r\nConnection: close\r\n\r\nOK");
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+    let error = client()
+      .get()
+      .url(format!("http://{addr}/malformed"))
+      .emit()
+      .expect_err("malformed response field should be rejected");
+    assert!(
+      error.to_string().contains("Invalid response header"),
+      "unexpected error: {error}"
+    );
+  }
 }
 
 #[test]

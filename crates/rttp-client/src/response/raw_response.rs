@@ -2,12 +2,13 @@ use std::fmt;
 use std::io::Read;
 
 use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
+use crate::connection::parse_response_header_fields;
 use crate::error;
 use crate::response::ResponseBody;
 use crate::types::{Cookie, Header, RoUrl, ToUrl};
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::cookie::HttpSetCookie;
-use rttp_protocol::http1::{is_header_value_byte, is_token, split_status_line};
+use rttp_protocol::http1::split_status_line;
 use rttp_protocol::is_sensitive_debug_header;
 use url::Url;
 
@@ -237,24 +238,7 @@ impl Parser {
       .code(status_code)
       .reason(reason);
 
-    let mut headers = Vec::new();
-    for line in lines.filter(|line| !line.is_empty()) {
-      if matches!(line.first(), Some(b' ' | b'\t')) {
-        return Err(error::bad_response("Invalid response header"));
-      }
-      let Some(colon) = line.iter().position(|byte| *byte == b':') else {
-        return Err(error::bad_response("Invalid response header"));
-      };
-      let (name, value) = line.split_at(colon);
-      let value = &value[1..];
-      let Ok(name) = std::str::from_utf8(name) else {
-        return Err(error::bad_response("Invalid response header"));
-      };
-      if !is_token(name) || !value.iter().copied().all(is_header_value_byte) {
-        return Err(error::bad_response("Invalid response header"));
-      }
-      headers.push(Header::from_http1(name, decode_http1_text(value)));
-    }
+    let headers = parse_response_header_fields(text)?;
 
     let cookies: Vec<Cookie> = headers
       .iter()
@@ -347,10 +331,6 @@ fn has_only_crlf_line_breaks(bytes: &[u8]) -> bool {
   true
 }
 
-fn decode_http1_text(bytes: &[u8]) -> String {
-  bytes.iter().map(|byte| *byte as char).collect()
-}
-
 fn response_status_has_no_body(status_code: u32) -> bool {
   (100..200).contains(&status_code) || status_code == 204 || status_code == 304
 }
@@ -405,5 +385,38 @@ mod tests {
     assert!(!debug.contains("speculation-rules-response-secret"));
     assert!(debug.contains("application/json"));
     assert!(debug.contains("Bearer visible"));
+  }
+
+  #[test]
+  fn raw_response_preserves_valid_header_bytes_and_duplicates() {
+    let binary =
+      b"HTTP/1.1 200 OK\r\nX-Test: \t first \xff \t\r\nX-Test: second\r\n\r\nOK".to_vec();
+    let response = RawResponse::new("http://example.test/".to_rourl(), binary)
+      .expect("valid response should build");
+
+    assert_eq!(
+      vec![("X-Test", "first \u{00ff}"), ("X-Test", "second")],
+      response
+        .headers_get()
+        .iter()
+        .map(|header| (header.name().as_str(), header.value().as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  #[test]
+  fn raw_response_rejects_prohibited_header_bytes() {
+    for field in [
+      b": value\r\n".as_slice(),
+      b"Bad Name: value\r\n".as_slice(),
+      b"X-Test: value\x00\r\n".as_slice(),
+    ] {
+      let mut binary = b"HTTP/1.1 200 OK\r\n".to_vec();
+      binary.extend_from_slice(field);
+      binary.extend_from_slice(b"\r\nOK");
+      let error = RawResponse::new("http://example.test/".to_rourl(), binary)
+        .expect_err("malformed response field should be rejected");
+      assert!(error.to_string().contains("Invalid response header"));
+    }
   }
 }

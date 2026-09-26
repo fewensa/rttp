@@ -9,6 +9,7 @@ pub use self::block_connection::*;
 pub(crate) use self::connection::connect_tcp_stream_with_io_timeouts;
 pub use self::connection::HandoffConnection;
 pub(crate) use self::connection::StreamingRequestBody;
+pub(crate) use self::connection_reader::parse_response_header_fields;
 pub use self::connection_reader::{ConnectionReader, ResponseBodyReader, StreamingResponse};
 
 #[cfg(feature = "async")]

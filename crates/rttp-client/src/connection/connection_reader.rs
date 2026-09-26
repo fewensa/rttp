@@ -471,41 +471,60 @@ pub(crate) fn response_connection_reusable(
 }
 
 pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
-  let (_, header_lines) = split_response_head_lines(header)?;
+  split_response_head_lines(header)?;
+  parse_response_header_fields(&header[..header.len() - HEADER_END.len()])
+}
+
+pub(crate) fn parse_response_header_fields(header: &[u8]) -> error::Result<Vec<Header>> {
+  parse_response_header_fields_with_error(header, "Invalid response header")
+}
+
+fn parse_response_header_fields_with_error(
+  header: &[u8],
+  error_message: &'static str,
+) -> error::Result<Vec<Header>> {
+  if !has_only_crlf_line_breaks(header) {
+    return Err(error::bad_response(error_message));
+  }
+
+  let mut lines = header
+    .split(|byte| *byte == b'\n')
+    .map(|line| line.strip_suffix(b"\r").unwrap_or(line));
+  lines.next();
+
   let mut headers = Vec::new();
-  for line in header_lines.into_iter().filter(|line| !line.is_empty()) {
-    let Some(colon) = line.iter().position(|byte| *byte == b':') else {
-      return Err(error::bad_response("Invalid response header"));
-    };
-    if matches!(line.first(), Some(b' ' | b'\t')) {
-      return Err(error::bad_response("Invalid response header"));
-    }
-    let (name, value) = line.split_at(colon);
-    let value = &value[1..];
-    let name = std::str::from_utf8(name).map_err(error::response)?;
-    headers.push(Header::from_http1(name, decode_http1_text(value)));
+  for line in lines.filter(|line| !line.is_empty()) {
+    headers.push(parse_response_header_field(line, error_message)?);
   }
   Ok(headers)
 }
 
+fn parse_response_header_field(line: &[u8], error_message: &'static str) -> error::Result<Header> {
+  if matches!(line.first(), Some(b' ' | b'\t')) {
+    return Err(error::bad_response(error_message));
+  }
+  let Some(colon) = line.iter().position(|byte| *byte == b':') else {
+    return Err(error::bad_response(error_message));
+  };
+  let (name, value) = line.split_at(colon);
+  let value = &value[1..];
+  let name = std::str::from_utf8(name).map_err(|_| error::bad_response(error_message))?;
+  if !is_http_token(name) || !value.iter().copied().all(is_header_value_byte) {
+    return Err(error::bad_response(error_message));
+  }
+  Ok(Header::from_http1(name, decode_http1_text(value)))
+}
+
 pub(crate) fn response_connection_should_close(header: &[u8]) -> error::Result<bool> {
-  let header = decode_http1_text(header);
-  let version = header
-    .lines()
-    .next()
-    .and_then(|line| line.split_whitespace().next())
-    .unwrap_or_default();
+  let version = response_status_line_version(header);
   let mut has_keep_alive = false;
 
-  for line in header.lines().skip(1) {
-    let Some((name, value)) = line.split_once(':') else {
-      continue;
-    };
-    if !name.eq_ignore_ascii_case("Connection") {
+  for header in response_headers(header)? {
+    if !header.name().eq_ignore_ascii_case("Connection") {
       continue;
     }
 
-    for token in value.split(',').map(trim_http_ows) {
+    for token in header.value().split(',').map(trim_http_ows) {
       if token.eq_ignore_ascii_case("close") {
         return Ok(true);
       }
@@ -516,6 +535,17 @@ pub(crate) fn response_connection_should_close(header: &[u8]) -> error::Result<b
   }
 
   Ok(version.eq_ignore_ascii_case("HTTP/1.0") && !has_keep_alive)
+}
+
+fn response_status_line_version(header: &[u8]) -> &str {
+  header
+    .split(|byte| *byte == b'\n')
+    .next()
+    .and_then(|line| line.strip_suffix(b"\r"))
+    .and_then(|line| std::str::from_utf8(line).ok())
+    .and_then(|line| line.split_once(' '))
+    .map(|(version, _)| version)
+    .unwrap_or_default()
 }
 
 pub(crate) fn read_response_header<R>(reader: &mut R) -> error::Result<Vec<u8>>
@@ -576,7 +606,7 @@ pub(crate) fn response_body_kind(
   header: &[u8],
   expect_no_body: bool,
 ) -> error::Result<ResponseBodyKind> {
-  validate_response_header_lines(header)?;
+  let headers = response_headers(header)?;
 
   if expect_no_body {
     return Ok(ResponseBodyKind::NoBody);
@@ -588,18 +618,15 @@ pub(crate) fn response_body_kind(
     return Ok(ResponseBodyKind::NoBody);
   }
 
-  let header = String::from_utf8_lossy(header);
-  let lines = header.lines().skip(1);
   let mut content_length = None;
   let mut has_content_length = false;
   let mut invalid_content_length = false;
   let mut conflicting_content_length = false;
   let mut transfer_codings = Vec::new();
 
-  for line in lines {
-    let Some((name, value)) = line.split_once(':') else {
-      continue;
-    };
+  for header in headers {
+    let name = header.name();
+    let value = header.value();
 
     if name.eq_ignore_ascii_case("Transfer-Encoding") {
       for token in value.split(',').map(trim_http_ows) {
@@ -608,7 +635,7 @@ pub(crate) fn response_body_kind(
             "Unsupported Transfer-Encoding response body",
           ));
         }
-        transfer_codings.push(token);
+        transfer_codings.push(token.to_owned());
       }
     }
 
@@ -658,7 +685,7 @@ fn trim_http_ows(value: &str) -> &str {
   value.trim_matches(|character| character == ' ' || character == '\t')
 }
 
-fn is_supported_chunked_transfer_coding_path(transfer_codings: &[&str]) -> bool {
+fn is_supported_chunked_transfer_coding_path(transfer_codings: &[String]) -> bool {
   transfer_codings.len() == 1 && transfer_codings[0].eq_ignore_ascii_case("chunked")
 }
 
@@ -668,33 +695,24 @@ pub(crate) fn parse_informational_response(header: &[u8]) -> error::Result<Infor
       "HTTP informational response head is too large",
     ));
   }
-  let (status_line, header_lines) = split_response_head_lines(header)?;
+  let (status_line, _header_lines) = split_response_head_lines(header)?;
   let (version, status_code, reason) = parse_response_status_line(status_line)?;
   if version != "HTTP/1.1" || !(100..200).contains(&status_code) {
     return Err(error::bad_response("Invalid informational response"));
   }
 
-  let mut headers = Vec::new();
-  for line in header_lines {
-    if line.is_empty() {
-      continue;
-    }
-    let Some(colon) = line.iter().position(|byte| *byte == b':') else {
-      return Err(error::bad_response("Invalid informational response header"));
-    };
-    let (name, value) = line.split_at(colon);
-    let value = &value[1..];
-    let name = std::str::from_utf8(name).map_err(error::response)?;
-    if !is_http_token(name) || !value.iter().copied().all(is_header_value_byte) {
-      return Err(error::bad_response("Invalid informational response header"));
-    }
+  let headers = parse_response_header_fields_with_error(
+    &header[..header.len() - HEADER_END.len()],
+    "Invalid informational response header",
+  )?;
+  for header in &headers {
+    let name = header.name();
     if name.eq_ignore_ascii_case("Content-Length") || name.eq_ignore_ascii_case("Transfer-Encoding")
     {
       return Err(error::bad_response(
         "Informational response must not declare body framing",
       ));
     }
-    headers.push(Header::from_http1(name, decode_http1_text(value)));
   }
 
   Ok(InformationalResponse::new(
@@ -763,23 +781,6 @@ fn parse_response_status_line(status_line: &[u8]) -> error::Result<(&str, u16, &
     .parse::<u16>()
     .map_err(|_| error::bad_response("Invalid informational response"))?;
   Ok((version, status_code, reason))
-}
-
-fn validate_response_header_lines(header: &[u8]) -> error::Result<()> {
-  let header = match header
-    .windows(HEADER_END.len())
-    .position(|w| w == HEADER_END)
-  {
-    Some(header_end) => &header[..header_end],
-    None => header,
-  };
-  let header = String::from_utf8_lossy(header);
-  for line in header.lines().skip(1).filter(|line| !line.is_empty()) {
-    if !line.contains(':') {
-      return Err(error::bad_response("Invalid response header"));
-    }
-  }
-  Ok(())
 }
 
 fn read_bounded_crlf_line<R>(reader: &mut R, max_len: usize) -> error::Result<Vec<u8>>
@@ -853,19 +854,19 @@ where
       return Ok(trailers);
     }
 
-    trailers.push(parse_trailer_line(&line)?);
+    trailers.push(parse_response_trailer_line(&line)?);
   }
 }
 
-fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
-  let line = std::str::from_utf8(line).map_err(error::response)?;
-  let line = line.trim_end_matches("\r\n");
-  let (name, value) = line
-    .split_once(':')
+pub(crate) fn parse_response_trailer_line(line: &[u8]) -> error::Result<Header> {
+  let line = line
+    .strip_suffix(CRLF)
     .ok_or_else(|| error::bad_response("Invalid trailer header"))?;
-  validate_response_trailer_header(name, value)?;
-
-  Ok(Header::from_http1(name, value))
+  let header = parse_response_header_field(line, "Invalid trailer header")?;
+  if is_forbidden_response_trailer_name(header.name()) {
+    return Err(error::bad_response("Forbidden trailer header"));
+  }
+  Ok(header)
 }
 
 fn to_io_error(err: error::Error) -> io::Error {
@@ -888,16 +889,6 @@ fn response_body_read_error(err: io::Error) -> error::Error {
     }
     _ => error::request(err),
   }
-}
-
-pub(crate) fn validate_response_trailer_header(name: &str, value: &str) -> error::Result<()> {
-  if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
-    return Err(error::bad_response("Invalid trailer header"));
-  }
-  if is_forbidden_response_trailer_name(name) {
-    return Err(error::bad_response("Forbidden trailer header"));
-  }
-  Ok(())
 }
 
 fn is_forbidden_response_trailer_name(name: &str) -> bool {
@@ -1312,30 +1303,35 @@ mod tests {
 
   #[test]
   fn test_malformed_response_header_without_colon_is_rejected_before_body() {
-    let raw = concat!(
-      "HTTP/1.1 200 OK\r\n",
-      "BrokenHeader\r\n",
-      "Content-Length: 2\r\n",
-      "\r\n",
-      "OK"
-    );
-    let url = url::Url::parse("http://localhost").unwrap();
-    let mut cursor = Cursor::new(raw.as_bytes());
-    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+    for field in [
+      b"BrokenHeader\r\n".as_slice(),
+      b": value\r\n".as_slice(),
+      b"Bad Name: value\r\n".as_slice(),
+      b"X-Test: value\x00\r\n".as_slice(),
+      b"X-Test: value\x7f\r\n".as_slice(),
+    ] {
+      let mut raw = b"HTTP/1.1 200 OK\r\n".to_vec();
+      raw.extend_from_slice(field);
+      raw.extend_from_slice(b"Content-Length: 2\r\n\r\nOK");
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_slice());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
 
-    let error = reader
-      .response()
-      .expect_err("malformed response header should be rejected");
+      let error = match reader.streaming_response() {
+        Ok(_) => panic!("malformed response header should be rejected"),
+        Err(error) => error,
+      };
 
-    assert!(
-      error.to_string().contains("Invalid response header"),
-      "unexpected error: {error}"
-    );
-    assert_eq!(
-      (raw.len() - "OK".len()) as u64,
-      cursor.position(),
-      "malformed response headers must be rejected before body bytes are consumed"
-    );
+      assert!(
+        error.to_string().contains("Invalid response header"),
+        "unexpected error: {error}"
+      );
+      assert_eq!(
+        (raw.len() - "OK".len()) as u64,
+        cursor.position(),
+        "malformed response headers must be rejected before body bytes are consumed"
+      );
+    }
   }
 
   #[test]
@@ -1479,6 +1475,34 @@ mod tests {
     assert_eq!(1, headers.len());
     assert_eq!("X-Trial", headers[0].name());
     assert_eq!("\u{00ff}", headers[0].value());
+  }
+
+  #[test]
+  fn response_headers_reject_empty_names_and_prohibited_controls() {
+    for field in [
+      b": value\r\n\r\n".as_slice(),
+      b"Bad Name: value\r\n\r\n".as_slice(),
+      b"X-Test: value\x00\r\n\r\n".as_slice(),
+      b"X-Test: value\x7f\r\n\r\n".as_slice(),
+    ] {
+      let head = [b"HTTP/1.1 200 OK\r\n".as_slice(), field].concat();
+      let error = response_headers(&head).expect_err("malformed field should be rejected");
+      assert!(error.to_string().contains("Invalid response header"));
+    }
+  }
+
+  #[test]
+  fn response_headers_preserve_ows_duplicates_and_latin1_values() {
+    let headers =
+      response_headers(b"HTTP/1.1 200 OK\r\nX-Test: \t first \xff \t\r\nX-Test: second\r\n\r\n")
+        .expect("valid response fields should parse");
+    assert_eq!(
+      vec![("X-Test", "first \u{00ff}"), ("X-Test", "second")],
+      headers
+        .iter()
+        .map(|header| (header.name().as_str(), header.value().as_str()))
+        .collect::<Vec<_>>()
+    );
   }
 
   #[test]
