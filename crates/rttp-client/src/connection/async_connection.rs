@@ -20,11 +20,13 @@ use crate::connection::connection::{
   connect_tcp_stream, parse_proxy_connect_response, proxy_connect_response_status_code,
   request_expects_continue, Connection, ExpectContinueResult,
 };
+#[cfg(test)]
+use crate::connection::connection_reader::parse_informational_response;
 use crate::connection::connection_reader::{
   append_informational_response, content_length_from_response_body_kind,
-  is_skippable_informational_status, response_body_kind, response_connection_reusable,
-  response_connection_should_close, response_headers, response_status_code,
-  validate_response_trailer_header, ResponseBodyKind, ResponseParts,
+  is_skippable_informational_status, parse_response_field_line, response_body_kind,
+  response_connection_reusable, response_connection_should_close, response_headers,
+  response_status_code, validate_response_trailer_header, ResponseBodyKind, ResponseParts,
   MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::error;
@@ -678,6 +680,7 @@ where
       if informational_responses == MAX_INFORMATIONAL_RESPONSES {
         return Err(error::bad_response("Too many informational responses"));
       }
+      parse_informational_response(&header)?;
       informational_responses += 1;
       continue;
     }
@@ -820,14 +823,9 @@ where
 }
 
 fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
-  let line = std::str::from_utf8(line).map_err(error::response)?;
-  let line = line.trim_end_matches("\r\n");
-  let (name, value) = line
-    .split_once(':')
-    .ok_or_else(|| error::bad_response("Invalid trailer header"))?;
-  validate_response_trailer_header(name, value)?;
-
-  Ok(Header::from_http1(name, value))
+  let header = parse_response_field_line(line, "Invalid trailer header")?;
+  validate_response_trailer_header(header.name(), header.value())?;
+  Ok(header)
 }
 
 // connection send
@@ -1831,6 +1829,37 @@ mod tests {
         cursor.get_ref().position(),
         "malformed response headers must be rejected before body bytes are consumed"
       );
+    });
+  }
+
+  #[test]
+  fn async_streaming_response_rejects_invalid_fields_before_body_reads() {
+    block_on(async {
+      for field_line in [
+        b": empty\r\n".as_slice(),
+        b"Bad Name: value\r\n".as_slice(),
+        b"X-Control: \x00\r\n".as_slice(),
+        b"X-Control: \x0b\r\n".as_slice(),
+        b"X-Control: \x7f\r\n".as_slice(),
+      ] {
+        let mut head = b"HTTP/1.1 200 OK\r\n".to_vec();
+        head.extend_from_slice(field_line);
+        head.extend_from_slice(b"Content-Length: 2\r\n\r\n");
+        let mut stream = AllowStdIo::new(Cursor::new(b"OK".to_vec()));
+        let error = match async_streaming_response_after_header(&mut stream, false, head).await {
+          Ok(_) => panic!("malformed response field must fail before exposing the stream"),
+          Err(error) => error,
+        };
+        assert!(
+          error.to_string().contains("Invalid response header"),
+          "unexpected error for {field_line:?}: {error}"
+        );
+        assert_eq!(
+          0,
+          stream.get_ref().position(),
+          "response body must not be read"
+        );
+      }
     });
   }
 

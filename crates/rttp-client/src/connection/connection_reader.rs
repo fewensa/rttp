@@ -344,6 +344,7 @@ where
       if informational_responses == MAX_INFORMATIONAL_RESPONSES {
         return Err(error::bad_response("Too many informational responses"));
       }
+      parse_informational_response(&header)?;
       informational_responses += 1;
       continue;
     }
@@ -471,21 +472,7 @@ pub(crate) fn response_connection_reusable(
 }
 
 pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
-  let (_, header_lines) = split_response_head_lines(header)?;
-  let mut headers = Vec::new();
-  for line in header_lines.into_iter().filter(|line| !line.is_empty()) {
-    let Some(colon) = line.iter().position(|byte| *byte == b':') else {
-      return Err(error::bad_response("Invalid response header"));
-    };
-    if matches!(line.first(), Some(b' ' | b'\t')) {
-      return Err(error::bad_response("Invalid response header"));
-    }
-    let (name, value) = line.split_at(colon);
-    let value = &value[1..];
-    let name = std::str::from_utf8(name).map_err(error::response)?;
-    headers.push(Header::from_http1(name, decode_http1_text(value)));
-  }
-  Ok(headers)
+  parse_response_headers(header)
 }
 
 pub(crate) fn response_connection_should_close(header: &[u8]) -> error::Result<bool> {
@@ -576,7 +563,7 @@ pub(crate) fn response_body_kind(
   header: &[u8],
   expect_no_body: bool,
 ) -> error::Result<ResponseBodyKind> {
-  validate_response_header_lines(header)?;
+  let headers = parse_response_headers_with_error(header, response_body_field_error)?;
 
   if expect_no_body {
     return Ok(ResponseBodyKind::NoBody);
@@ -588,21 +575,15 @@ pub(crate) fn response_body_kind(
     return Ok(ResponseBodyKind::NoBody);
   }
 
-  let header = String::from_utf8_lossy(header);
-  let lines = header.lines().skip(1);
   let mut content_length = None;
   let mut has_content_length = false;
   let mut invalid_content_length = false;
   let mut conflicting_content_length = false;
   let mut transfer_codings = Vec::new();
 
-  for line in lines {
-    let Some((name, value)) = line.split_once(':') else {
-      continue;
-    };
-
-    if name.eq_ignore_ascii_case("Transfer-Encoding") {
-      for token in value.split(',').map(trim_http_ows) {
+  for header in &headers {
+    if header.name().eq_ignore_ascii_case("Transfer-Encoding") {
+      for token in header.value().split(',').map(trim_http_ows) {
         if token.is_empty() {
           return Err(error::bad_response(
             "Unsupported Transfer-Encoding response body",
@@ -612,9 +593,9 @@ pub(crate) fn response_body_kind(
       }
     }
 
-    if name.eq_ignore_ascii_case("Content-Length") {
+    if header.name().eq_ignore_ascii_case("Content-Length") {
       has_content_length = true;
-      for token in value.split(',').map(trim_http_ows) {
+      for token in header.value().split(',').map(trim_http_ows) {
         let Ok(length) = token.parse::<usize>() else {
           invalid_content_length = true;
           continue;
@@ -668,33 +649,22 @@ pub(crate) fn parse_informational_response(header: &[u8]) -> error::Result<Infor
       "HTTP informational response head is too large",
     ));
   }
-  let (status_line, header_lines) = split_response_head_lines(header)?;
+  let (status_line, _header_lines) = split_response_head_lines(header)?;
   let (version, status_code, reason) = parse_response_status_line(status_line)?;
   if version != "HTTP/1.1" || !(100..200).contains(&status_code) {
     return Err(error::bad_response("Invalid informational response"));
   }
 
-  let mut headers = Vec::new();
-  for line in header_lines {
-    if line.is_empty() {
-      continue;
-    }
-    let Some(colon) = line.iter().position(|byte| *byte == b':') else {
-      return Err(error::bad_response("Invalid informational response header"));
-    };
-    let (name, value) = line.split_at(colon);
-    let value = &value[1..];
-    let name = std::str::from_utf8(name).map_err(error::response)?;
-    if !is_http_token(name) || !value.iter().copied().all(is_header_value_byte) {
-      return Err(error::bad_response("Invalid informational response header"));
-    }
-    if name.eq_ignore_ascii_case("Content-Length") || name.eq_ignore_ascii_case("Transfer-Encoding")
+  let headers = parse_response_headers(header)
+    .map_err(|_| error::bad_response("Invalid informational response header"))?;
+  for header in &headers {
+    if header.name().eq_ignore_ascii_case("Content-Length")
+      || header.name().eq_ignore_ascii_case("Transfer-Encoding")
     {
       return Err(error::bad_response(
         "Informational response must not declare body framing",
       ));
     }
-    headers.push(Header::from_http1(name, decode_http1_text(value)));
   }
 
   Ok(InformationalResponse::new(
@@ -705,26 +675,42 @@ pub(crate) fn parse_informational_response(header: &[u8]) -> error::Result<Infor
 }
 
 fn split_response_head_lines(header: &[u8]) -> error::Result<(&[u8], Vec<&[u8]>)> {
+  split_response_head_lines_with_error(header, "Invalid informational response")
+}
+
+fn split_response_head_lines_with_error<'a>(
+  header: &'a [u8],
+  error_message: &'static str,
+) -> error::Result<(&'a [u8], Vec<&'a [u8]>)> {
   let header = header
     .strip_suffix(HEADER_END)
-    .ok_or_else(|| error::bad_response("Invalid informational response"))?;
+    .ok_or_else(|| error::bad_response(error_message))?;
   if header.is_empty() {
-    return Err(error::bad_response("Invalid informational response"));
+    return Err(error::bad_response(error_message));
   }
   if !has_only_crlf_line_breaks(header) {
-    return Err(error::bad_response("Invalid informational response"));
+    return Err(error::bad_response(error_message));
   }
   let mut lines = header
     .split(|byte| *byte == b'\n')
     .map(|line| line.strip_suffix(b"\r").unwrap_or(line));
   let Some(status_line) = lines.next() else {
-    return Err(error::bad_response("Invalid informational response"));
+    return Err(error::bad_response(error_message));
   };
   let mut header_lines = Vec::new();
   for line in lines {
     header_lines.push(line);
   }
   Ok((status_line, header_lines))
+}
+
+fn split_response_head_lines_prefix(header: &[u8]) -> error::Result<(&[u8], Vec<&[u8]>)> {
+  let header_end = header
+    .windows(HEADER_END.len())
+    .position(|window| window == HEADER_END)
+    .map(|index| index + HEADER_END.len())
+    .ok_or_else(|| error::bad_response("Invalid response header"))?;
+  split_response_head_lines_with_error(&header[..header_end], "Invalid response header")
 }
 
 fn has_only_crlf_line_breaks(bytes: &[u8]) -> bool {
@@ -765,21 +751,59 @@ fn parse_response_status_line(status_line: &[u8]) -> error::Result<(&str, u16, &
   Ok((version, status_code, reason))
 }
 
-fn validate_response_header_lines(header: &[u8]) -> error::Result<()> {
-  let header = match header
-    .windows(HEADER_END.len())
-    .position(|w| w == HEADER_END)
-  {
-    Some(header_end) => &header[..header_end],
-    None => header,
+fn parse_response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
+  parse_response_headers_with_error(header, |_| "Invalid response header")
+}
+
+fn parse_response_headers_with_error<F>(
+  header: &[u8],
+  error_message: F,
+) -> error::Result<Vec<Header>>
+where
+  F: Fn(&[u8]) -> &'static str,
+{
+  let (_, header_lines) = split_response_head_lines_prefix(header)?;
+  header_lines
+    .into_iter()
+    .filter(|line| !line.is_empty())
+    .map(|line| parse_response_field_line(line, error_message(line)))
+    .collect()
+}
+
+fn response_body_field_error(line: &[u8]) -> &'static str {
+  let line = line.strip_suffix(CRLF).unwrap_or(line);
+  let Some(colon) = line.iter().position(|byte| *byte == b':') else {
+    return "Invalid response header";
   };
-  let header = String::from_utf8_lossy(header);
-  for line in header.lines().skip(1).filter(|line| !line.is_empty()) {
-    if !line.contains(':') {
-      return Err(error::bad_response("Invalid response header"));
-    }
+  let name = &line[..colon];
+  if name.eq_ignore_ascii_case(b"Content-Length") {
+    "Invalid Content-Length header"
+  } else if name.eq_ignore_ascii_case(b"Transfer-Encoding") {
+    "Unsupported Transfer-Encoding response body"
+  } else {
+    "Invalid response header"
   }
-  Ok(())
+}
+
+pub(crate) fn parse_response_field_line(
+  line: &[u8],
+  error_message: &'static str,
+) -> error::Result<Header> {
+  let line = line.strip_suffix(CRLF).unwrap_or(line);
+  let Some(colon) = line.iter().position(|byte| *byte == b':') else {
+    return Err(error::bad_response(error_message));
+  };
+  if colon == 0 || matches!(line.first(), Some(b' ' | b'\t')) {
+    return Err(error::bad_response(error_message));
+  }
+
+  let (name, value) = line.split_at(colon);
+  let name = std::str::from_utf8(name).map_err(|_| error::bad_response(error_message))?;
+  if !is_http_token(name) || !value[1..].iter().copied().all(is_header_value_byte) {
+    return Err(error::bad_response(error_message));
+  }
+
+  Ok(Header::from_http1(name, decode_http1_text(&value[1..])))
 }
 
 fn read_bounded_crlf_line<R>(reader: &mut R, max_len: usize) -> error::Result<Vec<u8>>
@@ -858,14 +882,9 @@ where
 }
 
 fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
-  let line = std::str::from_utf8(line).map_err(error::response)?;
-  let line = line.trim_end_matches("\r\n");
-  let (name, value) = line
-    .split_once(':')
-    .ok_or_else(|| error::bad_response("Invalid trailer header"))?;
-  validate_response_trailer_header(name, value)?;
-
-  Ok(Header::from_http1(name, value))
+  let header = parse_response_field_line(line, "Invalid trailer header")?;
+  validate_response_trailer_header(header.name(), header.value())?;
+  Ok(header)
 }
 
 fn to_io_error(err: error::Error) -> io::Error {
@@ -1479,6 +1498,54 @@ mod tests {
     assert_eq!(1, headers.len());
     assert_eq!("X-Trial", headers[0].name());
     assert_eq!("\u{00ff}", headers[0].value());
+  }
+
+  #[test]
+  fn response_headers_preserve_valid_bytes_duplicates_and_ows() {
+    let headers =
+      response_headers(b"HTTP/1.1 200 OK\r\nX-Bytes: \t visible \xff \r\nX-Bytes: second\r\n\r\n")
+        .expect("valid HTTP/1 response field bytes should parse");
+
+    assert_eq!(2, headers.len());
+    assert_eq!("X-Bytes", headers[0].name());
+    assert_eq!("visible \u{00ff}", headers[0].value());
+    assert_eq!("second", headers[1].value());
+  }
+
+  #[test]
+  fn response_headers_reject_empty_non_token_names_and_control_values() {
+    for field_line in [
+      b": empty\r\n".as_slice(),
+      b"Bad Name: value\r\n".as_slice(),
+      b"X-Control: \x00\r\n".as_slice(),
+      b"X-Control: \x0b\r\n".as_slice(),
+      b"X-Control: \x7f\r\n".as_slice(),
+    ] {
+      let mut response_head = b"HTTP/1.1 200 OK\r\n".to_vec();
+      response_head.extend_from_slice(field_line);
+      response_head.extend_from_slice(b"Content-Length: 2\r\n\r\n");
+      let error =
+        response_headers(&response_head).expect_err("malformed response field should fail");
+      assert!(
+        error.to_string().contains("Invalid response header"),
+        "unexpected error for {field_line:?}: {error}"
+      );
+
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut raw = response_head;
+      raw.extend_from_slice(b"OK");
+      let header_len = raw.len() - 2;
+      let mut cursor = Cursor::new(raw);
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+      if reader.streaming_response().is_ok() {
+        panic!("malformed response field must fail before exposing the stream");
+      }
+      assert_eq!(
+        header_len as u64,
+        cursor.position(),
+        "response body bytes must not be consumed"
+      );
+    }
   }
 
   #[test]
