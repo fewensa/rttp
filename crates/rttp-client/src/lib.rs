@@ -126,7 +126,8 @@ pub use self::client::*;
 pub use self::config::*;
 #[cfg(feature = "async")]
 pub use self::connection::{
-  async_streaming_response_after_header, AsyncResponseBodyReader, AsyncStreamingResponse,
+  async_streaming_response_after_header, AsyncHandoffConnection, AsyncResponseBodyReader,
+  AsyncStreamingResponse,
 };
 pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingResponse};
 pub use rttp_protocol::a_im::{AIm, AImMember, AImParameter, AImParseError};

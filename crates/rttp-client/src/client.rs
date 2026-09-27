@@ -1,5 +1,5 @@
 #[cfg(feature = "async")]
-use crate::connection::{AsyncConnection, AsyncStreamingRequestBody};
+use crate::connection::{AsyncConnection, AsyncHandoffConnection, AsyncStreamingRequestBody};
 use crate::connection::{BlockConnection, HandoffConnection, StreamingRequestBody};
 use crate::request::{RawRequest, Request};
 use crate::response::Response;
@@ -2428,6 +2428,39 @@ impl HttpClient {
     }
     let request = RawRequest::block_new(&mut self.request)?;
     BlockConnection::new(request).call_upgrade_handoff()
+  }
+
+  #[cfg(feature = "async")]
+  pub async fn rasync_connect(&mut self) -> error::Result<AsyncHandoffConnection> {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    if self.request.has_configured_body() {
+      return Err(error::builder_with_message(
+        "CONNECT socket handoff cannot be combined with a request body",
+      ));
+    }
+    self.request.method_set("CONNECT");
+    let request = RawRequest::async_new(&mut self.request).await?;
+    AsyncConnection::new(request)
+      .async_call_connect_handoff()
+      .await
+  }
+
+  #[cfg(feature = "async")]
+  pub async fn rasync_upgrade(&mut self) -> error::Result<AsyncHandoffConnection> {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    if self.request.has_configured_body() {
+      return Err(error::builder_with_message(
+        "Upgrade socket handoff cannot be combined with a request body",
+      ));
+    }
+    let request = RawRequest::async_new(&mut self.request).await?;
+    AsyncConnection::new(request)
+      .async_call_upgrade_handoff()
+      .await
   }
 
   /// Async request emit

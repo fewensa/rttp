@@ -2,6 +2,10 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::thread;
 
+#[cfg(feature = "async")]
+use futures::executor::block_on;
+#[cfg(feature = "async")]
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use rttp::server::{HttpHandoff, HttpResponse};
 use rttp_client::HttpClient;
 
@@ -187,6 +191,116 @@ fn rttp_client_upgrade_interoperates_with_socket2_handoff_matrix() {
 
     handle.join().expect("server thread");
   }
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn rttp_client_async_connect_interoperates_with_socket2_handoff() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_handoff(|request| {
+        assert_eq!("CONNECT", request.method());
+        HttpHandoff::connect(
+          HttpResponse::new(200, "Connection Established"),
+          |mut stream| {
+            let mut ping = [0u8; 4];
+            stream.read_exact(&mut ping)?;
+            assert_eq!(b"ping", &ping);
+            stream.write_all(b"pong")?;
+            Ok(())
+          },
+        )
+      })
+      .expect("serve connect handoff");
+  });
+
+  block_on(async {
+    let mut tunnel = HttpClient::new()
+      .url(format!("http://{}", addr))
+      .rasync_connect()
+      .await
+      .expect("establish tunnel");
+
+    assert_eq!(200, tunnel.response().code());
+    tunnel
+      .stream_mut()
+      .write_all(b"ping")
+      .await
+      .expect("write ping");
+    let mut pong = [0u8; 4];
+    tunnel
+      .stream_mut()
+      .read_exact(&mut pong)
+      .await
+      .expect("read pong");
+    assert_eq!(b"pong", &pong);
+  });
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn rttp_client_async_upgrade_interoperates_with_socket2_handoff() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_handoff(|request| {
+        assert_eq!("GET", request.method());
+        assert_eq!("/chat", request.target());
+        assert_eq!(Some("websocket"), request.header("Upgrade"));
+        HttpHandoff::upgrade(
+          HttpResponse::new(101, "Switching Protocols")
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket"),
+          |mut stream| {
+            stream.write_all(b"server-bytes")?;
+            let mut received = [0u8; 12];
+            stream.read_exact(&mut received)?;
+            assert_eq!(b"client-bytes", &received);
+            Ok(())
+          },
+        )
+      })
+      .expect("serve upgrade handoff");
+  });
+
+  block_on(async {
+    let mut upgraded = HttpClient::new()
+      .url(format!("http://{}/chat", addr))
+      .header(("Connection", "Upgrade"))
+      .header(("Upgrade", "websocket"))
+      .rasync_upgrade()
+      .await
+      .expect("upgrade connection");
+
+    assert_eq!(101, upgraded.response().code());
+    assert_eq!(
+      Some(&"websocket".to_string()),
+      upgraded.response().header_value("Upgrade")
+    );
+
+    let mut received = [0u8; 12];
+    upgraded
+      .stream_mut()
+      .read_exact(&mut received)
+      .await
+      .expect("read upgraded server bytes");
+    assert_eq!(b"server-bytes", &received);
+
+    upgraded
+      .stream_mut()
+      .write_all(b"client-bytes")
+      .await
+      .expect("write upgraded client bytes");
+  });
+
+  handle.join().expect("server thread");
 }
 
 #[test]

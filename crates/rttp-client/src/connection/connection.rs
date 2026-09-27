@@ -541,7 +541,7 @@ pub(crate) fn request_expects_continue(header: &str, body: Option<&RequestBody>)
   false
 }
 
-fn response_header_has_upgrade(header: &[u8]) -> error::Result<bool> {
+pub(crate) fn response_header_has_upgrade(header: &[u8]) -> error::Result<bool> {
   let header = String::from_utf8(header.to_vec()).map_err(error::response)?;
   let mut upgrade_values = Vec::new();
   let mut connection_has_upgrade = false;
