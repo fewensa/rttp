@@ -2279,6 +2279,115 @@ fn find_crlf(bytes: &[u8], start: usize) -> Option<usize> {
     .map(|position| start + position)
 }
 
+/// One staged write on an accepted connection for connection-lifetime matrices.
+///
+/// `truncate_after` writes only a prefix and then closes the socket so incomplete
+/// framing can be asserted deterministically. `close_after` closes after a full
+/// write even when more stages remain on the script.
+#[derive(Clone, Debug)]
+pub struct ScriptedHttpStage {
+  pub response: Vec<u8>,
+  pub truncate_after: Option<usize>,
+  pub close_after: bool,
+}
+
+impl ScriptedHttpStage {
+  pub fn respond(response: impl Into<Vec<u8>>) -> Self {
+    Self {
+      response: response.into(),
+      truncate_after: None,
+      close_after: false,
+    }
+  }
+
+  pub fn respond_and_close(response: impl Into<Vec<u8>>) -> Self {
+    Self {
+      response: response.into(),
+      truncate_after: None,
+      close_after: true,
+    }
+  }
+
+  pub fn truncated(response: impl Into<Vec<u8>>, truncate_after: usize) -> Self {
+    Self {
+      response: response.into(),
+      truncate_after: Some(truncate_after),
+      close_after: true,
+    }
+  }
+}
+
+/// Per-accept script: each stage reads one framed request, then writes its response.
+#[derive(Clone, Debug)]
+pub struct ScriptedHttpConnection {
+  pub stages: Vec<ScriptedHttpStage>,
+}
+
+impl ScriptedHttpConnection {
+  pub fn stages<I>(stages: I) -> Self
+  where
+    I: IntoIterator<Item = ScriptedHttpStage>,
+  {
+    Self {
+      stages: stages.into_iter().collect(),
+    }
+  }
+}
+
+/// Captured accept/request boundaries from [`spawn_socket2_scripted_http_server`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ScriptedHttpServerReport {
+  pub accept_count: usize,
+  pub requests_per_connection: Vec<Vec<Vec<u8>>>,
+}
+
+/// Deterministic socket2 server that stages responses across one or more accepts.
+///
+/// Each `ScriptedHttpConnection` is one `accept()`. Within a connection, each stage
+/// consumes exactly one HTTP request boundary via [`read_http_request`], then writes
+/// the staged bytes (optionally truncated / closed).
+pub fn spawn_socket2_scripted_http_server(
+  connections: Vec<ScriptedHttpConnection>,
+) -> (SocketAddr, JoinHandle<ScriptedHttpServerReport>) {
+  let (listener, addr) = bind_socket2_tcp_listener("scripted http server");
+  let handle = thread::spawn(move || {
+    let mut report = ScriptedHttpServerReport::default();
+    for connection in connections {
+      let Ok((mut stream, _)) = listener.accept() else {
+        break;
+      };
+      report.accept_count += 1;
+      let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+      let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+
+      let mut requests = Vec::new();
+      for stage in connection.stages {
+        let request = read_http_request(&mut stream);
+        if request.is_empty() {
+          break;
+        }
+        requests.push(request);
+
+        let write_len = stage
+          .truncate_after
+          .unwrap_or(stage.response.len())
+          .min(stage.response.len());
+        if stream.write_all(&stage.response[..write_len]).is_err() {
+          break;
+        }
+        let _ = stream.flush();
+
+        if stage.truncate_after.is_some() || stage.close_after {
+          break;
+        }
+      }
+      report.requests_per_connection.push(requests);
+    }
+    report
+  });
+  (addr, handle)
+}
+
 pub fn spawn_socket2_raw_response_server(
   response: &'static [u8],
 ) -> (SocketAddr, JoinHandle<Vec<u8>>) {

@@ -464,6 +464,10 @@ where
   }
 }
 
+/// A response leaves the client connection reusable only when framing is
+/// length-delimited (or bodyless) and the Connection/version rules do not
+/// require close. Until-EOF bodies always consume the socket to completion.
+/// Locked by `tests/http11_connection_lifetime_matrix.rs`.
 pub(crate) fn response_connection_reusable(
   header: &[u8],
   body_kind: &ResponseBodyKind,
@@ -559,6 +563,13 @@ pub(crate) fn response_status_code(header: &[u8]) -> error::Result<u16> {
     .map_err(|_| error::bad_response("Response status code is not a number"))
 }
 
+/// Selects HTTP/1.x response body framing.
+///
+/// HEAD (`expect_no_body`) and 1xx/204/304 are bodyless even when framing
+/// headers are present. Transfer-Encoding and Content-Length must not both
+/// appear; conflicting Content-Length values fail closed. Missing length on a
+/// message with a body is until-EOF and ends the connection. Locked by
+/// `tests/http11_connection_lifetime_matrix.rs`.
 pub(crate) fn response_body_kind(
   header: &[u8],
   expect_no_body: bool,

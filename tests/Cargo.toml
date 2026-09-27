@@ -51,3 +51,7 @@ path = "content_negotiation_metadata_matrix.rs"
 [[test]]
 name = "response_decoding_transport_matrix"
 path = "response_decoding_transport_matrix.rs"
+
+[[test]]
+name = "http11_connection_lifetime_matrix"
+path = "http11_connection_lifetime_matrix.rs"
