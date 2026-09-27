@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 base64 = { version = "0.22", optional = true }
 rcgen = { version = "0.11", optional = true }
-rustls = { version = "0.23", optional = true }
+rustls = { version = "0.23.45", optional = true }
 socket2 = "0.5"
 
 [features]
