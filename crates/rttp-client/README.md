@@ -27,6 +27,41 @@ rttp_client = "0.2"
 rttp_client = { version = "0.2", features = ["async", "tls-rustls"] }
 ```
 
+## Feature and transport matrix
+
+The four feature names in `Cargo.toml` are independent: `async`, `http2`,
+`tls-native`, and `tls-rustls`. The CI feature-combination job checks all 16
+subsets. The grouped rows below name every subset and describe the resulting
+transport surface (a `+` means the listed features are enabled).
+
+| feature subset(s) | supported operation |
+|---|---|
+| *(none)*; `http2`; `tls-native`; `http2+tls-native`; `tls-rustls`; `http2+tls-rustls`; `tls-native+tls-rustls`; `http2+tls-native+tls-rustls` | Synchronous HTTP/1.1 over plain HTTP; `http2` additionally exposes direct prior-knowledge h2c APIs. HTTPS is available when a TLS feature is present; when both TLS features are enabled, rustls is selected. |
+| `async`; `async+http2` | Synchronous HTTP/1.1 plus asynchronous plain HTTP. `http2` has no asynchronous HTTP/2 API. HTTPS is unavailable without a TLS feature. |
+| `async+tls-native`; `async+http2+tls-native` | Synchronous and asynchronous HTTP/1.1 over native TLS, including buffered requests. Async streaming HTTPS request bodies are rejected because native TLS is not the async streaming backend. |
+| `async+tls-rustls`; `async+http2+tls-rustls`; `async+tls-native+tls-rustls`; `async+http2+tls-native+tls-rustls` | Synchronous and asynchronous HTTP/1.1 over rustls, including buffered and async streaming HTTPS request bodies. With both TLS features, rustls takes precedence for both APIs. |
+
+Thus `async` gates `rasync` and the async streaming APIs; it does not turn
+`emit_http2_prior_knowledge` into an async operation. `tls-native` and
+`tls-rustls` provide HTTPS for synchronous requests, while async buffered HTTPS
+requires `async` plus either TLS feature. TLS negotiation does not use ALPN:
+HTTP/2 is the separate, cleartext h2c path only.
+
+The HTTP/1.1 proxy rules are separate from the h2c rules. A configured HTTP
+proxy receives absolute-form HTTP/1.1 requests; an HTTPS origin is reached
+through an HTTP `CONNECT` tunnel and then the selected TLS backend. SOCKS4 and
+SOCKS5 handshakes are delegated to the `socks` crate. Buffered proxy requests
+are available in synchronous and, with `async`, asynchronous operation. The
+streaming request APIs reject configured proxies before connecting. The
+bounded `http2` APIs are direct prior-knowledge h2c only: they reject proxies
+(and TLS/ALPN) rather than tunneling HTTP/2 through one. This also means
+`http2` is not an HTTPS or proxy feature, and an `http2` subset still retains
+the ordinary HTTP/1.1 APIs.
+
+The matrix describes feature availability, not protocol negotiation: a
+request to an unsupported `https` combination fails before a TLS request can
+be made, and h2c remains limited to its documented direct single-stream path.
+
 Direct TCP connections use `socket2`. SOCKS proxy handshakes remain delegated to
 the `socks` crate.
 HTTP/1.x chunked responses are decoded, and response trailers are exposed
