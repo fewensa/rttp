@@ -2083,6 +2083,20 @@ fn buffered_response_rejects_invalid_http_version_tokens() {
 }
 
 #[test]
+fn buffered_response_rejects_non_three_digit_status_codes() {
+  for status_line in ["HTTP/1.1 20 OK", "HTTP/1.1 2000 OK"] {
+    let raw = format!("{status_line}\r\nContent-Length: 2\r\n\r\nOK");
+    let error = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect_err("non-three-digit buffered status code should be rejected");
+
+    assert!(
+      error.to_string().contains("Response status not have code"),
+      "unexpected error for {status_line:?}: {error}"
+    );
+  }
+}
+
+#[test]
 fn test_parse_response() {
   let s = "HTTP/1.1 200 OK\r\n\
         Content-Length: 18\r\n\

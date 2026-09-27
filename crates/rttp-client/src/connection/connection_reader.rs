@@ -1606,6 +1606,24 @@ mod tests {
   }
 
   #[test]
+  fn origin_response_rejects_non_three_digit_status_codes() {
+    for status_line in ["HTTP/1.1 20 OK", "HTTP/1.1 2000 OK"] {
+      let raw = format!("{status_line}\r\nContent-Length: 2\r\n\r\nOK");
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      let error = reader
+        .response()
+        .expect_err("non-three-digit origin status code should be rejected");
+      assert!(
+        error.to_string().contains("Response status not have code"),
+        "unexpected error for {status_line:?}: {error}"
+      );
+    }
+  }
+
+  #[test]
   fn origin_response_rejects_non_sp_status_line_before_body() {
     for status_line in [
       "HTTP/1.1\t200 OK",
@@ -1656,6 +1674,28 @@ mod tests {
       let error = reader
         .response()
         .expect_err("malformed informational status line should be rejected");
+
+      assert!(
+        error.to_string().contains("Response status not have code")
+          || error.to_string().contains("Invalid informational response"),
+        "unexpected error for {status_line:?}: {error}"
+      );
+    }
+  }
+
+  #[test]
+  fn informational_response_rejects_non_three_digit_status_codes() {
+    for status_line in ["HTTP/1.1 10 Early Hints", "HTTP/1.1 1030 Early Hints"] {
+      let raw = format!(
+        "{status_line}\r\nX-Interim: ignored\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+      );
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      let error = reader
+        .response()
+        .expect_err("non-three-digit informational status code should be rejected");
 
       assert!(
         error.to_string().contains("Response status not have code")
