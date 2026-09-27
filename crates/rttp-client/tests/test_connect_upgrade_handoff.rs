@@ -1,11 +1,18 @@
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener};
 use std::thread;
+use std::time::Duration;
 
+#[cfg(feature = "async")]
+use async_io::Timer;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
 #[cfg(feature = "async")]
+use futures::future::{select, Either};
+#[cfg(feature = "async")]
 use futures::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(feature = "async")]
+use futures::pin_mut;
 use rttp_client::HttpClient;
 
 fn read_request_head(stream: &mut impl Read) -> Vec<u8> {
@@ -535,4 +542,223 @@ fn async_upgrade_rejects_truncated_response_head() {
   );
 
   handle.join().expect("server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_connect_delivers_peer_bytes_once_before_eof() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind connect server");
+  let addr = listener.local_addr().expect("connect server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept connect");
+    let _request = read_request_head(&mut stream);
+    stream
+      .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\nconnect-bytes")
+      .expect("write connect response and bytes");
+    stream
+      .shutdown(Shutdown::Write)
+      .expect("half-close connect peer");
+  });
+
+  block_on(async {
+    let mut tunnel = HttpClient::new()
+      .url(format!("http://{}", addr))
+      .rasync_connect()
+      .await
+      .expect("establish connect handoff");
+    let mut bytes = Vec::new();
+    tunnel
+      .stream_mut()
+      .read_to_end(&mut bytes)
+      .await
+      .expect("read connect bytes");
+    assert_eq!(b"connect-bytes", bytes.as_slice());
+    let mut again = [0u8; 1];
+    assert_eq!(
+      0,
+      tunnel
+        .stream_mut()
+        .read(&mut again)
+        .await
+        .expect("read EOF")
+    );
+  });
+  handle.join().expect("connect server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_upgrade_delivers_peer_bytes_once_before_eof() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind upgrade server");
+  let addr = listener.local_addr().expect("upgrade server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept upgrade");
+    let _request = read_request_head(&mut stream);
+    stream
+      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\nupgrade-bytes")
+      .expect("write upgrade response and bytes");
+    stream
+      .shutdown(Shutdown::Write)
+      .expect("half-close upgrade peer");
+  });
+
+  block_on(async {
+    let mut upgraded = HttpClient::new()
+      .url(format!("http://{}/chat", addr))
+      .header(("Connection", "Upgrade"))
+      .header(("Upgrade", "websocket"))
+      .rasync_upgrade()
+      .await
+      .expect("establish upgrade handoff");
+    let mut bytes = Vec::new();
+    upgraded
+      .stream_mut()
+      .read_to_end(&mut bytes)
+      .await
+      .expect("read upgrade bytes");
+    assert_eq!(b"upgrade-bytes", bytes.as_slice());
+    let mut again = [0u8; 1];
+    assert_eq!(
+      0,
+      upgraded
+        .stream_mut()
+        .read(&mut again)
+        .await
+        .expect("read EOF")
+    );
+  });
+  handle.join().expect("upgrade server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_connect_caller_close_is_peer_eof() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind connect server");
+  let addr = listener.local_addr().expect("connect server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept connect");
+    let _request = read_request_head(&mut stream);
+    stream
+      .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+      .expect("write connect response");
+    stream
+      .set_read_timeout(Some(Duration::from_secs(1)))
+      .expect("set peer read timeout");
+    let mut byte = [0u8; 1];
+    assert_eq!(0, stream.read(&mut byte).expect("observe connect EOF"));
+  });
+
+  block_on(async {
+    let mut tunnel = HttpClient::new()
+      .url(format!("http://{}", addr))
+      .rasync_connect()
+      .await
+      .expect("establish connect handoff");
+    tunnel
+      .stream_mut()
+      .close()
+      .await
+      .expect("close connect write half");
+  });
+  handle.join().expect("connect server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_upgrade_caller_close_is_peer_eof() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind upgrade server");
+  let addr = listener.local_addr().expect("upgrade server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept upgrade");
+    let _request = read_request_head(&mut stream);
+    stream
+      .write_all(
+        b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+      )
+      .expect("write upgrade response");
+    stream
+      .set_read_timeout(Some(Duration::from_secs(1)))
+      .expect("set peer read timeout");
+    let mut byte = [0u8; 1];
+    assert_eq!(0, stream.read(&mut byte).expect("observe upgrade EOF"));
+  });
+
+  block_on(async {
+    let mut upgraded = HttpClient::new()
+      .url(format!("http://{}/chat", addr))
+      .header(("Connection", "Upgrade"))
+      .header(("Upgrade", "websocket"))
+      .rasync_upgrade()
+      .await
+      .expect("establish upgrade handoff");
+    upgraded
+      .stream_mut()
+      .close()
+      .await
+      .expect("close upgrade write half");
+  });
+  handle.join().expect("upgrade server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_dropped_connect_handoff_closes_pending_socket() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind connect server");
+  let addr = listener.local_addr().expect("connect server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept connect");
+    let _request = read_request_head(&mut stream);
+    stream
+      .set_read_timeout(Some(Duration::from_secs(1)))
+      .expect("set peer read timeout");
+    let mut byte = [0u8; 1];
+    assert_eq!(
+      0,
+      stream.read(&mut byte).expect("observe dropped connect EOF")
+    );
+  });
+
+  block_on(async {
+    let mut client = HttpClient::new();
+    client.url(format!("http://{}", addr));
+    let handoff = client.rasync_connect();
+    pin_mut!(handoff);
+    let timer = Timer::after(Duration::from_millis(100));
+    pin_mut!(timer);
+    assert!(matches!(select(handoff, timer).await, Either::Right(_)));
+  });
+  handle.join().expect("connect server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_dropped_upgrade_handoff_closes_pending_socket() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind upgrade server");
+  let addr = listener.local_addr().expect("upgrade server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept upgrade");
+    let _request = read_request_head(&mut stream);
+    stream
+      .set_read_timeout(Some(Duration::from_secs(1)))
+      .expect("set peer read timeout");
+    let mut byte = [0u8; 1];
+    assert_eq!(
+      0,
+      stream.read(&mut byte).expect("observe dropped upgrade EOF")
+    );
+  });
+
+  block_on(async {
+    let mut client = HttpClient::new();
+    client
+      .url(format!("http://{}/chat", addr))
+      .header(("Connection", "Upgrade"))
+      .header(("Upgrade", "websocket"));
+    let handoff = client.rasync_upgrade();
+    pin_mut!(handoff);
+    let timer = Timer::after(Duration::from_millis(100));
+    pin_mut!(timer);
+    assert!(matches!(select(handoff, timer).await, Either::Right(_)));
+  });
+  handle.join().expect("upgrade server thread");
 }
