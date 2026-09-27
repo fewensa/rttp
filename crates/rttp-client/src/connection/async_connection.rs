@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fmt;
 use std::future::Future;
 use std::net::TcpStream;
 use std::pin::Pin;
@@ -16,18 +17,19 @@ use url::Url;
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 
+use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
 use crate::connection::connection::{
   connect_tcp_stream, parse_proxy_connect_response, proxy_connect_response_status_code,
-  request_expects_continue, Connection, ExpectContinueResult,
+  request_expects_continue, response_header_has_upgrade, Connection, ExpectContinueResult,
+  HandoffKind,
 };
-#[cfg(test)]
-use crate::connection::connection_reader::parse_informational_response;
 use crate::connection::connection_reader::{
   append_informational_response, content_length_from_response_body_kind,
-  is_skippable_informational_status, parse_response_field_line, response_body_kind,
-  response_connection_reusable, response_connection_should_close, response_headers,
-  response_status_code, validate_response_trailer_header, ResponseBodyKind, ResponseParts,
-  MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
+  is_skippable_informational_status, parse_informational_response, parse_response_field_line,
+  response_body_kind, response_connection_reusable, response_connection_should_close,
+  response_headers, response_status_code, validate_response_trailer_header, ResponseBodyKind,
+  ResponseParts, MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_INFORMATIONAL_RESPONSES,
+  MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::error;
 use crate::request::RawRequest;
@@ -120,6 +122,65 @@ impl AsyncWrite for AsyncTcpStream {
       }
       Poll::Pending => Self::poll_timeout(&mut this.write_timer, this.write_timeout, cx),
     }
+  }
+}
+
+pub struct AsyncHandoffConnection {
+  response: Response,
+  stream: AsyncTcpStream,
+}
+
+impl AsyncHandoffConnection {
+  fn new(response: Response, stream: AsyncTcpStream) -> Self {
+    Self { response, stream }
+  }
+
+  pub fn response(&self) -> &Response {
+    &self.response
+  }
+
+  pub fn stream(&self) -> &(impl AsyncRead + AsyncWrite + Unpin) {
+    &self.stream
+  }
+
+  pub fn stream_mut(&mut self) -> &mut (impl AsyncRead + AsyncWrite + Unpin) {
+    &mut self.stream
+  }
+
+  pub fn into_parts(self) -> (Response, impl AsyncRead + AsyncWrite + Unpin) {
+    (self.response, self.stream)
+  }
+}
+
+impl fmt::Debug for AsyncHandoffConnection {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("AsyncHandoffConnection")
+      .field("response", &self.response)
+      .finish_non_exhaustive()
+  }
+}
+
+impl AsyncRead for AsyncHandoffConnection {
+  fn poll_read(
+    self: Pin<&mut Self>,
+    cx: &mut Context<'_>,
+    buf: &mut [u8],
+  ) -> Poll<io::Result<usize>> {
+    Pin::new(&mut self.get_mut().stream).poll_read(cx, buf)
+  }
+}
+
+impl AsyncWrite for AsyncHandoffConnection {
+  fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    Pin::new(&mut self.get_mut().stream).poll_write(cx, buf)
+  }
+
+  fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    Pin::new(&mut self.get_mut().stream).poll_flush(cx)
+  }
+
+  fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    Pin::new(&mut self.get_mut().stream).poll_close(cx)
   }
 }
 
@@ -462,6 +523,30 @@ impl<'a> AsyncConnection<'a> {
     self.conn.closed_set(close_connection);
     Ok(response)
   }
+
+  pub async fn async_call_connect_handoff(mut self) -> error::Result<AsyncHandoffConnection> {
+    if self.conn.proxy().is_some() {
+      return Err(error::builder_with_message(
+        "CONNECT socket handoff does not support proxies",
+      ));
+    }
+    let url = self.conn.url().map_err(error::builder)?;
+    let handoff = self.async_send_handoff(&url, HandoffKind::Connect).await?;
+    self.conn.closed_set(true);
+    Ok(handoff)
+  }
+
+  pub async fn async_call_upgrade_handoff(mut self) -> error::Result<AsyncHandoffConnection> {
+    if self.conn.proxy().is_some() {
+      return Err(error::builder_with_message(
+        "Upgrade socket handoff does not support proxies",
+      ));
+    }
+    let url = self.conn.url().map_err(error::builder)?;
+    let handoff = self.async_send_handoff(&url, HandoffKind::Upgrade).await?;
+    self.conn.closed_set(true);
+    Ok(handoff)
+  }
 }
 
 impl<'a> AsyncConnection<'a> {
@@ -667,7 +752,6 @@ impl<'a> AsyncConnection<'a> {
   }
 }
 
-#[cfg(test)]
 async fn async_read_response_head<S>(stream: &mut S) -> error::Result<Vec<u8>>
 where
   S: AsyncRead + Unpin + ?Sized,
@@ -830,6 +914,55 @@ fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
 
 // connection send
 impl<'a> AsyncConnection<'a> {
+  async fn async_send_handoff(
+    &self,
+    url: &Url,
+    kind: HandoffKind,
+  ) -> error::Result<AsyncHandoffConnection> {
+    if url.scheme() != "http" {
+      return Err(error::builder_with_message(
+        "socket handoff only supports plain http URLs",
+      ));
+    }
+
+    let addr = self.conn.addr(url)?;
+    let mut stream = self.async_tcp_stream(&addr).await?;
+    self.async_write_stream(&mut stream).await?;
+
+    let header = async_read_response_head(&mut stream).await?;
+    let status_code = response_status_code(&header)?;
+    match kind {
+      HandoffKind::Connect if (200..300).contains(&status_code) => {
+        let response = Response::with_trailers(self.conn.rourl().clone(), header, Vec::new())?;
+        Ok(AsyncHandoffConnection::new(response, stream))
+      }
+      HandoffKind::Upgrade if status_code == 101 && response_header_has_upgrade(&header)? => {
+        let response = Response::with_trailers(self.conn.rourl().clone(), header, Vec::new())?;
+        Ok(AsyncHandoffConnection::new(response, stream))
+      }
+      HandoffKind::Connect => {
+        let _ = async_streaming_response_after_header(&mut stream, false, header)
+          .await?
+          .read_to_parts(DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES)
+          .await?;
+        Err(error::bad_response(format!(
+          "CONNECT failed with HTTP status {}",
+          status_code
+        )))
+      }
+      HandoffKind::Upgrade => {
+        let _ = async_streaming_response_after_header(&mut stream, false, header)
+          .await?
+          .read_to_parts(DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES)
+          .await?;
+        Err(error::bad_response(format!(
+          "Upgrade failed with HTTP status {}",
+          status_code
+        )))
+      }
+    }
+  }
+
   async fn async_send_parts(&self, url: &Url) -> error::Result<ResponseParts> {
     let addr = self.conn.addr(url)?;
     let stream = self.async_tcp_stream(&addr).await?;
