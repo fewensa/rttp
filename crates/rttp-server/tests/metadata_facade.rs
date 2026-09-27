@@ -2636,13 +2636,16 @@ fn request_facade_parses_sec_ch_ua_arch_metadata_without_negotiation() {
       .expect("missing Sec-CH-UA-Arch should be valid")
   );
 
-  let malformed =
-    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Arch: x86\r\n\r\n")
-      .expect("malformed Sec-CH-UA-Arch should remain available");
-  let _: HttpSecChUaArchParseError = malformed
-    .sec_ch_ua_arch()
-    .expect_err("malformed Sec-CH-UA-Arch should fail");
-  assert_eq!(Some("x86"), malformed.header("Sec-CH-UA-Arch"));
+  for value in ["x86", r#""x86"#, r#"arm64""#, r#""x86";v=1"#] {
+    let raw =
+      format!("GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Arch: {value}\r\n\r\n");
+    let malformed =
+      HttpRequest::parse(raw.as_bytes()).expect("malformed Sec-CH-UA-Arch should remain available");
+    let _: HttpSecChUaArchParseError = malformed
+      .sec_ch_ua_arch()
+      .expect_err("malformed Sec-CH-UA-Arch should fail");
+    assert_eq!(Some(value), malformed.header("Sec-CH-UA-Arch"));
+  }
 
   let duplicate = HttpRequest::parse(
     b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Arch: \"x86\"\r\nsec-ch-ua-arch: \"arm64\"\r\n\r\n",
@@ -2650,6 +2653,20 @@ fn request_facade_parses_sec_ch_ua_arch_metadata_without_negotiation() {
   .expect("duplicate Sec-CH-UA-Arch request should retain raw metadata");
   assert!(duplicate.sec_ch_ua_arch().is_err());
   assert_eq!(Some(r#""x86""#), duplicate.header("Sec-CH-UA-Arch"));
+
+  let non_ascii = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nSec-CH-UA-Arch: \x80\r\n\r\n",
+  )
+  .expect("non-ASCII Sec-CH-UA-Arch should remain available");
+  assert!(non_ascii.sec_ch_ua_arch().is_err());
+  assert_eq!(Some("\u{0080}"), non_ascii.header("Sec-CH-UA-Arch"));
+
+  let _: HttpSecChUaArchParseError =
+    HttpSecChUaArch::parse("x86").expect_err("unquoted arch should fail");
+  assert!(
+    HttpSecChUaArch::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err(),
+    "oversized value should fail"
+  );
 }
 
 #[test]
