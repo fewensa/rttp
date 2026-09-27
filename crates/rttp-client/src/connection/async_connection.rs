@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -115,10 +115,18 @@ impl AsyncWrite for AsyncTcpStream {
 
   fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
     let this = self.get_mut();
-    match Pin::new(&mut this.inner).poll_close(cx) {
-      Poll::Ready(result) => {
+    match Pin::new(&mut this.inner).poll_flush(cx) {
+      Poll::Ready(Ok(())) => {
         this.write_timer = None;
-        Poll::Ready(result)
+        match this.inner.get_ref().shutdown(Shutdown::Write) {
+          Ok(()) => Poll::Ready(Ok(())),
+          Err(err) if err.kind() == io::ErrorKind::NotConnected => Poll::Ready(Ok(())),
+          Err(err) => Poll::Ready(Err(err)),
+        }
+      }
+      Poll::Ready(Err(err)) => {
+        this.write_timer = None;
+        Poll::Ready(Err(err))
       }
       Poll::Pending => Self::poll_timeout(&mut this.write_timer, this.write_timeout, cx),
     }
