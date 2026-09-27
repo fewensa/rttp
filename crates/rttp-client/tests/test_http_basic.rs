@@ -1809,7 +1809,7 @@ fn test_raw_form_urlencoded() {
 }
 
 #[test]
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-native", feature = "tls-rustls"))]
 fn test_https() {
   let (addr, _handle) = support::spawn_tls_server();
   let response = client()
@@ -1823,6 +1823,74 @@ fn test_https() {
     .para(Para::with_form("q", "News"))
     .emit();
   assert!(response.is_ok());
+}
+
+#[test]
+#[cfg(any(feature = "tls-native", feature = "tls-rustls"))]
+fn test_https_shutdown_and_truncation_boundaries() {
+  const COMPLETE_EOF_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+  const TRUNCATED_CONTENT_LENGTH_RESPONSE: &[u8] =
+    b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhell";
+  const TRUNCATED_CHUNKED_RESPONSE: &[u8] = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "\r\n",
+    "5\r\nhello\r\n"
+  )
+  .as_bytes();
+
+  let config = Config::builder()
+    .verify_ssl_cert(false)
+    .verify_ssl_hostname(false)
+    .build();
+
+  let (addr, _handle) = support::spawn_tls_server();
+  let response = client()
+    .get()
+    .url(format!("https://{}/", addr))
+    .config(config.clone())
+    .emit()
+    .expect("close_notify response should be readable");
+  assert_eq!(
+    "OK",
+    response.body().string().expect("read close_notify body")
+  );
+
+  let (addr, _handle) =
+    support::spawn_tls_response_server(COMPLETE_EOF_RESPONSE, support::TlsResponseShutdown::Eof);
+  let response = client()
+    .get()
+    .url(format!("https://{}/", addr))
+    .config(config.clone())
+    .emit()
+    .expect("complete framed response should not require close_notify");
+  assert_eq!(
+    "hello",
+    response.body().string().expect("read complete EOF body")
+  );
+
+  for response_bytes in [
+    TRUNCATED_CONTENT_LENGTH_RESPONSE,
+    TRUNCATED_CHUNKED_RESPONSE,
+  ] {
+    let (addr, _handle) =
+      support::spawn_tls_response_server(response_bytes, support::TlsResponseShutdown::Eof);
+    let error = client()
+      .get()
+      .url(format!("https://{}/", addr))
+      .config(config.clone())
+      .emit()
+      .expect_err("truncated TLS response should fail closed");
+    assert!(
+      !error.is_body_too_large(),
+      "unexpected bounded error: {error}"
+    );
+    assert!(
+      error.to_string().starts_with("error receive response")
+        || error.to_string().starts_with("error sending request"),
+      "unexpected typed error: {error}"
+    );
+  }
 }
 
 #[test]

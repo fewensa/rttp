@@ -1236,7 +1236,22 @@ pub fn spawn_https_proxy_server_with_credentials(
 }
 
 #[cfg(feature = "tls-rustls")]
+#[derive(Clone, Copy)]
+pub enum TlsResponseShutdown {
+  CloseNotify,
+  Eof,
+}
+
+#[cfg(feature = "tls-rustls")]
 pub fn spawn_tls_server() -> (SocketAddr, JoinHandle<()>) {
+  spawn_tls_response_server(HTTP_OK_RESPONSE, TlsResponseShutdown::CloseNotify)
+}
+
+#[cfg(feature = "tls-rustls")]
+pub fn spawn_tls_response_server(
+  response: &'static [u8],
+  shutdown: TlsResponseShutdown,
+) -> (SocketAddr, JoinHandle<()>) {
   use rcgen::generate_simple_self_signed;
   use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
   use rustls::{ServerConfig, ServerConnection, StreamOwned};
@@ -1262,10 +1277,12 @@ pub fn spawn_tls_server() -> (SocketAddr, JoinHandle<()>) {
       let session = ServerConnection::new(config.clone()).expect("server connection");
       let mut tls = StreamOwned::new(session, stream);
       let _ = read_http_request(&mut tls);
-      let _ = tls.write_all(HTTP_OK_RESPONSE);
+      let _ = tls.write_all(response);
       let _ = tls.flush();
-      tls.conn.send_close_notify();
-      let _ = tls.flush();
+      if matches!(shutdown, TlsResponseShutdown::CloseNotify) {
+        tls.conn.send_close_notify();
+        let _ = tls.flush();
+      }
     }
   });
   (addr, handle)
