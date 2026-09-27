@@ -1,3 +1,5 @@
+#[cfg(any(feature = "all", feature = "async"))]
+use futures::executor::block_on;
 #[cfg(any(
   feature = "all",
   feature = "client",
@@ -303,7 +305,7 @@ fn test_client_https() {
 #[test]
 #[cfg(any(feature = "all", feature = "async"))]
 fn test_client_async_http() {
-  async_std::task::block_on(async {
+  block_on(async {
     let (addr, _handle) = support::spawn_http_server();
     let response = rttp::Http::client()
       .post()
@@ -325,7 +327,7 @@ fn test_client_async_http() {
   all(feature = "async", feature = "tls-rustls")
 ))]
 fn test_client_async_https() {
-  async_std::task::block_on(async {
+  block_on(async {
     let (addr, _handle) = support::spawn_tls_server();
     let response = rttp::Http::client()
       .post()
