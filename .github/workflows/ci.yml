@@ -60,11 +60,25 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # Powerset of async, http2, tls-native, and tls-rustls (16 subsets).
+        # Empty string is the no-features subset; omit --features for that case.
         features:
-          - async,http2,tls-native
-          - async,http2,tls-rustls
+          - ""
+          - async
+          - http2
           - tls-native
           - tls-rustls
+          - async,http2
+          - async,tls-native
+          - async,tls-rustls
+          - http2,tls-native
+          - http2,tls-rustls
+          - tls-native,tls-rustls
+          - async,http2,tls-native
+          - async,http2,tls-rustls
+          - async,tls-native,tls-rustls
+          - http2,tls-native,tls-rustls
+          - async,http2,tls-native,tls-rustls
     steps:
       - uses: actions/checkout@v6
 
@@ -75,7 +89,17 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check feature combination
-        run: cargo check -p rttp_client --no-default-features --features ${{ matrix.features }}
+        run: |
+          args=(--no-default-features --all-targets)
+          if [ -n "${{ matrix.features }}" ]; then
+            args+=(--features "${{ matrix.features }}")
+          fi
+          cargo check -p rttp_client "${args[@]}"
 
       - name: Clippy feature combination
-        run: cargo clippy -p rttp_client --no-default-features --features ${{ matrix.features }} -- -D warnings
+        run: |
+          args=(--no-default-features --all-targets)
+          if [ -n "${{ matrix.features }}" ]; then
+            args+=(--features "${{ matrix.features }}")
+          fi
+          cargo clippy -p rttp_client "${args[@]}" -- -D warnings
