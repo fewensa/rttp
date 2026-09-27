@@ -1229,18 +1229,19 @@ pub fn spawn_https_proxy_server_with_credentials(
 #[cfg(feature = "tls-rustls")]
 pub fn spawn_tls_server() -> (SocketAddr, JoinHandle<()>) {
   use rcgen::generate_simple_self_signed;
-  use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+  use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
   use rustls::{ServerConfig, ServerConnection, StreamOwned};
   use std::sync::Arc;
 
-  let cert = generate_simple_self_signed(vec!["localhost".to_string()]).expect("generate cert");
-  let cert_der = cert.serialize_der().expect("cert der");
-  let key_der = cert.serialize_private_key_der();
+  let rcgen::CertifiedKey { cert, key_pair } =
+    generate_simple_self_signed(vec!["localhost".to_string()]).expect("generate cert");
+  let cert_der = cert.der().clone();
+  let key_der = key_pair.serialize_der();
 
   let config = ServerConfig::builder()
     .with_no_client_auth()
     .with_single_cert(
-      vec![CertificateDer::from(cert_der)],
+      vec![cert_der],
       PrivateKeyDer::from(PrivatePkcs8KeyDer::from(key_der)),
     )
     .expect("set cert");
@@ -1264,17 +1265,18 @@ pub fn spawn_tls_server() -> (SocketAddr, JoinHandle<()>) {
 #[cfg(feature = "tls-rustls")]
 pub fn spawn_tls_redirect_server(location: String) -> (SocketAddr, JoinHandle<()>) {
   use rcgen::generate_simple_self_signed;
-  use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+  use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
   use rustls::{ServerConfig, ServerConnection, StreamOwned};
   use std::sync::Arc;
 
-  let cert = generate_simple_self_signed(vec!["localhost".to_string()]).expect("generate cert");
-  let cert_der = cert.serialize_der().expect("cert der");
-  let key_der = cert.serialize_private_key_der();
+  let rcgen::CertifiedKey { cert, key_pair } =
+    generate_simple_self_signed(vec!["localhost".to_string()]).expect("generate cert");
+  let cert_der = cert.der().clone();
+  let key_der = key_pair.serialize_der();
   let config = ServerConfig::builder()
     .with_no_client_auth()
     .with_single_cert(
-      vec![CertificateDer::from(cert_der)],
+      vec![cert_der],
       PrivateKeyDer::from(PrivatePkcs8KeyDer::from(key_der)),
     )
     .expect("set cert");
