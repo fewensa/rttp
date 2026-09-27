@@ -10158,6 +10158,7 @@ fn async_and_blocking_multipart_form_bodies_match() {
   assert_eq!(blocking_body, async_body);
 }
 
+#[cfg(feature = "async")]
 fn normalize_multipart_body(body: &[u8]) -> String {
   let text = request_text(body);
   let boundary_line = text
