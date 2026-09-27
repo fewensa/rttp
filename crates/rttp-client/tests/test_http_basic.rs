@@ -2928,6 +2928,32 @@ fn test_https_proxy_with_auth_uses_connect_tunnel() {
 
 #[test]
 #[cfg(feature = "tls-rustls")]
+fn test_https_proxy_type_with_auth_uses_connect_tunnel() {
+  let (proxy_addr, target_addr, _proxy_handle) =
+    support::spawn_https_proxy_server_with_credentials("user", "secret");
+  let response = client()
+    .get()
+    .url(format!("https://localhost:{}/", target_addr.port()))
+    .proxy(Proxy::https_with_authorization(
+      "127.0.0.1",
+      u32::from(proxy_addr.port()),
+      "user",
+      "secret",
+    ))
+    .config(
+      Config::builder()
+        .verify_ssl_cert(false)
+        .verify_ssl_hostname(false),
+    )
+    .emit();
+  assert!(response.is_ok());
+
+  let response = response.unwrap();
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
+#[cfg(feature = "tls-rustls")]
 fn test_https_proxy_rejects_non_sp_connect_status_line_and_closes_connection() {
   let response = "HTTP/1.1\t200 Connection Established\r\n\r\n";
   let (proxy_addr, proxy_handle) = support::spawn_proxy_connect_response_server(response);

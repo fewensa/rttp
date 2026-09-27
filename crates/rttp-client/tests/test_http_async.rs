@@ -3433,6 +3433,34 @@ fn test_async_https_proxy_with_auth_uses_connect_tunnel() {
 
 #[test]
 #[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_proxy_type_with_auth_uses_connect_tunnel() {
+  let (proxy_addr, target_addr, _proxy_handle) =
+    support::spawn_https_proxy_server_with_credentials("user", "secret");
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("https://localhost:{}/", target_addr.port()))
+      .proxy(Proxy::https_with_authorization(
+        "127.0.0.1",
+        u32::from(proxy_addr.port()),
+        "user",
+        "secret",
+      ))
+      .config(
+        rttp_client::Config::builder()
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
+      .rasync()
+      .await;
+    assert!(response.is_ok());
+    let response = response.unwrap();
+    assert_eq!("OK", response.body().string().unwrap());
+  });
+}
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
 fn test_async_https_proxy_rejects_non_sp_connect_status_line() {
   let response = "HTTP/1.1\t200 Connection Established\r\n\r\n";
   let (proxy_addr, proxy_handle) = support::spawn_proxy_connect_response_server(response);
