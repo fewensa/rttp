@@ -1891,18 +1891,6 @@ fn test_http_with_url() {
 }
 
 #[test]
-#[cfg(any(feature = "tls-rustls", feature = "tls-native"))]
-#[ignore]
-fn test_with_proxy_http() {
-  client()
-    .get()
-    .url("https://example.test")
-    .proxy(Proxy::http("127.0.0.1", 1081))
-    .emit()
-    .expect("REQUEST FAIL");
-}
-
-#[test]
 fn test_with_proxy_socks5() {
   let (addr, _handle) = support::spawn_http_server();
   let (proxy_addr, _proxy_handle) = support::spawn_socks5_proxy_server();
