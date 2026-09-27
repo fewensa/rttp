@@ -8,6 +8,69 @@ use rttp_client::{DavClass, HttpClient};
 use rttp_server::server::{Http2ServerPolicy, HttpResponse, HttpScheduleTag, HttpServer, Request};
 
 #[test]
+fn h2c_upgrade_round_trip_preserves_metadata_trailers_and_complete_body() {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c upgrade server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c upgrade server address");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.header("x-request-context").map(str::to_owned),
+          request
+            .priority()
+            .expect("parse upgrade request Priority")
+            .expect("upgrade request Priority is present")
+            .urgency(),
+        ))
+        .expect("record h2c upgrade request");
+        HttpResponse::ok("upgrade complete body")
+          .header("x-response-context", "upgrade-response")
+          .trailer("x-response-trace", "upgrade-trailer")
+      })
+      .expect("serve h2c upgrade request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/workspace/h2c-upgrade"))
+    .header(("X-Request-Context", "upgrade-request"))
+    .priority("u=2")
+    .expect("configure upgrade request Priority")
+    .emit_http2_upgrade()
+    .expect("receive h2c upgrade response");
+
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      Some("upgrade-request".to_string()),
+      Some(2)
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("recorded h2c upgrade request")
+  );
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    Some(&"upgrade-response".to_string()),
+    response.header_value("x-response-context")
+  );
+  assert_eq!(
+    "upgrade complete body",
+    response.body().string().expect("complete upgrade body")
+  );
+  assert_eq!(
+    Some(&"upgrade-trailer".to_string()),
+    response.trailer_value("x-response-trace")
+  );
+  handle.join().expect("h2c upgrade server thread");
+}
+
+#[test]
 fn bounded_h2c_prior_knowledge_round_trip_reaches_the_server() {
   let server = HttpServer::bind("127.0.0.1:0")
     .expect("bind h2c server")

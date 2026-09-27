@@ -7813,6 +7813,98 @@ fn http2_feature_socket2_rejects_non_trailers_te_request_header_before_handler()
 }
 
 #[test]
+fn prior_knowledge_server_keeps_sequential_stream_bodies_isolated() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind sequential h2 server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("sequential h2 server address");
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let body = match request.target() {
+          "/first" => "first response",
+          "/second" => "second response",
+          target => panic!("unexpected target: {target}"),
+        };
+        HttpResponse::ok(body)
+      })
+      .expect("serve sequential h2 streams");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect sequential h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set sequential h2 read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/first", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/second", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush sequential h2 requests");
+
+  let mut bodies = std::collections::BTreeMap::new();
+  while bodies.len() < 2 {
+    let frame = read_h2_frame(&mut stream);
+    if frame.frame_type == H2_FRAME_DATA && frame.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM {
+      bodies.insert(frame.stream_id, frame.payload);
+    }
+  }
+  assert_eq!(Some(&b"first response".to_vec()), bodies.get(&1));
+  assert_eq!(Some(&b"second response".to_vec()), bodies.get(&3));
+  handle.join().expect("sequential h2 server thread");
+}
+
+#[test]
+fn prior_knowledge_server_rejects_truncated_data_frame_without_dispatch() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind truncated h2 server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("truncated h2 server address");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server.accept_one(|_| {
+      tx.send(()).expect("record unexpected truncated dispatch");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect truncated h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set truncated h2 read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  let mut header = [0; 9];
+  header[2] = 4;
+  header[3] = H2_FRAME_DATA;
+  header[4] = H2_FLAG_END_STREAM;
+  header[8] = 1;
+  stream
+    .write_all(&header)
+    .expect("write truncated data header");
+  stream
+    .write_all(b"xy")
+    .expect("write truncated data payload");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("truncate data frame");
+
+  let result = handle.join().expect("truncated h2 server thread");
+  assert!(result.is_err(), "truncated frame must be rejected");
+  assert!(rx.try_recv().is_err(), "truncated stream must not dispatch");
+}
+
+#[test]
 fn http2_feature_socket2_rejects_short_priority_headers_before_handler() {
   assert_malformed_h2_request_rejected_before_handler(|stream, _| {
     write_h2_frame(
