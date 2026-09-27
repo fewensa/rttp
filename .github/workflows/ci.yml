@@ -54,3 +54,28 @@ jobs:
 
       - name: Run focused tests
         run: cargo test -p rttp_client --no-default-features --features ${{ matrix.feature }}
+
+  rttp-client-feature-combinations:
+    name: RTTP client feature checks (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - async,http2,tls-native
+          - async,http2,tls-rustls
+          - tls-native
+          - tls-rustls
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check feature combination
+        run: cargo check -p rttp_client --no-default-features --features ${{ matrix.features }}
+
+      - name: Clippy feature combination
+        run: cargo clippy -p rttp_client --no-default-features --features ${{ matrix.features }} -- -D warnings
