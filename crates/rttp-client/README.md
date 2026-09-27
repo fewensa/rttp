@@ -53,10 +53,12 @@ through an HTTP `CONNECT` tunnel and then the selected TLS backend. SOCKS4 and
 SOCKS5 handshakes are delegated to the `socks` crate. Buffered proxy requests
 are available in synchronous and, with `async`, asynchronous operation. The
 streaming request APIs reject configured proxies before connecting. The
-bounded `http2` APIs are direct prior-knowledge h2c only: they reject proxies
-(and TLS/ALPN) rather than tunneling HTTP/2 through one. This also means
-`http2` is not an HTTPS or proxy feature, and an `http2` subset still retains
-the ordinary HTTP/1.1 APIs.
+bounded `http2` APIs expose direct prior-knowledge h2c via
+`emit_http2_prior_knowledge` and HTTP/1.1 `Upgrade: h2c` via
+`emit_http2_upgrade`; both reject proxies (and TLS/ALPN) rather than
+tunneling HTTP/2 through one. This also means `http2` is not an HTTPS or
+proxy feature, and an `http2` subset still retains the ordinary HTTP/1.1
+APIs.
 
 The matrix describes feature availability, not protocol negotiation: a
 request to an unsupported `https` combination fails before a TLS request can
