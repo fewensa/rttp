@@ -2275,7 +2275,7 @@ header-block model.
 | Variant-Vary | `Response::variant_vary()` parses bounded RFC 2295 `Variant-Vary` response metadata through the shared `rttp-protocol` type while preserving raw headers on parse errors | No cache-key construction, variant selection, `Alternates`/`TCN`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Accept-Encoding | `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | HTTP message signatures | `signature`, `signature_input`, and `accept_signature` emit bounded RFC 9421 request metadata; `Response::signature()`, `signature_input()`, and `accept_signature()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
-| Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
+| Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `2xx`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Byte ranges | `range`, `range_from`, `range_suffix`, `ranges`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 single- and multi-range request metadata; checked `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers, including multipart/byteranges bodies | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, client multipart/byteranges part decoding into structured ranges, or automatic cache validation policy |
 | Accept-Patch | `Response::accept_patch` parses repeated bounded response fields through the shared protocol `AcceptPatch` type into ordered `MediaType` values and preserves raw headers on parse errors | No PATCH routing, payload decoding, media-type negotiation, method selection, retry, or automatic follow-up request |
@@ -2492,6 +2492,100 @@ available through `Response::header_value()` and `Response::header_values()`.
 These helpers are observation-only. `rttp_client` does not select or send
 client hints, persist an `Accept-CH` opt-in, retry after `Critical-CH`, or add
 any automatic client-hint negotiation behavior.
+
+## HTTP/1.1 CONNECT and Upgrade handoff
+
+The handoff APIs return the underlying connection after the HTTP/1.1 response
+head has been validated. `HttpClient::rasync_connect` and
+`HttpClient::rasync_upgrade` are available with the `async` feature and return
+an `AsyncHandoffConnection`. The examples below use the `futures` async I/O
+traits; the handoff does not require a particular executor.
+
+```rust,no_run
+# #[cfg(feature = "async")]
+# async fn connect_example() -> Result<(), Box<dyn std::error::Error>> {
+use futures::io::{AsyncReadExt, AsyncWriteExt};
+use rttp_client::HttpClient;
+
+let mut tunnel = HttpClient::new()
+  .url("http://127.0.0.1:9000")
+  .rasync_connect()
+  .await?;
+
+assert!((200..300).contains(&tunnel.response().code()));
+tunnel.write_all(b"ping").await?;
+tunnel.flush().await?;
+let mut reply = [0; 4];
+tunnel.read_exact(&mut reply).await?;
+# Ok(())
+# }
+```
+
+`rasync_connect` changes the request method to `CONNECT`. A 2xx response is
+the successful tunnel response; the response is available through
+`handoff.response()` and the tunnel transport can be used through
+`AsyncHandoffConnection`'s `AsyncRead` and `AsyncWrite` implementations, as in
+the example. A configured request body is rejected.
+
+```rust,no_run
+# #[cfg(feature = "async")]
+# async fn upgrade_example() -> Result<(), Box<dyn std::error::Error>> {
+use futures::io::{AsyncReadExt, AsyncWriteExt};
+use rttp_client::HttpClient;
+
+let mut upgraded = HttpClient::new()
+  .get()
+  .url("http://127.0.0.1:9000/chat")
+  .header(("Connection", "Upgrade"))
+  .header(("Upgrade", "websocket"))
+  .rasync_upgrade()
+  .await?;
+
+assert_eq!(101, upgraded.response().code());
+// These bytes may have arrived in the same read as the response head.
+let mut protocol_bytes = [0; 12];
+upgraded.read_exact(&mut protocol_bytes).await?;
+upgraded.write_all(b"client-bytes").await?;
+upgraded.flush().await?;
+# Ok(())
+# }
+```
+
+`rasync_upgrade` leaves the request method unchanged, so the example uses
+`GET`, and the caller supplies the `Connection: Upgrade` and `Upgrade` request
+fields. Success requires status `101 Switching Protocols` plus a valid
+response `Connection` value containing the `Upgrade` token and a valid
+response `Upgrade` field. `AsyncHandoffConnection::response()` returns the
+terminal response head. `stream()` and `stream_mut()` expose the async
+transport, while `into_parts()` returns the `Response` and the transport
+separately. The handoff type itself implements `futures::io::AsyncRead` and
+`AsyncWrite`, including async flush and close operations.
+
+For both APIs, any bytes after the terminal response head are preserved for
+the returned transport; they are not interpreted as an HTTP response body.
+After a successful handoff, protocol framing, reads, writes, and connection
+shutdown belong to the caller. `rttp_client` does not parse WebSocket frames,
+tunnel data, or other upgraded-protocol bytes. A prior skippable interim
+`1xx` response (100 or 102 through 199, excluding 101) is consumed before the
+terminal response is validated; the terminal `2xx` or `101` response is the
+one exposed through `response()`.
+
+Handoff is a direct, plain-HTTP/1.1 operation. Configured proxies are
+rejected, and URLs must use `http`; the APIs do not tunnel through a proxy or
+perform TLS/HTTPS negotiation. CONNECT and Upgrade handoffs cannot carry a
+request body. If connection setup, request emission, response parsing, or
+validation fails, no handoff is returned. For a non-success HTTP response,
+the response body is read according to its HTTP/1.1 framing and then the
+connection is closed before the error is returned.
+
+The synchronous `HttpClient::connect()` and `HttpClient::upgrade()` APIs
+remain available without `async` and provide the same HTTP/1.1 handoff
+validation and caller ownership using `HandoffConnection` and a blocking
+`TcpStream`. `rasync_connect` and `rasync_upgrade` are the async transport
+counterparts; neither changes the bounded h2c APIs. In particular,
+`upgrade_protocols()` and `Response::upgrade()` remain HTTP/1.1 `Upgrade`
+metadata helpers only—they do not perform a handoff or implement the
+upgraded protocol.
 
 ## Examples
 
