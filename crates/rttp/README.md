@@ -72,6 +72,8 @@ fn main() -> std::io::Result<()> {
 
 `HttpServer::local_addr` returns the bound address, which is useful when binding
 to port `0` in tests. `HttpServer::accept_one` serves one connection.
+`HttpServer::accept_one_handoff` serves one HTTP/1.1 CONNECT or Upgrade
+connection and transfers the socket through `HttpHandoff`.
 `HttpServer::serve_requests` serves a fixed number of sequential connections on
 the same listener. `HttpServer::with_read_timeout` and
 `HttpServer::with_write_timeout` apply socket-level timeouts to each accepted
@@ -2261,9 +2263,146 @@ scheduling, or async accept loops.
 | NEL | `HttpNel`, `HttpResponse::with_nel`, and `HttpResponse::nel` declare and parse bounded W3C Network Error Logging policy JSON, preserve unknown JSON members as raw metadata, preserve raw headers on parse failures, and replace raw duplicates on typed declaration; the client `Response::nel` parses the same metadata | No network error report sending, policy persistence, Reporting endpoint group configuration, retry, redirect behavior, or status-policy behavior |
 | Reporting-Endpoints | `HttpReportingEndpoints`, `HttpResponse::with_reporting_endpoints`, and `HttpResponse::reporting_endpoints` declare and parse bounded endpoint-name to quoted-URL dictionaries through the shared protocol type, preserve raw headers on parse failures, and replace raw duplicates on typed declaration; the client `Response::reporting_endpoints` parses the same metadata | No report scheduling, sending, persistence, retry, routing, or endpoint policy behavior |
 | Cross-Origin-Opener-Policy-Report-Only | `HttpCrossOriginOpenerPolicyReportOnly`, `HttpResponse::with_cross_origin_opener_policy_report_only`, and `HttpResponse::cross_origin_opener_policy_report_only` declare and parse bounded singleton COOP Report-Only metadata, reuse the canonical COOP directives, retain reporting parameters including `report-to`, preserve raw headers on parse failures, and replace raw duplicates on typed declaration; the client `Response::cross_origin_opener_policy_report_only` parses the same metadata | No browsing-context isolation, report scheduling, sending, persistence, retry, routing, or `Reporting-Endpoints` validation |
-| Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpHandoff::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
+| Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `accept_one_handoff` with `HttpHandoff::connect` or `HttpHandoff::upgrade` hands the `socket2` connection to caller code, including `rttp::Http::client` `rasync_connect`/`rasync_upgrade` with the `async` feature | Neither side implements the tunneled or upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
 | Bounded h2c server | The same `socket2` listener detects the HTTP/2 prior-knowledge preface or a valid HTTP/1.1 `Upgrade: h2c` request with `HTTP2-Settings`, validates SETTINGS including legal `SETTINGS_ENABLE_PUSH` and `SETTINGS_ENABLE_CONNECT_PROTOCOL` values of only `0` or `1` and legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, dispatches RFC 8441 extended CONNECT only after `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` has been negotiated, exposes negotiated extended CONNECT as a normal `Request` with method `CONNECT`, version `HTTP/2`, target from `:path`, `host` from `:authority`, and `Request::extended_connect_protocol()` from `:protocol`, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded streams including bodyless DELETE, OPTIONS, TRACE, and negotiated extended CONNECT, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges inbound PING without ACK on stream 0 and exactly 8 octets with matching opaque data, ignores inbound PING ACK, rejects malformed PING frames, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, missing-negotiation `:protocol`, non-CONNECT `:protocol`, malformed h2c Upgrade, request bodies on h2c Upgrade, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and non-h2c `Upgrade` remain separate handoff paths; bounded h2c only, with no keepalive timers, no automatic client/server initiated PING policy, no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, full WebSocket-over-h2, proxy h2, tunnel handoff, connection pooling, persistent multiplex sessions, persistent HTTP/2 session management, automatic retry/replay, server push, full RFC 8441 support, full session manager, full stream state machine, full multiplex scheduler, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, general tunnel scheduling, priority scheduling, or full HTTP/2 server feature set |
+
+## Async CONNECT and Upgrade handoff
+
+The facade links the async client ownership model to the blocking `socket2`
+server handoff. `rttp::Http::server` accepts one HTTP/1.1 CONNECT or Upgrade
+connection through `HttpServer::accept_one_handoff` and `HttpHandoff::connect`
+or `HttpHandoff::upgrade`. `rttp::Http::client` then takes over that connection
+with `rasync_connect` or `rasync_upgrade`, which require the `async` feature
+and return `rttp_client::AsyncHandoffConnection`. The server listener remains
+blocking; only the client handoff is async.
+
+Client success rules, request constraints, and transport accessors are
+documented in `rttp_client`. Server request gating and socket transfer are
+documented in `rttp-server`. This section only shows how those APIs meet.
+
+These examples require the `async` feature and plain `http` URLs. They use the
+`futures` async I/O traits and do not select an executor.
+
+```rust,no_run
+# #[cfg(feature = "async")]
+# fn connect_tunnel() -> Result<(), Box<dyn std::error::Error>> {
+use std::io::{Read, Write};
+use std::thread;
+
+use futures::executor::block_on;
+use futures::io::{AsyncReadExt, AsyncWriteExt};
+use rttp::server::{HttpHandoff, HttpResponse};
+
+let server = rttp::Http::server("127.0.0.1:0")?;
+let addr = server.local_addr()?;
+
+let handle = thread::spawn(move || {
+  server
+    .accept_one_handoff(|request| {
+      assert_eq!("CONNECT", request.method());
+      HttpHandoff::connect(
+        HttpResponse::new(200, "Connection Established"),
+        |mut stream| {
+          let mut ping = [0u8; 4];
+          stream.read_exact(&mut ping)?;
+          assert_eq!(b"ping", &ping);
+          stream.write_all(b"pong")?;
+          Ok(())
+        },
+      )
+    })
+    .expect("serve connect handoff")
+});
+
+block_on(async {
+  let mut tunnel = rttp::Http::client()
+    .url(format!("http://{}", addr))
+    .rasync_connect()
+    .await?;
+
+  assert!((200..300).contains(&tunnel.response().code()));
+  tunnel.write_all(b"ping").await?;
+  let mut pong = [0; 4];
+  tunnel.read_exact(&mut pong).await?;
+  Ok::<(), Box<dyn std::error::Error>>(())
+})?;
+
+handle.join().expect("server thread");
+# Ok(())
+# }
+```
+
+```rust,no_run
+# #[cfg(feature = "async")]
+# fn upgrade_exchange() -> Result<(), Box<dyn std::error::Error>> {
+use std::io::{Read, Write};
+use std::thread;
+
+use futures::executor::block_on;
+use futures::io::{AsyncReadExt, AsyncWriteExt};
+use rttp::server::{HttpHandoff, HttpResponse};
+
+let server = rttp::Http::server("127.0.0.1:0")?;
+let addr = server.local_addr()?;
+
+let handle = thread::spawn(move || {
+  server
+    .accept_one_handoff(|request| {
+      assert_eq!("GET", request.method());
+      HttpHandoff::upgrade(
+        HttpResponse::new(101, "Switching Protocols")
+          .header("Connection", "Upgrade")
+          .header("Upgrade", "websocket"),
+        |mut stream| {
+          stream.write_all(b"server-bytes")?;
+          let mut received = [0u8; 12];
+          stream.read_exact(&mut received)?;
+          assert_eq!(b"client-bytes", &received);
+          Ok(())
+        },
+      )
+    })
+    .expect("serve upgrade handoff")
+});
+
+block_on(async {
+  let mut upgraded = rttp::Http::client()
+    .get()
+    .url(format!("http://{}/chat", addr))
+    .header(("Connection", "Upgrade"))
+    .header(("Upgrade", "websocket"))
+    .rasync_upgrade()
+    .await?;
+
+  assert_eq!(101, upgraded.response().code());
+  // These bytes may have arrived in the same read as the response head.
+  let mut protocol_bytes = [0; 12];
+  upgraded.read_exact(&mut protocol_bytes).await?;
+  upgraded.write_all(b"client-bytes").await?;
+  Ok::<(), Box<dyn std::error::Error>>(())
+})?;
+
+handle.join().expect("server thread");
+# Ok(())
+# }
+```
+
+After a successful handoff, leftover bytes belong to the caller. On the server,
+`HandoffStream` yields bytes already buffered past the HTTP request head before
+reading the TCP stream. On the client, bytes after the terminal response head
+stay on `AsyncHandoffConnection` and are not parsed as an HTTP body.
+
+`AsyncHandoffConnection` implements `futures::io::AsyncRead` and `AsyncWrite`.
+`close()` flushes and then shuts down only the write half of the socket. The
+caller can still read, and the peer can still write, until the connection is
+dropped.
+
+The facade does not parse WebSocket frames, tunnel payloads, or other upgraded
+protocol bytes, and it does not add TLS, proxy tunneling, h2c, or protocol
+automation. `upgrade_protocols()` and `Response::upgrade()` remain HTTP/1.1
+`Upgrade` metadata helpers only. Blocking `connect()` and `upgrade()` remain
+available without `async` and use the same `HttpHandoff` server path.
 
 ## Client feature
 
