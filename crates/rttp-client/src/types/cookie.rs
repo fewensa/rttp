@@ -126,6 +126,33 @@ fn is_generated_quoted_cookie_value_byte(byte: u8) -> bool {
   matches!(byte, 0x20..=0x7e) && byte != b'"' && byte != b'\\'
 }
 
+fn tokenize_legacy_cookie(text: &str) -> Vec<&str> {
+  let mut items = Vec::new();
+  let mut start = 0;
+  let mut quoted = false;
+  let mut escaped = false;
+
+  for (index, byte) in text.bytes().enumerate() {
+    if quoted {
+      if escaped {
+        escaped = false;
+      } else if byte == b'\\' {
+        escaped = true;
+      } else if byte == b'"' {
+        quoted = false;
+      }
+    } else if byte == b'"' {
+      quoted = true;
+    } else if byte == b';' {
+      items.push(&text[start..index]);
+      start = index + 1;
+    }
+  }
+
+  items.push(&text[start..]);
+  items
+}
+
 impl Cookie {
   pub(crate) fn from_set_cookie(cookie: &HttpSetCookie) -> Self {
     let expires = cookie
@@ -156,7 +183,10 @@ impl Cookie {
 
   pub fn parse<S: AsRef<str>>(text: S) -> error::Result<Self> {
     let mut builder = Cookie::builder();
-    for (index, item) in text.as_ref().split(';').enumerate() {
+    for (index, item) in tokenize_legacy_cookie(text.as_ref())
+      .into_iter()
+      .enumerate()
+    {
       let (name, value) = item
         .split_once('=')
         .map_or((item, ""), |(name, value)| (name, value));
@@ -350,6 +380,53 @@ mod tests {
 
     assert_eq!(cookie.name(), "token");
     assert_eq!(cookie.value(), "a=b=c");
+  }
+
+  #[test]
+  fn parse_preserves_semicolons_inside_quoted_value() {
+    let cookie = Cookie::parse(r#"session="abc;def"; Path=/app; Secure"#).unwrap();
+
+    assert_eq!(cookie.value(), r#""abc;def""#);
+    assert_eq!(cookie.path().as_deref(), Some("/app"));
+    assert!(cookie.secure());
+    assert_eq!(cookie.string(), r#"session="abc;def"; path=/app; secure"#);
+  }
+
+  #[test]
+  fn parse_splits_attributes_outside_quotes_and_preserves_equals() {
+    let cookie = Cookie::parse(r#"token=abc=def; Path="/a;b"; Domain=example.com"#).unwrap();
+
+    assert_eq!(cookie.value(), "abc=def");
+    assert_eq!(cookie.path().as_deref(), Some(r#""/a;b""#));
+    assert_eq!(cookie.domain().as_deref(), Some("example.com"));
+  }
+
+  #[test]
+  fn parse_keeps_unterminated_quoted_tail_together() {
+    let cookie = Cookie::parse(r#"session=\"abc; Path=/; Secure"#).unwrap();
+
+    assert_eq!(cookie.value(), r#"\"abc; Path=/; Secure"#);
+    assert!(cookie.path().is_none());
+    assert!(!cookie.secure());
+    assert_no_forbidden_wire_bytes(&cookie.string());
+  }
+
+  #[test]
+  fn parse_escaped_quote_does_not_end_quoted_value() {
+    let cookie = Cookie::parse(r#"session="abc\";def"; Path=/"#).unwrap();
+
+    assert_eq!(cookie.value(), r#""abc\";def""#);
+    assert_eq!(cookie.path().as_deref(), Some("/"));
+    assert_no_forbidden_wire_bytes(&cookie.string());
+  }
+
+  #[test]
+  fn parse_trailing_escape_keeps_quoted_tail_together_and_serializes_safely() {
+    let cookie = Cookie::parse("session=\"abc\\; Path=/\r\n").unwrap();
+
+    assert_eq!(cookie.value(), "\"abc\\; Path=/\r\n");
+    assert!(cookie.path().is_none());
+    assert_no_forbidden_wire_bytes(&cookie.string());
   }
 
   #[test]
