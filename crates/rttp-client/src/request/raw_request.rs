@@ -42,7 +42,7 @@ impl<'a> RawRequest<'a> {
       .header
       .lines()
       .next()
-      .and_then(|line| line.split_whitespace().nth(1))
+      .and_then(request_target_from_line)
   }
 
   pub fn body(&self) -> &Option<RequestBody> {
@@ -203,6 +203,26 @@ impl<'a> RawRequest<'a> {
   }
 }
 
+fn request_target_from_line(line: &str) -> Option<&str> {
+  let mut fields = line.split(' ');
+  let method = fields.next()?;
+  let target = fields.next()?;
+  let version = fields.next()?;
+
+  if fields.next().is_some()
+    || method.is_empty()
+    || target.is_empty()
+    || version.is_empty()
+    || [method, target, version]
+      .iter()
+      .any(|field| field.chars().any(char::is_whitespace))
+  {
+    return None;
+  }
+
+  Some(target)
+}
+
 impl fmt::Debug for RawRequest<'_> {
   fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     formatter
@@ -331,5 +351,45 @@ mod tests {
       RedactedHeaderBlock("GET / HTTP/1.1\r\n\u{2003}Authorization: Bearer visible\r\n\r\n")
     );
     assert!(debug.contains("Bearer visible"));
+  }
+
+  #[test]
+  fn request_target_accepts_valid_http_request_target_forms() {
+    for (request_line, expected_target) in [
+      ("GET /origin?query=1 HTTP/1.1", "/origin?query=1"),
+      (
+        "GET http://example.test/absolute HTTP/1.1",
+        "http://example.test/absolute",
+      ),
+      ("CONNECT example.test:443 HTTP/1.1", "example.test:443"),
+      ("OPTIONS * HTTP/1.1", "*"),
+    ] {
+      assert_eq!(
+        Some(expected_target),
+        request_target_from_line(request_line),
+        "request line: {request_line:?}"
+      );
+    }
+  }
+
+  #[test]
+  fn request_target_rejects_non_space_whitespace_and_malformed_fields() {
+    for request_line in [
+      "GET\t/origin HTTP/1.1",
+      "GET \t/origin HTTP/1.1",
+      "GET\u{000b}/origin HTTP/1.1",
+      "GET\u{000c}/origin HTTP/1.1",
+      "GET\u{2003}/origin HTTP/1.1",
+      "GET /origin",
+      "GET  /origin HTTP/1.1",
+      "GET /origin HTTP/1.1 extra",
+      "GET /origin HTTP/1.1 ",
+    ] {
+      assert_eq!(
+        None,
+        request_target_from_line(request_line),
+        "request line should be rejected: {request_line:?}"
+      );
+    }
   }
 }

@@ -1615,6 +1615,37 @@ mod tests {
   }
 
   #[test]
+  fn resolve_redirect_url_only_reuses_a_strict_raw_request_target() {
+    let mut request = Request::new();
+    request.url_set("http://example.test/base".to_rourl());
+    let mut raw = RawRequest::block_new(&mut request).expect("raw request should build");
+    let url = Url::parse("http://example.test/base").unwrap();
+
+    raw.header = "GET /raw?old=1 HTTP/1.1\r\n\r\n".to_string();
+    let conn = Connection::new(raw);
+    let redirect = conn
+      .resolve_redirect_url(&url, "?next=1")
+      .expect("valid raw request line should resolve");
+    assert_eq!("/raw?next=1", redirect.request_target);
+
+    for request_line in [
+      "GET\t/raw?old=1 HTTP/1.1",
+      "GET  /raw?old=1 HTTP/1.1",
+      "GET /raw?old=1 HTTP/1.1 extra",
+    ] {
+      let mut request = Request::new();
+      request.url_set("http://example.test/base".to_rourl());
+      let mut raw = RawRequest::block_new(&mut request).expect("raw request should build");
+      raw.header = format!("{request_line}\r\n\r\n");
+      let conn = Connection::new(raw);
+      let redirect = conn
+        .resolve_redirect_url(&url, "?next=1")
+        .expect("malformed raw request line should use URL target");
+      assert_eq!("/base?next=1", redirect.request_target, "{request_line:?}");
+    }
+  }
+
+  #[test]
   fn test_strip_userinfo_for_cross_origin_redirect_removes_redirect_credentials() {
     let base = Url::parse("http://user:secret@example.test/start").unwrap();
     let mut cross_origin = Url::parse("http://next:secret@other.test/final").unwrap();
