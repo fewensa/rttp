@@ -368,7 +368,10 @@ pub(crate) fn bad_cookie(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Decode, Some(message.as_ref()))
 }
 
-#[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
+#[cfg(any(
+  not(any(feature = "tls-native", feature = "tls-rustls")),
+  all(feature = "async", feature = "tls-native", not(feature = "tls-rustls"))
+))]
 pub(crate) fn no_request_features(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Request, Some(message.as_ref()))
 }
