@@ -1,6 +1,10 @@
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener};
+use std::net::TcpListener;
 use std::thread;
+
+#[cfg(feature = "async")]
+use std::net::Shutdown;
+#[cfg(feature = "async")]
 use std::time::Duration;
 
 #[cfg(feature = "async")]
@@ -646,6 +650,9 @@ fn async_connect_caller_close_is_peer_eof() {
       .expect("set peer read timeout");
     let mut byte = [0u8; 1];
     assert_eq!(0, stream.read(&mut byte).expect("observe connect EOF"));
+    stream
+      .write_all(b"still-open")
+      .expect("write after connect write-half close");
   });
 
   block_on(async {
@@ -659,8 +666,16 @@ fn async_connect_caller_close_is_peer_eof() {
       .close()
       .await
       .expect("close connect write half");
+    // Join before drop so peer EOF cannot come from closing the socket.
+    handle.join().expect("connect server thread");
+    let mut bytes = Vec::new();
+    tunnel
+      .stream_mut()
+      .read_to_end(&mut bytes)
+      .await
+      .expect("read after connect write-half close");
+    assert_eq!(b"still-open", bytes.as_slice());
   });
-  handle.join().expect("connect server thread");
 }
 
 #[test]
@@ -681,6 +696,9 @@ fn async_upgrade_caller_close_is_peer_eof() {
       .expect("set peer read timeout");
     let mut byte = [0u8; 1];
     assert_eq!(0, stream.read(&mut byte).expect("observe upgrade EOF"));
+    stream
+      .write_all(b"still-open")
+      .expect("write after upgrade write-half close");
   });
 
   block_on(async {
@@ -696,8 +714,16 @@ fn async_upgrade_caller_close_is_peer_eof() {
       .close()
       .await
       .expect("close upgrade write half");
+    // Join before drop so peer EOF cannot come from closing the socket.
+    handle.join().expect("upgrade server thread");
+    let mut bytes = Vec::new();
+    upgraded
+      .stream_mut()
+      .read_to_end(&mut bytes)
+      .await
+      .expect("read after upgrade write-half close");
+    assert_eq!(b"still-open", bytes.as_slice());
   });
-  handle.join().expect("upgrade server thread");
 }
 
 #[test]
