@@ -36,6 +36,9 @@ impl Cookie {
   pub fn domain(&self) -> &Option<String> {
     &self.domain
   }
+  pub fn max_age(&self) -> Option<u64> {
+    self.max_age
+  }
   pub fn secure(&self) -> bool {
     self.secure
   }
@@ -169,6 +172,11 @@ impl Cookie {
           let value = value.replace("-", " ");
           if let Ok(v) = httpdate::parse_http_date(&value[..]) {
             builder.expires(v);
+          }
+        }
+        "max-age" | "max_age" => {
+          if let Ok(v) = value.parse::<u64>() {
+            builder.max_age(v);
           }
         }
         "path" => {
@@ -406,6 +414,90 @@ mod tests {
   }
 
   #[test]
+  fn parse_max_age_round_trips_and_marks_persistent() {
+    let cookie = Cookie::parse("token=value; Max-Age=3600; Path=/").unwrap();
+
+    assert_eq!(cookie.max_age(), Some(3600));
+    assert!(cookie.persistent());
+    assert!(cookie.expires().is_none());
+    assert_eq!(cookie.string(), "token=value; path=/; max-age=3600");
+    assert_no_forbidden_wire_bytes(&cookie.string());
+  }
+
+  #[test]
+  fn parse_max_age_zero_is_persistent_and_round_trips() {
+    let cookie = Cookie::parse("token=value; Max-Age=0").unwrap();
+
+    assert_eq!(cookie.max_age(), Some(0));
+    assert!(cookie.persistent());
+    assert_eq!(cookie.string(), "token=value; max-age=0");
+  }
+
+  #[test]
+  fn parse_malformed_max_age_does_not_set_lifetime() {
+    let cookie = Cookie::parse("token=value; Max-Age=not-a-number; Path=/; Secure").unwrap();
+
+    assert_eq!(cookie.max_age(), None);
+    assert!(!cookie.persistent());
+    assert_eq!(cookie.path().as_deref(), Some("/"));
+    assert!(cookie.secure());
+  }
+
+  #[test]
+  fn parse_negative_max_age_is_ignored() {
+    let cookie = Cookie::parse("token=value; Max-Age=-1").unwrap();
+
+    assert_eq!(cookie.max_age(), None);
+    assert!(!cookie.persistent());
+  }
+
+  #[test]
+  fn parse_overflowing_max_age_is_ignored() {
+    let cookie = Cookie::parse("token=value; Max-Age=18446744073709551616").unwrap();
+
+    assert_eq!(cookie.max_age(), None);
+    assert!(!cookie.persistent());
+  }
+
+  #[test]
+  fn parse_duplicate_max_age_last_valid_wins() {
+    let cookie =
+      Cookie::parse("token=value; Max-Age=10; Max-Age=20; Max-Age=bad; Max-Age=30").unwrap();
+
+    assert_eq!(cookie.max_age(), Some(30));
+    assert!(cookie.persistent());
+  }
+
+  #[test]
+  fn parse_later_malformed_max_age_does_not_clear_prior_valid() {
+    let cookie = Cookie::parse("token=value; Max-Age=42; Max-Age=-5").unwrap();
+
+    assert_eq!(cookie.max_age(), Some(42));
+    assert!(cookie.persistent());
+  }
+
+  #[test]
+  fn parse_max_age_trims_space_and_horizontal_tab() {
+    let cookie = Cookie::parse("token=value;\t Max-Age\t=\t3600\t;\t Path\t=\t/\t").unwrap();
+
+    assert_eq!(cookie.max_age(), Some(3600));
+    assert!(cookie.persistent());
+    assert_eq!(cookie.path().as_deref(), Some("/"));
+  }
+
+  #[test]
+  fn parse_expires_still_wins_over_max_age_in_string() {
+    let cookie =
+      Cookie::parse("token=value; Max-Age=3600; Expires=Wed, 21 Oct 2015 07:28:00 GMT").unwrap();
+
+    assert_eq!(cookie.max_age(), Some(3600));
+    assert!(cookie.expires().is_some());
+    assert!(cookie.persistent());
+    assert!(cookie.string().contains("expires="));
+    assert!(!cookie.string().contains("max-age="));
+  }
+
+  #[test]
   fn parse_only_trims_http_whitespace() {
     let cookie =
       Cookie::parse("token=\u{00a0}value\u{00a0};\u{000b}Path=/;\u{000c}Secure").unwrap();
@@ -528,6 +620,11 @@ impl CookieBuilder {
   }
   pub fn domain<S: AsRef<str>>(&mut self, domain: S) -> &mut Self {
     self.cookie.domain = Some(domain.as_ref().to_owned());
+    self
+  }
+  pub fn max_age(&mut self, max_age: u64) -> &mut Self {
+    self.cookie.max_age = Some(max_age);
+    self.cookie.persistent = true;
     self
   }
   pub fn secure(&mut self, secure: bool) -> &mut Self {
