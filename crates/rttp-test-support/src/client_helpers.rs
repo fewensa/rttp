@@ -645,6 +645,15 @@ fn echoed_redirect_request_target_and_headers(request: &[u8]) -> String {
   )
 }
 
+/// Staged keep-alive / close probe used by client crates that enable `tls-rustls`
+/// on this support crate. Workspace matrices prefer
+/// [`crate::spawn_socket2_scripted_http_server`] so they do not require TLS features.
+pub fn spawn_socket2_staged_response_server(
+  connections: Vec<crate::ScriptedHttpConnection>,
+) -> (SocketAddr, JoinHandle<crate::ScriptedHttpServerReport>) {
+  crate::spawn_socket2_scripted_http_server(connections)
+}
+
 pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
   spawn_keep_alive_server_count(1)
 }
