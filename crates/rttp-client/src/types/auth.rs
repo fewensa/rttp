@@ -2,7 +2,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use std::fmt;
 
-/// HTTP authentication type for use with [`rttp_client::HttpClient::auth`].
+/// HTTP authentication type for use with [`crate::HttpClient::auth`].
 ///
 /// # Examples
 ///
