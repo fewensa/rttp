@@ -11,10 +11,12 @@ fn accept_encoding_parses_codings_and_quality_values() {
   assert_eq!("gzip", encodings.codings()[0].coding());
   assert_eq!(1000, encodings.codings()[0].quality());
   assert!(!encodings.codings()[0].is_wildcard());
+  assert!(!encodings.codings()[0].is_identity());
   assert_eq!("br", encodings.codings()[1].coding());
   assert_eq!(800, encodings.codings()[1].quality());
   assert_eq!("identity", encodings.codings()[2].coding());
   assert_eq!(0, encodings.codings()[2].quality());
+  assert!(encodings.codings()[2].is_identity());
   assert_eq!(encodings.header_value(), "gzip, br;q=0.8, identity;q=0");
 }
 
@@ -65,10 +67,55 @@ fn accept_encoding_accepts_wildcard_with_quality() {
 
   assert_eq!("gzip", encodings.codings()[0].coding());
   assert!(!encodings.codings()[0].is_wildcard());
+  assert!(!encodings.codings()[0].is_identity());
   assert_eq!("*", encodings.codings()[1].coding());
   assert!(encodings.codings()[1].is_wildcard());
+  assert!(!encodings.codings()[1].is_identity());
   assert_eq!(0, encodings.codings()[1].quality());
   assert_eq!(encodings.header_value(), "gzip, *;q=0");
+}
+
+#[test]
+fn accept_encoding_normalizes_case_for_matching_but_preserves_codings() {
+  let encodings = AcceptEncoding::parse("GZIP;Q=0.500, IDENTITY;Q=0, *;Q=0")
+    .expect("mixed-case Accept-Encoding members should parse");
+
+  assert_eq!("GZIP", encodings.codings()[0].coding());
+  assert_eq!(500, encodings.codings()[0].quality());
+  assert!(!encodings.codings()[0].is_identity());
+  assert_eq!("IDENTITY", encodings.codings()[1].coding());
+  assert!(encodings.codings()[1].is_identity());
+  assert_eq!(0, encodings.codings()[1].quality());
+  assert!(encodings.codings()[2].is_wildcard());
+  assert_eq!(
+    "GZIP;q=0.500, IDENTITY;q=0, *;q=0",
+    encodings.header_value()
+  );
+}
+
+#[test]
+fn accept_encoding_accepts_qvalue_boundary_precision_and_empty_fractions() {
+  let encodings = AcceptEncoding::parse(
+    "zero;q=0, zero-empty;q=0., zero-three;q=0.123, one;q=1, one-empty;q=1., one-three;q=1.000",
+  )
+  .expect("RFC 9110 qvalue boundary forms should parse");
+
+  assert_eq!(
+    [0, 0, 123, 1000, 1000, 1000],
+    encodings
+      .codings()
+      .iter()
+      .map(|coding| coding.quality())
+      .collect::<Vec<_>>()
+      .as_slice()
+  );
+  assert_eq!(
+    "zero;q=0, zero-empty;q=0., zero-three;q=0.123, one;q=1, one-empty;q=1., one-three;q=1.000",
+    encodings.header_value()
+  );
+  let reparsed = AcceptEncoding::parse(encodings.header_value())
+    .expect("canonical qvalue serialization should parse");
+  assert_eq!(encodings, reparsed);
 }
 
 #[test]
@@ -122,7 +169,11 @@ fn accept_encoding_rejects_invalid_members() {
     "gzip,,br",
     "bad coding",
     "gzip;q=1.1",
+    "gzip;q=1.001",
     "gzip;q=1.0000",
+    "gzip;q=0.1234",
+    "gzip;q=.5",
+    "gzip;q=00",
     "gzip;q=-0",
     "gzip;foo=1",
     "gzip;q=0.8;foo=1",

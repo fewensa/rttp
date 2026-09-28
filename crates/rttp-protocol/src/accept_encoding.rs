@@ -155,6 +155,10 @@ impl AcceptEncodingCoding {
     self.coding.eq_ignore_ascii_case("*")
   }
 
+  pub fn is_identity(&self) -> bool {
+    self.coding.eq_ignore_ascii_case("identity")
+  }
+
   fn header_value(&self) -> String {
     match &self.quality_text {
       Some(quality_text) => format!("{};q={quality_text}", self.coding),
