@@ -5,6 +5,7 @@ pub use crate::media_type::{MediaType, MediaTypeParameter};
 
 pub const MAX_ACCEPT_PATCH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ACCEPT_PATCH_MEDIA_TYPES: usize = 256;
+pub const MAX_ACCEPT_PATCH_PARAMETERS: usize = crate::media_type::MAX_MEDIA_TYPE_PARAMETERS;
 
 /// Parsed, bounded `Accept-Patch` response metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,6 +44,7 @@ impl AcceptPatch {
     I: IntoIterator<Item = &'a str>,
   {
     let mut media_types = Vec::new();
+    let mut canonical_bytes = 0usize;
     for value in values {
       let field = crate::media_type::parse_values(
         [value],
@@ -51,13 +53,25 @@ impl AcceptPatch {
         MAX_ACCEPT_PATCH_MEDIA_TYPES - media_types.len(),
       )
       .map_err(|message| AcceptPatchParseError { message })?;
-      let accept_patch = Self { media_types: field };
-      if accept_patch.header_value().len() > MAX_ACCEPT_PATCH_VALUE_BYTES {
-        return Err(AcceptPatchParseError::new(
-          "Accept-Patch header value is too large",
-        ));
+      for media_type in field {
+        let member_bytes = media_type.header_value().len();
+        let separator_bytes = if media_types.is_empty() { 0 } else { 2 };
+        let Some(next_bytes) = canonical_bytes
+          .checked_add(separator_bytes)
+          .and_then(|length| length.checked_add(member_bytes))
+        else {
+          return Err(AcceptPatchParseError::new(
+            "Accept-Patch header value is too large",
+          ));
+        };
+        if next_bytes > MAX_ACCEPT_PATCH_VALUE_BYTES {
+          return Err(AcceptPatchParseError::new(
+            "Accept-Patch header value is too large",
+          ));
+        }
+        canonical_bytes = next_bytes;
+        media_types.push(media_type);
       }
-      media_types.extend(accept_patch.media_types);
     }
     if media_types.is_empty() {
       return Err(AcceptPatchParseError::new(
