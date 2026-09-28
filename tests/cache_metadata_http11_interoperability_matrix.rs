@@ -14,6 +14,11 @@ const CDN_CACHE_CONTROL_VALUES: &[&str] = &[
   "max-age=0, stale-while-revalidate=30, cdn-example=\"a, b\"",
   "immutable",
 ];
+const SURROGATE_CONTROL_VALUES: &[&str] = &[
+  "max-age=600, content=\"ESI/1.0\", surrogate-key=\"article 42\"",
+  r#"surrogate-extension="quoted, value\"", immutable"#,
+];
+const SURROGATE_CONTROL_HEADER_VALUE: &str = r#"max-age=600, content="ESI/1.0", surrogate-key="article 42", surrogate-extension="quoted, value\"", immutable"#;
 
 fn client() -> HttpClient {
   rttp::Http::client()
@@ -41,6 +46,14 @@ fn cache_metadata_response(cache_control_values: &[&str]) -> HttpResponse {
   }
   for value in CDN_CACHE_CONTROL_VALUES {
     response = response.header("CDN-Cache-Control", *value);
+  }
+  for (index, value) in SURROGATE_CONTROL_VALUES.iter().enumerate() {
+    let name = if index == 0 {
+      "Surrogate-Control"
+    } else {
+      "surrogate-control"
+    };
+    response = response.header(name, *value);
   }
   for value in cache_status_case().values {
     response = response.header("Cache-Status", *value);
@@ -132,11 +145,37 @@ fn assert_server_cache_control(
   }
 }
 
+fn assert_surrogate_control(metadata: &rttp_client::response::SurrogateControl) {
+  assert_eq!(5, metadata.len());
+  assert_eq!("max-age", metadata.directives()[0].name());
+  assert_eq!(Some("600"), metadata.directives()[0].value());
+  assert_eq!("content", metadata.directives()[1].name());
+  assert_eq!(Some("ESI/1.0"), metadata.directives()[1].value());
+  assert_eq!("surrogate-key", metadata.directives()[2].name());
+  assert_eq!(Some("article 42"), metadata.directives()[2].value());
+  assert_eq!("surrogate-extension", metadata.directives()[3].name());
+  assert_eq!(Some("quoted, value\""), metadata.directives()[3].value());
+  assert_eq!("immutable", metadata.directives()[4].name());
+  assert_eq!(None, metadata.directives()[4].value());
+  assert_eq!(SURROGATE_CONTROL_HEADER_VALUE, metadata.header_value());
+  assert_eq!(
+    *metadata,
+    rttp_client::response::SurrogateControl::parse(metadata.header_value())
+      .expect("canonical Surrogate-Control should parse")
+  );
+}
+
 fn assert_server_response_metadata(
   response: &HttpResponse,
   expected: &fixtures::cache_control::ResponseCase,
 ) {
   assert_server_cache_control(response, expected);
+
+  let surrogate_control = response
+    .surrogate_control()
+    .expect("server Surrogate-Control should parse")
+    .expect("server Surrogate-Control should be present");
+  assert_surrogate_control(&surrogate_control);
 
   let cdn_cache_control = response
     .cdn_cache_control()
@@ -179,6 +218,8 @@ fn assert_server_response_metadata(
     wire.matches("\r\nCache-Control: ").count()
   );
   assert_eq!(2, wire.matches("\r\nCDN-Cache-Control: ").count());
+  assert_eq!(1, wire.matches("\r\nSurrogate-Control: ").count());
+  assert_eq!(1, wire.matches("\r\nsurrogate-control: ").count());
   assert_eq!(2, wire.matches("\r\nCache-Status: ").count());
   assert_eq!(2, wire.matches("\r\nWarning: ").count());
   assert!(wire.contains("\r\nAge: 0\r\n"));
@@ -232,6 +273,16 @@ fn assert_client_response_metadata(
       .expect("response body should parse")
   );
   assert_client_cache_control(response, expected);
+
+  assert_eq!(
+    SURROGATE_CONTROL_VALUES,
+    raw_values(response, "sUrRoGaTe-CoNtRoL").as_slice()
+  );
+  let surrogate_control = response
+    .surrogate_control()
+    .expect("client Surrogate-Control should parse")
+    .expect("client Surrogate-Control should be present");
+  assert_surrogate_control(&surrogate_control);
 
   assert_eq!(
     CDN_CACHE_CONTROL_VALUES,
@@ -411,6 +462,10 @@ fn sync_http11_cache_metadata_absence_returns_none() {
     .expect("absent server CDN-Cache-Control")
     .is_none());
   assert!(server_response
+    .surrogate_control()
+    .expect("absent server Surrogate-Control")
+    .is_none());
+  assert!(server_response
     .cache_status()
     .expect("absent server Cache-Status")
     .is_none());
@@ -426,6 +481,10 @@ fn sync_http11_cache_metadata_absence_returns_none() {
     .expect("absent client CDN-Cache-Control")
     .is_none());
   assert!(response
+    .surrogate_control()
+    .expect("absent client Surrogate-Control")
+    .is_none());
+  assert!(response
     .cache_status()
     .expect("absent client Cache-Status")
     .is_none());
@@ -433,6 +492,7 @@ fn sync_http11_cache_metadata_absence_returns_none() {
   assert!(response.age().expect("absent client Age").is_none());
   assert_eq!(None, response.header_value("Cache-Control"));
   assert_eq!(None, response.header_value("CDN-Cache-Control"));
+  assert_eq!(None, response.header_value("Surrogate-Control"));
   assert_eq!(None, response.header_value("Cache-Status"));
   assert_eq!(None, response.header_value("Warning"));
   assert_eq!("absent", response.body().string().expect("absence body"));
@@ -518,6 +578,15 @@ fn sync_http11_cache_metadata_malformed_peers_preserve_raw_fields_and_body() {
       |response| response.cdn_cache_control().is_err(),
     );
   }
+  for value in ["max-age=", r#"surrogate-extension="unterminated"#] {
+    assert_sync_rejected(
+      "Surrogate-Control malformed",
+      &[("Surrogate-Control", value)],
+      "Surrogate-Control",
+      &[value],
+      |response| response.surrogate_control().is_err(),
+    );
+  }
   for case in fixtures::cache_status::invalid_cases() {
     assert_sync_rejected(
       case.name,
@@ -553,6 +622,49 @@ fn sync_http11_cache_metadata_malformed_peers_preserve_raw_fields_and_body() {
     &["0", "60"],
     |response| response.age().is_err(),
   );
+
+  assert_sync_rejected(
+    "duplicate Cache-Control fields",
+    &[
+      ("Cache-Control", "max-age=60"),
+      ("cAcHe-CoNtRoL", "MAX-AGE=120"),
+    ],
+    "cache-control",
+    &["max-age=60", "MAX-AGE=120"],
+    |response| response.cache_control().is_err(),
+  );
+  assert_sync_rejected(
+    "duplicate Surrogate-Control fields",
+    &[
+      ("Surrogate-Control", "max-age=60"),
+      ("sUrRoGaTe-CoNtRoL", "MAX-AGE=120"),
+    ],
+    "surrogate-control",
+    &["max-age=60", "MAX-AGE=120"],
+    |response| response.surrogate_control().is_err(),
+  );
+}
+
+#[test]
+fn cache_control_facades_reject_invalid_control_bytes() {
+  for value in ["max-age=60\u{000b}", "surrogate-extension=\u{007f}value"] {
+    assert!(
+      rttp_client::response::CacheControl::parse(value).is_err(),
+      "client Cache-Control should reject {value:?}"
+    );
+    assert!(
+      rttp_client::response::SurrogateControl::parse(value).is_err(),
+      "client Surrogate-Control should reject {value:?}"
+    );
+    assert!(
+      rttp_server::server::HttpResponseCacheControl::parse(value).is_err(),
+      "server Cache-Control should reject {value:?}"
+    );
+    assert!(
+      rttp_server::server::HttpSurrogateControl::parse(value).is_err(),
+      "server Surrogate-Control should reject {value:?}"
+    );
+  }
 }
 
 #[test]

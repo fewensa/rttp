@@ -5579,7 +5579,7 @@ pub(crate) fn parse_cache_control_directive_value(
   if let Some(value) = value.strip_prefix('"') {
     return parse_cache_control_quoted_string(value);
   }
-  if value.contains('"') || value.is_empty() {
+  if value.contains('"') || !is_http_token(value) {
     return Err(HttpCacheControlParseError::new(
       "invalid Cache-Control directive value",
     ));
