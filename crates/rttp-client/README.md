@@ -66,6 +66,12 @@ be made, and h2c remains limited to its documented direct single-stream path.
 
 Direct TCP connections use `socket2`. SOCKS proxy handshakes remain delegated to
 the `socks` crate.
+
+Blocking and async HTTP/1 response paths share the status-line guarantees of
+`rttp_protocol::http1::split_status_line`; see the protocol README for the
+accepted versions, separators, status-code digits, reason-phrase bytes, and
+rejections.
+
 HTTP/1.x chunked responses are decoded, and response trailers are exposed
 through `Response::trailers`, `Response::trailer`, and
 `Response::trailer_value` for both blocking and async request APIs.
