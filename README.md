@@ -575,6 +575,20 @@ These helpers are metadata-only. RTTP does not perform locale matching,
 fallback selection, translation lookup, routing, or automatic response choice
 from `Accept-Language`.
 
+### Bounded Clear-Site-Data response metadata
+
+`Response::clear_site_data()` parses one or more `Clear-Site-Data` response
+fields into ordered `ClearSiteData` directives. Directive names are required to
+use the RFC 6797 quoted-string form; recognized names are `cache`, `cookies`,
+`storage`, `executionContexts`, and `*`. Optional whitespace is accepted around
+members, while duplicates, escapes, controls, unknown names, malformed quoted
+strings, and empty members are rejected. Canonical serialization emits the
+recognized directives in wire order with normalized quoting and spacing.
+
+Each field and the cumulative raw bytes across repeated fields are limited to
+64 KiB, and the directive count is bounded. Parsing is metadata-only: RTTP does
+not clear caches, cookies, storage, execution contexts, or apply browser policy.
+
 ### Bounded HTTP/1.1 Content-Location behavior
 
 `Response::content_location()` parses a response `Content-Location` header into

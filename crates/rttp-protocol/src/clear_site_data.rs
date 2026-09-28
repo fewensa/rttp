@@ -8,6 +8,8 @@ use std::error::Error;
 use std::fmt;
 
 pub const MAX_CLEAR_SITE_DATA_VALUE_BYTES: usize = 64 * 1024;
+/// Maximum cumulative raw field-value bytes accepted across all supplied fields.
+pub const MAX_CLEAR_SITE_DATA_TOTAL_BYTES: usize = 64 * 1024;
 /// Production directive-count cap. The closed five-name set and duplicate
 /// rejection make this bound unreachable through valid unique names; the
 /// parser still enforces it before accepting another directive.
@@ -52,8 +54,15 @@ impl ClearSiteData {
   {
     let mut directives = Vec::new();
     let mut seen = HashSet::new();
+    let mut total_bytes = 0usize;
     for value in values {
       validate_field(value)?;
+      total_bytes = total_bytes.saturating_add(value.len());
+      if total_bytes > MAX_CLEAR_SITE_DATA_TOTAL_BYTES {
+        return Err(ClearSiteDataParseError::new(
+          "Clear-Site-Data header list is too large",
+        ));
+      }
       parse_field(value, &mut directives, &mut seen)?;
     }
     if directives.is_empty() {
