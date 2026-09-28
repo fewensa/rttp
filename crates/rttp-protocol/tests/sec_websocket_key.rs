@@ -24,7 +24,7 @@ fn sec_websocket_key_accepts_rfc_6455_non_ces_and_normalizes_ows() {
 #[test]
 fn sec_websocket_key_rejects_non_base64_and_malformed_values() {
   for value in [
-    "/z9/v8AAQIDBAUGBwgJCh==", // non-canonical trailing base64 bits
+    "+/z9/v8AAQIDBAUGBwgJCh==", // non-canonical trailing base64 bits
     "",
     " ",
     "\t",
