@@ -9,6 +9,16 @@ and server crates.
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
 
+## HTTP/1 status lines
+
+The shared `http1::split_status_line` parser accepts status lines beginning
+with exactly `HTTP/1.0` or `HTTP/1.1`, followed by a literal ASCII SP, exactly
+three ASCII status-code digits, and an optional reason phrase introduced by a
+literal ASCII SP. A missing reason phrase is valid. Reason phrases may contain
+HTAB (`0x09`), SP (`0x20`), visible ASCII bytes (`0x21`–`0x7e`), and
+`0x80`–`0xff` bytes. Other control bytes are rejected. HTAB and other
+non-SP whitespace are not accepted as status-line separators.
+
 ## Accept
 
 `accept` parses one or more request `Accept` field values into ordered media
