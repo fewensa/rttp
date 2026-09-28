@@ -409,6 +409,11 @@ impl Request {
       .map(|(_, value)| value.as_str())
   }
 
+  /// Returns the negotiated RFC 8441 `:protocol` value for extended CONNECT.
+  ///
+  /// When present on a bounded h2c request, handlers also see the buffered
+  /// request body through [`Self::body`]. Ordinary `CONNECT` without
+  /// `:protocol` remains unsupported and is not dispatched.
   pub fn extended_connect_protocol(&self) -> Option<&str> {
     self.extended_connect_protocol.as_deref()
   }
@@ -425,6 +430,11 @@ impl Request {
       .map(|(_, value)| value.as_str())
   }
 
+  /// Returns the buffered request body octets.
+  ///
+  /// For negotiated HTTP/2 extended CONNECT, empty bodies arrive when the
+  /// request stream ends on HEADERS or on an empty DATA frame, and non-empty
+  /// bodies are the concatenated DATA payload visible to the handler.
   pub fn body(&self) -> &[u8] {
     &self.body
   }

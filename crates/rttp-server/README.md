@@ -10,6 +10,38 @@ applies policy itself. Handler code owns security, caching, authentication and
 authorization, and browser-policy decisions, and remains responsible for
 retries, representation selection, and body transformation.
 
+## HTTP/2 extended CONNECT request visibility
+
+A negotiated RFC 8441 extended CONNECT request is dispatched to handlers as an
+ordinary `Request`: method `CONNECT`, version `HTTP/2`, target from `:path`,
+`host` from `:authority`, and `Request::extended_connect_protocol()` for
+`:protocol`. Buffered request bodies are available through `Request::body()`—
+empty when the peer ends the stream on HEADERS or an empty DATA frame, and
+non-empty when DATA payloads arrive before `END_STREAM`. Handlers return a
+normal `HttpResponse`; this path does not hand off a tunnel socket.
+
+Ordinary `CONNECT` without `:protocol`, `:protocol` before
+`SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` is negotiated, non-CONNECT methods with
+`:protocol`, and extended CONNECT request trailers remain rejected before
+handler dispatch. Frame sequencing, flow control, and reset handling stay
+inside the bounded h2c server implementation; this section only describes the
+handler-visible API.
+
+```rust,no_run
+use rttp_server::server::{HttpResponse, HttpServer};
+
+fn main() -> std::io::Result<()> {
+  let server = HttpServer::bind("127.0.0.1:8080")?;
+  server.accept_one(|request| {
+    if request.extended_connect_protocol() == Some("websocket") {
+      let _body = request.body();
+      return HttpResponse::ok("accepted");
+    }
+    HttpResponse::new(400, "Bad Request")
+  })
+}
+```
+
 ## Request Cache-Control metadata
 
 Handlers can call `Request::cache_control()` to obtain typed request cache
