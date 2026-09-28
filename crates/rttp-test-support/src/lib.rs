@@ -1711,7 +1711,7 @@ pub mod content_disposition {
         "attachment; filename=\"report \\\"final\\\".txt\"; filename*=UTF-8''report-final.txt",
       ],
       disposition_type: "attachment",
-      filename: Some("report \"final\".txt"),
+      filename: Some("report-final.txt"),
       filename_ext: Some("UTF-8''report-final.txt"),
       parameters: &[
         ("filename", "report \"final\".txt"),
@@ -1728,6 +1728,30 @@ pub mod content_disposition {
       filename_ext: None,
       parameters: &[("filename", "read me.txt"), ("preview", "yes")],
       normalized_value: "inline; filename=\"read me.txt\"; preview=yes",
+    },
+    ResponseCase {
+      name: "utf-8 filename-star preferred over filename",
+      values: &["attachment; filename=\"plain.txt\"; filename*=UTF-8''%E2%82%AC%20rates.txt"],
+      disposition_type: "attachment",
+      filename: Some("€ rates.txt"),
+      filename_ext: Some("UTF-8''%E2%82%AC%20rates.txt"),
+      parameters: &[
+        ("filename", "plain.txt"),
+        ("filename*", "UTF-8''%E2%82%AC%20rates.txt"),
+      ],
+      normalized_value: "attachment; filename=plain.txt; filename*=UTF-8''%E2%82%AC%20rates.txt",
+    },
+    ResponseCase {
+      name: "non-utf-8 filename-star falls back to filename",
+      values: &["attachment; filename=\"plain.txt\"; filename*=ISO-8859-1''na%EFve.txt"],
+      disposition_type: "attachment",
+      filename: Some("plain.txt"),
+      filename_ext: Some("ISO-8859-1''na%EFve.txt"),
+      parameters: &[
+        ("filename", "plain.txt"),
+        ("filename*", "ISO-8859-1''na%EFve.txt"),
+      ],
+      normalized_value: "attachment; filename=plain.txt; filename*=ISO-8859-1''na%EFve.txt",
     },
   ];
 
@@ -1771,6 +1795,14 @@ pub mod content_disposition {
     InvalidCase {
       name: "quoted filename-star",
       value: "attachment; filename*=\"UTF-8''report.txt\"",
+    },
+    InvalidCase {
+      name: "invalid utf-8 filename-star",
+      value: "attachment; filename*=UTF-8''%80",
+    },
+    InvalidCase {
+      name: "decoded control in filename-star",
+      value: "attachment; filename*=UTF-8''%00name",
     },
   ];
 

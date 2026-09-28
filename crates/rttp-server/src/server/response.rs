@@ -5017,6 +5017,14 @@ impl HttpContentDisposition {
     self.inner.disposition_type()
   }
 
+  pub fn filename(&self) -> Option<&str> {
+    self.inner.filename()
+  }
+
+  pub fn filename_ext(&self) -> Option<&str> {
+    self.inner.filename_ext()
+  }
+
   pub fn parameter<S: AsRef<str>>(&self, name: S) -> Option<&str> {
     self
       .inner

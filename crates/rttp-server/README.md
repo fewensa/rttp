@@ -1019,12 +1019,14 @@ is limited to 64 KiB. Disposition type and parameter names are HTTP tokens,
 quoted-strings must be well formed, and `filename*` must be an unquoted RFC
 5987 ext-value. Duplicate parameters and duplicate fields are rejected because
 `Content-Disposition` is singleton response metadata. `filename` and
-`filename*` remain independent stored parameters.
+`filename*` remain independent stored parameters. Valid UTF-8 `filename*`
+values are percent-decoded for `filename()` and take precedence over
+`filename`; other charsets fall back to `filename` when present.
 
 These helpers only declare and parse metadata. RTTP does not start automatic
-downloads, derive filesystem paths, decode RFC 5987 values, choose a filename
-winner, sniff MIME types, negotiate variants, redirect, retry/replay, cache,
-or attach status-code policy from `Content-Disposition`.
+downloads, derive filesystem paths, sniff MIME types, negotiate variants,
+redirect, retry/replay, cache, or attach status-code policy from
+`Content-Disposition`.
 
 ## Content-Location response metadata
 

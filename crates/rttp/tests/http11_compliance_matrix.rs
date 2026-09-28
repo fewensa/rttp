@@ -400,14 +400,10 @@ fn assert_response_content_disposition(
     content_disposition.disposition_type(),
     "{name}"
   );
-  assert_eq!(
-    expected.filename,
-    content_disposition.parameter("filename"),
-    "{name}"
-  );
+  assert_eq!(expected.filename, content_disposition.filename(), "{name}");
   assert_eq!(
     expected.filename_ext,
-    content_disposition.parameter("filename*"),
+    content_disposition.filename_ext(),
     "{name}"
   );
   assert_eq!(

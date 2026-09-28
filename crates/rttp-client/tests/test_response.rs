@@ -3629,7 +3629,7 @@ fn test_parse_content_disposition_response_helper_preserves_ordered_parameters()
     .expect("content-disposition header should be present");
 
   assert_eq!("attachment", content_disposition.disposition_type());
-  assert_eq!(Some("report \"final\".txt"), content_disposition.filename());
+  assert_eq!(Some("report-final.txt"), content_disposition.filename());
   assert_eq!(
     Some("UTF-8''report-final.txt"),
     content_disposition.filename_ext()
@@ -3652,6 +3652,40 @@ fn test_parse_content_disposition_response_helper_preserves_ordered_parameters()
         .to_string()
     ),
     response.header_value("Content-Disposition")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
+fn test_parse_content_disposition_prefers_decoded_utf8_filename_star() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Disposition: attachment; filename=\"plain.txt\"; filename*=UTF-8''%E2%82%AC%20rates.txt\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/download"),
+    s.as_bytes().to_vec(),
+  )
+  .expect("parse response with utf-8 filename*");
+
+  let content_disposition = response
+    .content_disposition()
+    .expect("valid content-disposition should parse")
+    .expect("content-disposition header should be present");
+
+  assert_eq!(Some("€ rates.txt"), content_disposition.filename());
+  assert_eq!(
+    Some("UTF-8''%E2%82%AC%20rates.txt"),
+    content_disposition.filename_ext()
+  );
+  assert_eq!(
+    Some("plain.txt"),
+    content_disposition
+      .parameter("filename")
+      .map(|parameter| parameter.value())
   );
   assert_eq!("OK", response.body().string().unwrap());
 }
@@ -5384,6 +5418,8 @@ fn test_parse_content_disposition_rejects_invalid_helper_values_without_rejectin
     "attachment; filename=report txt",
     "attachment; filename=\"unterminated",
     "attachment; filename*=UTF-8''bad%ZZname",
+    "attachment; filename*=UTF-8''%80",
+    "attachment; filename*=UTF-8''%00name",
   ];
 
   for value in invalid_values {
