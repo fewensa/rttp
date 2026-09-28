@@ -2330,7 +2330,7 @@ impl HttpClient {
       ));
     }
     let request = RawRequest::async_new(&mut self.request).await?;
-    let (origin, url, header, body) = request.into_async_h2c_parts();
+    let (origin, url, header, body) = request.async_h2c_parts();
     let response = crate::http2::async_h2c_call(origin, url, header, body, false).await?;
     self.request.closed_set(true);
     Ok(response)
@@ -2368,7 +2368,7 @@ impl HttpClient {
       ));
     }
     let request = RawRequest::async_new(&mut self.request).await?;
-    let (origin, url, header, body) = request.into_async_h2c_parts();
+    let (origin, url, header, body) = request.async_h2c_parts();
     let response = crate::http2::async_h2c_call(origin, url, header, body, true).await?;
     self.request.closed_set(true);
     Ok(response)

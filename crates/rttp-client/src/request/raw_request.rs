@@ -17,7 +17,7 @@ pub struct RawRequest<'a> {
 
 impl<'a> RawRequest<'a> {
   #[cfg(all(feature = "async", feature = "http2"))]
-  pub(crate) fn into_async_h2c_parts(&self) -> (Request, RoUrl, String, Option<RequestBody>) {
+  pub(crate) fn async_h2c_parts(&self) -> (Request, RoUrl, String, Option<RequestBody>) {
     (
       self.origin.clone(),
       self.url.clone(),
