@@ -371,10 +371,17 @@ fn parse_field(
         return Err(invalid_member());
       }
       let parameters = convert_component_parameters(&item.params)?;
-      components.push(SignatureInputComponent::from_parts(
-        identifier.as_str().to_owned(),
-        parameters,
-      ));
+      let component =
+        SignatureInputComponent::from_parts(identifier.as_str().to_owned(), parameters);
+      if components
+        .iter()
+        .any(|existing| components_equal(existing, &component))
+      {
+        return Err(AcceptSignatureParseError::new(
+          "duplicate Accept-Signature covered component",
+        ));
+      }
+      components.push(component);
     }
 
     let parameters = convert_entry_parameters(&inner_list.params, &scanned_member.parameters)?;
@@ -505,6 +512,17 @@ fn parameter_value_bytes(value: &SignatureInputBareItem) -> usize {
     SignatureInputBareItem::Date(value) => value.to_string().len(),
     SignatureInputBareItem::DisplayString(value) => value.len(),
   }
+}
+
+fn components_equal(left: &SignatureInputComponent, right: &SignatureInputComponent) -> bool {
+  left.identifier() == right.identifier()
+    && left.parameters().len() == right.parameters().len()
+    && left.parameters().iter().all(|left_parameter| {
+      right.parameters().iter().any(|right_parameter| {
+        left_parameter.name() == right_parameter.name()
+          && left_parameter.value() == right_parameter.value()
+      })
+    })
 }
 
 fn append_parameters(output: &mut String, parameters: &[AcceptSignatureParameter]) {
