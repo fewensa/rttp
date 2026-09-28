@@ -148,6 +148,7 @@ fn parse_reporting_endpoints_value(
   endpoints: &mut Vec<(String, String)>,
 ) -> Result<(), ReportingEndpointsParseError> {
   let bytes = value.as_bytes();
+  let initial_endpoint_count = endpoints.len();
   let mut position = 0;
   while position < bytes.len() {
     while position < bytes.len() && is_reporting_endpoints_ows(bytes[position]) {
@@ -237,6 +238,11 @@ fn parse_reporting_endpoints_value(
         "invalid Reporting-Endpoints dictionary",
       ));
     }
+  }
+  if endpoints.len() == initial_endpoint_count {
+    return Err(ReportingEndpointsParseError::new(
+      "invalid Reporting-Endpoints dictionary",
+    ));
   }
   Ok(())
 }

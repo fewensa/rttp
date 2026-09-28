@@ -92,13 +92,20 @@ fn reporting_endpoints_rejects_malformed_dictionaries_and_names() {
   for value in [
     "",
     " ",
+    "\t",
     r#"default=https://reports.example/default"#,
+    r#"1default="https://reports.example/default""#,
+    r#"-default="https://reports.example/default""#,
+    r#"default/="https://reports.example/default""#,
     r#"Default="https://reports.example/default""#,
     r#"default="https://reports.example/default","#,
     r#"default="https://reports.example/unclosed"#,
     r#"default="https://reports.example/\q""#,
     r#"default="https://reports.example/\"#,
     "default=\"https://reports.example/\u{007f}\"",
+    "default=\"https://reports.example/\u{0000}\"",
+    "default=\"https://reports.example/\u{001f}\"",
+    "default=\"https://reports.example/\u{0080}\"",
   ] {
     assert!(
       ReportingEndpoints::parse(value).is_err(),
@@ -109,6 +116,16 @@ fn reporting_endpoints_rejects_malformed_dictionaries_and_names() {
   assert!(
     ReportingEndpoints::parse_values([]).is_err(),
     "empty field sets must be rejected"
+  );
+  assert!(
+    ReportingEndpoints::parse_values([r#"default="https://reports.example/default""#, "",])
+      .is_err(),
+    "empty repeated fields must be rejected"
+  );
+  assert!(
+    ReportingEndpoints::parse_values([r#"default="https://reports.example/default""#, " ",])
+      .is_err(),
+    "OWS-only repeated fields must be rejected"
   );
 }
 
@@ -133,6 +150,20 @@ fn reporting_endpoints_rejects_duplicate_names_across_fields() {
 
 #[test]
 fn reporting_endpoints_enforces_value_total_and_member_bounds() {
+  let exact_value = format!(
+    r#"a="{}""#,
+    "x".repeat(MAX_REPORTING_ENDPOINTS_VALUE_BYTES - 4)
+  );
+  assert_eq!(
+    exact_value.len(),
+    MAX_REPORTING_ENDPOINTS_VALUE_BYTES,
+    "exact value fixture must reach the published limit"
+  );
+  assert!(
+    ReportingEndpoints::parse_values([exact_value.as_str()]).is_ok(),
+    "a field at the exact value limit must be accepted"
+  );
+
   assert!(
     ReportingEndpoints::parse("x".repeat(MAX_REPORTING_ENDPOINTS_VALUE_BYTES + 1)).is_err(),
     "oversized field values must be rejected"
@@ -146,19 +177,30 @@ fn reporting_endpoints_enforces_value_total_and_member_bounds() {
     "an oversized later field must not bypass validation"
   );
 
-  let half = MAX_REPORTING_ENDPOINTS_TOTAL_BYTES / 2 + 1;
+  let half = MAX_REPORTING_ENDPOINTS_TOTAL_BYTES / 2 - 4;
   let first = format!(r#"a="{}""#, "x".repeat(half));
   let second = format!(r#"b="{}""#, "x".repeat(half));
   assert!(
     first.len() <= MAX_REPORTING_ENDPOINTS_VALUE_BYTES,
     "each cumulative fixture field stays under the per-value limit"
   );
+  assert_eq!(
+    first.len() + second.len(),
+    MAX_REPORTING_ENDPOINTS_TOTAL_BYTES,
+    "exact cumulative fixture must reach the published limit"
+  );
   assert!(
-    first.len() + second.len() > MAX_REPORTING_ENDPOINTS_TOTAL_BYTES,
+    ReportingEndpoints::parse_values([first.as_str(), second.as_str()]).is_ok(),
+    "cumulative fields at the exact total limit must be accepted"
+  );
+
+  let over_total = format!(r#"b="{}""#, "x".repeat(half + 1));
+  assert!(
+    first.len() + over_total.len() > MAX_REPORTING_ENDPOINTS_TOTAL_BYTES,
     "combined fixture fields must exceed the total-size limit"
   );
   assert!(
-    ReportingEndpoints::parse_values([first.as_str(), second.as_str()]).is_err(),
+    ReportingEndpoints::parse_values([first.as_str(), over_total.as_str()]).is_err(),
     "cumulative oversized dictionaries must be rejected"
   );
 
