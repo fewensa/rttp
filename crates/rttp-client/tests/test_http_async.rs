@@ -790,6 +790,124 @@ fn test_async_buffered_deflate_raw_response_limits_decoded_body() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_streaming_gzip_deflate_decode_fragmented_malformed_and_parity() {
+  fn split_head(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let end = raw
+      .windows(4)
+      .position(|window| window == b"\r\n\r\n")
+      .expect("response head terminator")
+      + 4;
+    (raw[..end].to_vec(), raw[end..].to_vec())
+  }
+
+  block_on(async {
+    let mut body = gzip_bytes(b"async-a");
+    body.extend_from_slice(&gzip_bytes(b"async-b"));
+    let mut raw = format!(
+      "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+      body.len()
+    )
+    .into_bytes();
+    raw.extend_from_slice(&body);
+    let (head, body_bytes) = split_head(&raw);
+    let mut cursor = AllowStdIo::new(Cursor::new(body_bytes));
+    let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+      .await
+      .unwrap();
+    assert!(response
+      .headers()
+      .unwrap()
+      .iter()
+      .all(|header| !header.name().eq_ignore_ascii_case("Content-Encoding")));
+    let mut decoded = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+      let read = response.body_mut().read(&mut byte).await.unwrap();
+      if read == 0 {
+        break;
+      }
+      decoded.push(byte[0]);
+    }
+    assert_eq!(b"async-aasync-b", decoded.as_slice());
+
+    for (expected, body) in [
+      (b"async-zlib".as_slice(), zlib_bytes(b"async-zlib")),
+      (b"async-raw".as_slice(), raw_deflate_bytes(b"async-raw")),
+    ] {
+      let mut raw = format!(
+        "HTTP/1.1 200 OK\r\nContent-Encoding: deflate\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+      )
+      .into_bytes();
+      raw.extend_from_slice(&body);
+      let (head, body_bytes) = split_head(&raw);
+      let mut cursor = AllowStdIo::new(Cursor::new(body_bytes));
+      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+        .await
+        .unwrap();
+      let mut decoded = Vec::new();
+      response.body_mut().read_to_end(&mut decoded).await.unwrap();
+      assert_eq!(expected, decoded.as_slice());
+    }
+
+    let raw =
+      b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 8\r\n\r\nnot-gzip".to_vec();
+    let (head, body_bytes) = split_head(&raw);
+    let mut cursor = AllowStdIo::new(Cursor::new(body_bytes));
+    let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+      .await
+      .unwrap();
+    let mut buf = [0u8; 8];
+    let error = response.body_mut().read(&mut buf).await.unwrap_err();
+    assert_decode_error(error);
+
+    let body = gzip_bytes(b"parity");
+    let mut raw = format!(
+      "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+      body.len()
+    )
+    .into_bytes();
+    raw.extend_from_slice(&body);
+    let (addr, _handle) = support::spawn_chunked_response_server(raw.clone());
+    let buffered = client()
+      .get()
+      .url(format!("http://{addr}/gzip"))
+      .rasync()
+      .await
+      .expect("async buffered gzip");
+    let (head, body_bytes) = split_head(&raw);
+    let mut cursor = AllowStdIo::new(Cursor::new(body_bytes));
+    let mut streaming = async_streaming_response_after_header(&mut cursor, false, head)
+      .await
+      .unwrap();
+    let mut streamed = Vec::new();
+    streaming
+      .body_mut()
+      .read_to_end(&mut streamed)
+      .await
+      .unwrap();
+    assert_eq!(buffered.body().binary(), streamed.as_slice());
+
+    let body = gzip_bytes(b"early-drop");
+    let mut raw = format!(
+      "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+      body.len()
+    )
+    .into_bytes();
+    raw.extend_from_slice(&body);
+    let (head, body_bytes) = split_head(&raw);
+    let mut cursor = AllowStdIo::new(Cursor::new(body_bytes));
+    let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+      .await
+      .unwrap();
+    let mut buf = [0u8; 2];
+    let _ = response.body_mut().read(&mut buf).await.unwrap();
+    drop(response);
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_head_response_is_bodyless_and_preserves_headers() {
   let (addr, handle) = spawn_async_head_metadata_server();
   block_on(async {

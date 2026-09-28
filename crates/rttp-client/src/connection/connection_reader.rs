@@ -10,6 +10,10 @@ use url::Url;
 
 use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
 use crate::error;
+use crate::response::content_decode::{
+  content_decoders, map_streaming_body_io_error, strip_stale_representation_headers,
+  StreamingDecodeStack,
+};
 use crate::response::{InformationalResponse, Response};
 use crate::types::{Header, RoUrl};
 
@@ -39,6 +43,7 @@ pub(crate) struct ResponseParts {
 pub struct StreamingResponse<'a, R: Read + ?Sized> {
   url: RoUrl,
   head: Vec<u8>,
+  headers: Vec<Header>,
   body: ResponseBodyReader<'a, R>,
   max_buffered_response_body_bytes: usize,
 }
@@ -49,7 +54,7 @@ impl<'a, R: Read + ?Sized> StreamingResponse<'a, R> {
   }
 
   pub fn headers(&self) -> error::Result<Vec<Header>> {
-    response_headers(&self.head)
+    Ok(self.headers.clone())
   }
 
   pub fn head(&self) -> &[u8] {
@@ -78,11 +83,9 @@ impl<'a, R: Read + ?Sized> StreamingResponse<'a, R> {
   pub fn read_to_response(mut self) -> error::Result<Response> {
     let mut binary = self.head.clone();
     let content_length = content_length_from_response_body_kind(&self.body.kind);
-    read_response_body_to_end(
-      &mut self.body,
-      &mut binary,
-      self.max_buffered_response_body_bytes,
-    )?;
+    self
+      .body
+      .read_wire_to_end(&mut binary, self.max_buffered_response_body_bytes)?;
     Response::with_trailers_and_informational_and_limit(
       self.url,
       binary,
@@ -102,10 +105,19 @@ pub struct ResponseBodyReader<'a, R: Read + ?Sized> {
   chunk_needs_crlf: bool,
   trailers: Vec<Header>,
   eof: bool,
+  decode: Option<StreamingDecodeStack>,
 }
 
 impl<'a, R: Read + ?Sized> ResponseBodyReader<'a, R> {
   fn new(reader: &'a mut R, kind: ResponseBodyKind) -> Self {
+    Self::new_with_decode(reader, kind, None)
+  }
+
+  fn new_with_decode(
+    reader: &'a mut R,
+    kind: ResponseBodyKind,
+    decode: Option<StreamingDecodeStack>,
+  ) -> Self {
     let remaining = match kind {
       ResponseBodyKind::ContentLength(length) => length,
       _ => 0,
@@ -119,11 +131,72 @@ impl<'a, R: Read + ?Sized> ResponseBodyReader<'a, R> {
       chunk_needs_crlf: false,
       trailers: Vec::new(),
       eof,
+      decode,
     }
   }
 
   pub fn trailers(&self) -> &Vec<Header> {
     &self.trailers
+  }
+
+  fn read_framed(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    match self.kind {
+      ResponseBodyKind::NoBody => Ok(0),
+      ResponseBodyKind::ContentLength(_) => self.read_fixed_length(buf),
+      ResponseBodyKind::Chunked => self.read_chunked(buf),
+      ResponseBodyKind::UntilEof => {
+        if buf.is_empty() {
+          return Ok(0);
+        }
+        let read = self.reader.read(buf)?;
+        if read == 0 {
+          self.eof = true;
+        }
+        Ok(read)
+      }
+    }
+  }
+
+  fn read_wire_to_end(
+    &mut self,
+    binary: &mut Vec<u8>,
+    max_body_bytes: usize,
+  ) -> error::Result<usize> {
+    let mut wire = if let Some(decode) = self.decode.as_mut() {
+      decode.take_wire_capture()
+    } else {
+      Vec::new()
+    };
+    let decode = self.decode.take();
+    let start = wire.len();
+    let mut buffer = [0u8; 8 * 1024];
+    let result = (|| {
+      if wire.len() > max_body_bytes {
+        return Err(error::body_too_large(max_body_bytes));
+      }
+      loop {
+        let body_len = wire.len();
+        let remaining = max_body_bytes.saturating_sub(body_len);
+        let read_limit = buffer.len().min(remaining.saturating_add(1));
+        let read = self
+          .read(&mut buffer[..read_limit])
+          .map_err(response_body_read_error)?;
+        if read == 0 {
+          return Ok(wire.len() - start);
+        }
+        if read > remaining {
+          return Err(error::body_too_large(max_body_bytes));
+        }
+        wire.extend_from_slice(&buffer[..read]);
+      }
+    })();
+    self.decode = decode;
+    let read = result?;
+    if wire.len() > max_body_bytes {
+      return Err(error::body_too_large(max_body_bytes));
+    }
+    binary.extend_from_slice(&wire);
+    Ok(read)
   }
 
   fn read_fixed_length(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -187,21 +260,13 @@ impl<'a, R: Read + ?Sized> ResponseBodyReader<'a, R> {
 
 impl<R: Read + ?Sized> Read for ResponseBodyReader<'_, R> {
   fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-    match self.kind {
-      ResponseBodyKind::NoBody => Ok(0),
-      ResponseBodyKind::ContentLength(_) => self.read_fixed_length(buf),
-      ResponseBodyKind::Chunked => self.read_chunked(buf),
-      ResponseBodyKind::UntilEof => {
-        if buf.is_empty() {
-          return Ok(0);
-        }
-        let read = self.reader.read(buf)?;
-        if read == 0 {
-          self.eof = true;
-        }
-        Ok(read)
-      }
+    if self.decode.is_some() {
+      let mut decode = self.decode.take().expect("decode present");
+      let result = decode.read_from_with(buf, |chunk| self.read_framed(chunk));
+      self.decode = Some(decode);
+      return result;
     }
+    self.read_framed(buf)
   }
 }
 
@@ -264,10 +329,16 @@ impl<'a> ConnectionReader<'a> {
   pub fn streaming_response(&mut self) -> error::Result<StreamingResponse<'_, dyn io::Read + '_>> {
     let head = read_response_head(self.reader)?;
     let kind = response_body_kind(&head, self.expect_no_body)?;
+    let mut headers = response_headers(&head)?;
+    let decode = streaming_decode_for_body(&headers, &kind, self.max_buffered_response_body_bytes);
+    if decode.is_some() {
+      strip_stale_representation_headers(&mut headers);
+    }
     Ok(StreamingResponse {
       url: RoUrl::from(self.url.clone()),
       head,
-      body: ResponseBodyReader::new(self.reader, kind),
+      headers,
+      body: ResponseBodyReader::new_with_decode(self.reader, kind, decode),
       max_buffered_response_body_bytes: self.max_buffered_response_body_bytes,
     })
   }
@@ -913,12 +984,22 @@ fn to_io_error(err: error::Error) -> io::Error {
 }
 
 fn response_body_read_error(err: io::Error) -> error::Error {
-  match err.kind() {
-    io::ErrorKind::InvalidData | io::ErrorKind::UnexpectedEof => {
-      error::bad_response(err.to_string())
-    }
-    _ => error::request(err),
+  map_streaming_body_io_error(err)
+}
+
+pub(crate) fn streaming_decode_for_body(
+  headers: &[Header],
+  kind: &ResponseBodyKind,
+  max_decoded: usize,
+) -> Option<StreamingDecodeStack> {
+  if matches!(
+    kind,
+    ResponseBodyKind::NoBody | ResponseBodyKind::ContentLength(0)
+  ) {
+    return None;
   }
+  let decoders = content_decoders(headers)?;
+  Some(StreamingDecodeStack::new(decoders, max_decoded))
 }
 
 pub(crate) fn validate_response_trailer_header(name: &str, value: &str) -> error::Result<()> {
@@ -2068,6 +2149,275 @@ mod tests {
       b"HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\n".len() as u64,
       cursor.position(),
       "the extra informational head should be rejected before the final response is read"
+    );
+  }
+
+  fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
+  }
+
+  fn zlib_bytes(bytes: &[u8]) -> Vec<u8> {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
+  }
+
+  fn raw_deflate_bytes(bytes: &[u8]) -> Vec<u8> {
+    use flate2::write::DeflateEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
+  }
+
+  fn encoded_streaming_raw(encoding: &str, body: &[u8]) -> Vec<u8> {
+    let mut raw = format!(
+      "HTTP/1.1 200 OK\r\nContent-Encoding: {encoding}\r\nContent-Length: {}\r\n\r\n",
+      body.len()
+    )
+    .into_bytes();
+    raw.extend_from_slice(body);
+    raw
+  }
+
+  #[test]
+  fn streaming_decode_gzip_fragmented_input_and_cleans_headers() {
+    let body = gzip_bytes(b"hello-stream");
+    let raw = encoded_streaming_raw("gzip", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw.clone());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+    let mut response = reader.streaming_response().unwrap();
+
+    assert!(response.headers().unwrap().iter().all(|header| !header
+      .name()
+      .eq_ignore_ascii_case("Content-Encoding")
+      && !header.name().eq_ignore_ascii_case("Content-Length")));
+
+    let mut decoded = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+      let read = response.body_mut().read(&mut byte).unwrap();
+      if read == 0 {
+        break;
+      }
+      decoded.push(byte[0]);
+    }
+    assert_eq!(b"hello-stream", decoded.as_slice());
+  }
+
+  #[test]
+  fn streaming_decode_concatenated_gzip_members() {
+    let mut body = gzip_bytes(b"one");
+    body.extend_from_slice(&gzip_bytes(b"two"));
+    let raw = encoded_streaming_raw("gzip", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw);
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+    let mut response = reader.streaming_response().unwrap();
+    let mut decoded = Vec::new();
+    response.body_mut().read_to_end(&mut decoded).unwrap();
+    assert_eq!(b"onetwo", decoded.as_slice());
+  }
+
+  #[test]
+  fn streaming_decode_zlib_and_raw_deflate() {
+    for (label, body) in [
+      ("zlib", zlib_bytes(b"zlib-ok")),
+      ("raw", raw_deflate_bytes(b"raw-ok")),
+    ] {
+      let raw = encoded_streaming_raw("deflate", &body);
+      let url = url::Url::parse("http://localhost/stream").unwrap();
+      let mut cursor = Cursor::new(raw);
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+      let mut response = reader.streaming_response().unwrap();
+      let mut decoded = Vec::new();
+      response.body_mut().read_to_end(&mut decoded).unwrap();
+      if label == "zlib" {
+        assert_eq!(b"zlib-ok", decoded.as_slice());
+      } else {
+        assert_eq!(b"raw-ok", decoded.as_slice());
+      }
+    }
+  }
+
+  #[test]
+  fn streaming_decode_reverse_stack_gzip_then_deflate() {
+    let body = zlib_bytes(&gzip_bytes(b"stacked"));
+    let raw = encoded_streaming_raw("gzip, deflate", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw);
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+    let mut response = reader.streaming_response().unwrap();
+    let mut decoded = Vec::new();
+    response.body_mut().read_to_end(&mut decoded).unwrap();
+    assert_eq!(b"stacked", decoded.as_slice());
+  }
+
+  #[test]
+  fn streaming_decode_malformed_gzip_fails_atomically_on_read() {
+    let raw = encoded_streaming_raw("gzip", b"not-gzip");
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw);
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+    let mut response = reader.streaming_response().unwrap();
+    let mut buf = [0u8; 8];
+    let error = response.body_mut().read(&mut buf).unwrap_err();
+    assert!(
+      error.to_string().contains("error decoding response body")
+        || error
+          .get_ref()
+          .map(|source| source.to_string().contains("error decoding response body"))
+          .unwrap_or(false),
+      "unexpected error: {error}"
+    );
+  }
+
+  #[test]
+  fn streaming_decode_unsupported_stack_leaves_headers_and_body() {
+    let body = gzip_bytes(b"OK");
+    let raw = encoded_streaming_raw("gzip, br", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw);
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+    let mut response = reader.streaming_response().unwrap();
+    assert!(response
+      .headers()
+      .unwrap()
+      .iter()
+      .any(|header| header.name().eq_ignore_ascii_case("Content-Encoding")));
+    let mut decoded = Vec::new();
+    response.body_mut().read_to_end(&mut decoded).unwrap();
+    assert_eq!(body, decoded);
+  }
+
+  #[test]
+  fn streaming_decode_enforces_decoded_size_limit() {
+    let decoded = vec![b'a'; 256];
+    let body = gzip_bytes(&decoded);
+    assert!(body.len() <= 64);
+    let raw = encoded_streaming_raw("gzip", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw);
+    let mut reader = ConnectionReader::new_with_limit(&url, &mut cursor, false, 64);
+    let mut response = reader.streaming_response().unwrap();
+    let mut out = Vec::new();
+    let error = response.body_mut().read_to_end(&mut out).unwrap_err();
+    let mapped = crate::response::content_decode::map_streaming_body_io_error(error);
+    assert!(mapped.is_body_too_large());
+    assert_eq!(Some(64), mapped.body_limit());
+  }
+
+  #[test]
+  fn streaming_decode_limits_gzip_outer_intermediate_stacked_layer() {
+    let intermediate = vec![b'a'; 65];
+    let body = gzip_bytes(&intermediate);
+    assert!(body.len() <= 64);
+    let raw = encoded_streaming_raw("deflate, gzip", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw);
+    let mut reader = ConnectionReader::new_with_limit(&url, &mut cursor, false, 64);
+    let mut response = reader.streaming_response().unwrap();
+    let mut out = Vec::new();
+    let error = response.body_mut().read_to_end(&mut out).unwrap_err();
+    let mapped = crate::response::content_decode::map_streaming_body_io_error(error);
+    assert!(mapped.is_body_too_large(), "unexpected error: {mapped}");
+    assert_eq!(Some(64), mapped.body_limit());
+  }
+
+  #[test]
+  fn streaming_decode_partial_read_then_materialize_enforces_wire_limit() {
+    let decoded = b"abcdefghij";
+    let body = gzip_bytes(decoded);
+    assert!(body.len() > 4, "wire must exceed the configured limit");
+    assert!(body.len() <= 64);
+    let raw = encoded_streaming_raw("gzip", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw);
+    let limit = body.len() - 1;
+    let mut reader = ConnectionReader::new_with_limit(&url, &mut cursor, false, limit);
+    let mut response = reader.streaming_response().unwrap();
+    let mut prefix = [0u8; 4];
+    let read = response.body_mut().read(&mut prefix).unwrap();
+    assert_eq!(4, read);
+    assert_eq!(&decoded[..4], &prefix);
+
+    let error = response
+      .read_to_response()
+      .expect_err("materialize after partial decode should enforce total wire limit");
+    assert!(error.is_body_too_large(), "unexpected error: {error}");
+    assert_eq!(Some(limit), error.body_limit());
+  }
+
+  #[test]
+  fn streaming_decode_early_drop_does_not_panic() {
+    let body = gzip_bytes(b"early-drop-body");
+    let raw = encoded_streaming_raw("gzip", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw);
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+    let mut response = reader.streaming_response().unwrap();
+    let mut buf = [0u8; 4];
+    let _ = response.body_mut().read(&mut buf).unwrap();
+    drop(response);
+  }
+
+  #[test]
+  fn streaming_decode_read_to_response_retains_undecoded_wire() {
+    let body = gzip_bytes(b"materialize");
+    let raw = encoded_streaming_raw("gzip", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw);
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+    let response = reader
+      .streaming_response()
+      .unwrap()
+      .read_to_response()
+      .unwrap();
+    assert_eq!(b"materialize", response.body().binary());
+    assert!(response.header("Content-Encoding").is_none());
+    assert!(response
+      .binary()
+      .windows(b"Content-Encoding: gzip".len())
+      .any(|window| window == b"Content-Encoding: gzip"));
+  }
+
+  #[test]
+  fn streaming_decode_http11_transport_parity_with_buffered() {
+    let body = gzip_bytes(b"parity");
+    let raw = encoded_streaming_raw("gzip", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+
+    let mut buffered_cursor = Cursor::new(raw.clone());
+    let mut buffered_reader = ConnectionReader::new(&url, &mut buffered_cursor, false);
+    let buffered = buffered_reader.response().unwrap();
+
+    let mut streaming_cursor = Cursor::new(raw);
+    let mut streaming_reader = ConnectionReader::new(&url, &mut streaming_cursor, false);
+    let mut streaming = streaming_reader.streaming_response().unwrap();
+    let mut streamed_body = Vec::new();
+    streaming
+      .body_mut()
+      .read_to_end(&mut streamed_body)
+      .unwrap();
+
+    assert_eq!(buffered.body().binary(), streamed_body.as_slice());
+    assert_eq!(
+      buffered.header("Content-Encoding").is_none(),
+      streaming
+        .headers()
+        .unwrap()
+        .iter()
+        .all(|header| !header.name().eq_ignore_ascii_case("Content-Encoding"))
     );
   }
 }

@@ -722,6 +722,142 @@ fn test_invalid_gzip_returns_error_instead_of_panicking() {
 }
 
 #[test]
+fn test_streaming_gzip_decode_fragmented_and_concatenated_members() {
+  let mut body = gzip_bytes(b"part-a");
+  body.extend_from_slice(&gzip_bytes(b"part-b"));
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&body);
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/stream").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let mut response = reader.streaming_response().unwrap();
+
+  assert!(response.headers().unwrap().iter().all(|header| !header
+    .name()
+    .eq_ignore_ascii_case("Content-Encoding")
+    && !header.name().eq_ignore_ascii_case("Content-Length")));
+
+  let mut decoded = Vec::new();
+  let mut byte = [0u8; 1];
+  loop {
+    let read = response.body_mut().read(&mut byte).unwrap();
+    if read == 0 {
+      break;
+    }
+    decoded.push(byte[0]);
+  }
+  assert_eq!(b"part-apart-b", decoded.as_slice());
+}
+
+#[test]
+fn test_streaming_deflate_zlib_raw_malformed_and_materialize_wire() {
+  for (label, body, plaintext) in [
+    (
+      "zlib",
+      zlib_bytes(b"stream-zlib"),
+      b"stream-zlib".as_slice(),
+    ),
+    (
+      "raw",
+      raw_deflate_bytes(b"stream-raw"),
+      b"stream-raw".as_slice(),
+    ),
+  ] {
+    let mut raw = format!(
+      "HTTP/1.1 200 OK\r\nContent-Encoding: deflate\r\nContent-Length: {}\r\n\r\n",
+      body.len()
+    )
+    .into_bytes();
+    raw.extend_from_slice(&body);
+    let mut cursor = Cursor::new(raw);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+    let mut response = reader.streaming_response().unwrap();
+    let mut decoded = Vec::new();
+    response.body_mut().read_to_end(&mut decoded).unwrap();
+    assert_eq!(plaintext, decoded.as_slice(), "{label}");
+  }
+
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+    8
+  )
+  .into_bytes();
+  raw.extend_from_slice(b"not-gzip");
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/stream").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let mut response = reader.streaming_response().unwrap();
+  let mut buf = [0u8; 16];
+  assert!(response.body_mut().read(&mut buf).is_err());
+
+  let body = gzip_bytes(b"wire-capture");
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&body);
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/stream").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let response = reader
+    .streaming_response()
+    .unwrap()
+    .read_to_response()
+    .unwrap();
+  assert_eq!(b"wire-capture", response.body().binary());
+  assert!(response
+    .binary()
+    .windows(b"Content-Encoding: gzip".len())
+    .any(|window| window == b"Content-Encoding: gzip"));
+}
+
+#[test]
+fn test_streaming_gzip_http11_transport_parity_and_early_drop() {
+  let body = gzip_bytes(b"parity-body");
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&body);
+  let (addr, _handle) = support::spawn_chunked_response_server(raw.clone());
+
+  let buffered = client()
+    .get()
+    .url(format!("http://{addr}/gzip"))
+    .emit()
+    .expect("buffered gzip");
+
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/stream").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let mut streaming = reader.streaming_response().unwrap();
+  let mut streamed = Vec::new();
+  streaming.body_mut().read_to_end(&mut streamed).unwrap();
+  assert_eq!(buffered.body().binary(), streamed.as_slice());
+
+  let body = gzip_bytes(b"drop-me-early");
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&body);
+  let mut cursor = Cursor::new(raw);
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let mut response = reader.streaming_response().unwrap();
+  let mut buf = [0u8; 2];
+  let _ = response.body_mut().read(&mut buf).unwrap();
+  drop(response);
+}
+
+#[test]
 fn test_chunked() {
   let (addr, _handle) = support::spawn_chunked_server();
   let response = client()
