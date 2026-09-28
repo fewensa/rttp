@@ -46,6 +46,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/x_forwarded_host.rs",
     "tests/x_forwarded_proto.rs",
     "tests/forwarded.rs",
+    "tests/host.rs",
     "tests/expect.rs",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
