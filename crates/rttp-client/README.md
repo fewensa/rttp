@@ -1864,10 +1864,10 @@ oversized values, and too many parameters make
 response headers and body available through the ordinary response APIs.
 
 `filename` and `filename*` are preserved as independent parameter values when
-both are present. The helper does not decode RFC 5987 extended values or choose
-between `filename` and `filename*`; callers that need a filename policy can
-inspect `ContentDisposition::filename()`, `filename_ext()`, `parameter()`, or
-the ordered `parameters()` list and apply their own precedence rules. The raw
+both are present. Valid UTF-8 `filename*` values are percent-decoded for
+`ContentDisposition::filename()` and take precedence over `filename`; other
+charsets fall back to `filename` when present. Raw parameter values remain
+available through `filename_ext()`, `parameter()`, and `parameters()`. The raw
 `Content-Disposition` field remains available through `Response::header_value`
 and `Response::header_values`, including when typed parsing fails.
 
@@ -2308,7 +2308,7 @@ header-block model.
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
 | Keep-Alive | `Response::keep_alive` parses bounded RFC 2068 `Keep-Alive` fields in wire order with `timeout` delta-seconds and `max` `1*DIGIT` values as checked unsigned integers, preserving unrecognized `name=token` parameters as bounded extension metadata and raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |
 | Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
-| Content-Disposition | `Response::content_disposition` and the protocol-owned `ContentDisposition::parse` parse bounded singleton response `Content-Disposition` metadata into disposition type plus ordered parameters, including preserved `filename` and `filename*` values, while preserving raw headers on parse failures | No automatic download, filesystem path handling, MIME sniffing, redirect behavior, retry/replay, cache behavior, negotiation behavior, or status-policy behavior |
+| Content-Disposition | `Response::content_disposition` and the protocol-owned `ContentDisposition::parse` parse bounded singleton response `Content-Disposition` metadata into disposition type plus ordered parameters, prefer decoded UTF-8 `filename*` for `filename()`, and preserve raw headers on parse failures | No automatic download, filesystem path handling, MIME sniffing, redirect behavior, retry/replay, cache behavior, negotiation behavior, or status-policy behavior |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | NEL | `Response::nel` parses the bounded singleton `NEL` field as W3C Network Error Logging policy metadata while preserving raw headers | No network error report sending, policy persistence, Reporting endpoint group configuration, or status-policy behavior |
 | Reporting-Endpoints | `Response::reporting_endpoints` parses bounded endpoint-name to quoted-URL dictionaries through the shared protocol type while preserving raw headers | No report scheduling, sending, persistence, retry, routing, or endpoint policy behavior |

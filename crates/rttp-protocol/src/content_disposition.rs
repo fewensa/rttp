@@ -1,11 +1,12 @@
 //! Bounded, policy-free `Content-Disposition` response metadata parsing.
 //!
 //! This module validates one RFC 6266 `Content-Disposition` field value only.
-//! It stores the disposition type, ordered parameters, and the independent
-//! `filename` and `filename*` strings. Callers retain download, filesystem,
-//! display-name, MIME sniffing, cache, redirect, retry, negotiation, and
-//! status-code policy. The parser never decodes RFC 5987 `filename*` values
-//! or chooses between `filename` and `filename*`.
+//! It stores the disposition type and ordered raw parameters, including the
+//! independent `filename` and `filename*` strings. `filename()` prefers a
+//! decoded UTF-8 `filename*` value when that parameter is a valid RFC 5987
+//! ext-value; otherwise it falls back to `filename` when present. Callers
+//! retain download, filesystem, display-name, MIME sniffing, cache, redirect,
+//! retry, negotiation, and status-code policy.
 
 use std::error::Error;
 use std::fmt;
@@ -19,6 +20,7 @@ pub const MAX_CONTENT_DISPOSITION_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
 pub struct ContentDisposition {
   disposition_type: String,
   parameters: Vec<ContentDispositionParameter>,
+  decoded_filename_star: Option<String>,
 }
 
 /// One parameter from a parsed `Content-Disposition` field.
@@ -70,22 +72,14 @@ impl ContentDisposition {
         "invalid Content-Disposition disposition type",
       ));
     }
-    let parsed = Self {
-      disposition_type,
-      parameters: Vec::new(),
-    };
-    if parsed.header_value().len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
-      return Err(ContentDispositionParseError::new(
-        "Content-Disposition header value is too large",
-      ));
-    }
-    Ok(parsed)
+    finish_content_disposition(disposition_type, Vec::new())
   }
 
   pub fn inline() -> Self {
     Self {
       disposition_type: "inline".to_string(),
       parameters: Vec::new(),
+      decoded_filename_star: None,
     }
   }
 
@@ -93,6 +87,7 @@ impl ContentDisposition {
     Self {
       disposition_type: "attachment".to_string(),
       parameters: Vec::new(),
+      decoded_filename_star: None,
     }
   }
 
@@ -122,10 +117,8 @@ impl ContentDisposition {
         "Content-Disposition parameter value is too large",
       ));
     }
-    if name == "filename*" && !is_content_disposition_ext_value(value) {
-      return Err(ContentDispositionParseError::new(
-        "invalid Content-Disposition filename* parameter",
-      ));
+    if name == "filename*" {
+      validate_filename_star(value, false)?;
     }
     if self
       .parameters
@@ -157,6 +150,7 @@ impl ContentDisposition {
       name,
       value: value.to_string(),
     });
+    self.decoded_filename_star = decode_utf8_filename_star_parameter(&self.parameters)?;
     Ok(self)
   }
 
@@ -175,10 +169,18 @@ impl ContentDisposition {
       .find(|parameter| parameter.name.eq_ignore_ascii_case(name.as_ref()))
   }
 
+  /// Preferred filename metadata.
+  ///
+  /// When `filename*` is present and uses the UTF-8 charset, this is the
+  /// percent-decoded value. Otherwise this is the regular `filename`
+  /// parameter when present. Raw parameter values remain available through
+  /// [`Self::parameters`] and [`Self::filename_ext`].
   pub fn filename(&self) -> Option<&str> {
-    self
-      .parameter("filename")
-      .map(ContentDispositionParameter::value)
+    self.decoded_filename_star.as_deref().or_else(|| {
+      self
+        .parameter("filename")
+        .map(ContentDispositionParameter::value)
+    })
   }
 
   pub fn filename_ext(&self) -> Option<&str> {
@@ -280,16 +282,7 @@ fn parse_field_value(value: &str) -> Result<ContentDisposition, ContentDispositi
     parameters.push(parameter);
   }
 
-  let parsed = ContentDisposition {
-    disposition_type,
-    parameters,
-  };
-  if parsed.header_value().len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
-    return Err(ContentDispositionParseError::new(
-      "Content-Disposition header value is too large",
-    ));
-  }
-  Ok(parsed)
+  finish_content_disposition(disposition_type, parameters)
 }
 
 fn split_members(value: &str) -> Result<Vec<&str>, ContentDispositionParseError> {
@@ -354,10 +347,8 @@ fn parse_parameter(
       "Content-Disposition parameter value is too large",
     ));
   }
-  if name == "filename*" && (value_was_quoted || !is_content_disposition_ext_value(&parsed_value)) {
-    return Err(ContentDispositionParseError::new(
-      "invalid Content-Disposition filename* parameter",
-    ));
+  if name == "filename*" {
+    validate_filename_star(&parsed_value, value_was_quoted)?;
   }
 
   Ok(ContentDispositionParameter {
@@ -415,6 +406,91 @@ fn parse_quoted_string(value: &str) -> Result<String, ContentDispositionParseErr
     return Err(malformed_quoted_string());
   }
   Ok(parsed)
+}
+
+fn finish_content_disposition(
+  disposition_type: String,
+  parameters: Vec<ContentDispositionParameter>,
+) -> Result<ContentDisposition, ContentDispositionParseError> {
+  let decoded_filename_star = decode_utf8_filename_star_parameter(&parameters)?;
+  let parsed = ContentDisposition {
+    disposition_type,
+    parameters,
+    decoded_filename_star,
+  };
+  if parsed.header_value().len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
+    return Err(ContentDispositionParseError::new(
+      "Content-Disposition header value is too large",
+    ));
+  }
+  Ok(parsed)
+}
+
+fn decode_utf8_filename_star_parameter(
+  parameters: &[ContentDispositionParameter],
+) -> Result<Option<String>, ContentDispositionParseError> {
+  let Some(filename_star) = parameters
+    .iter()
+    .find(|parameter| parameter.name == "filename*")
+  else {
+    return Ok(None);
+  };
+  decode_utf8_filename_star(filename_star.value())
+}
+
+fn validate_filename_star(
+  value: &str,
+  value_was_quoted: bool,
+) -> Result<(), ContentDispositionParseError> {
+  if value_was_quoted || !is_content_disposition_ext_value(value) {
+    return Err(invalid_filename_star());
+  }
+  decode_utf8_filename_star(value)?;
+  Ok(())
+}
+
+fn decode_utf8_filename_star(value: &str) -> Result<Option<String>, ContentDispositionParseError> {
+  let mut parts = value.splitn(3, '\'');
+  let Some(charset) = parts.next() else {
+    return Err(invalid_filename_star());
+  };
+  let Some(_language) = parts.next() else {
+    return Err(invalid_filename_star());
+  };
+  let Some(encoded_value) = parts.next() else {
+    return Err(invalid_filename_star());
+  };
+  if !charset.eq_ignore_ascii_case("utf-8") {
+    return Ok(None);
+  }
+
+  let decoded_octets = decode_ext_value_octets(encoded_value)?;
+  let decoded = String::from_utf8(decoded_octets).map_err(|_| invalid_filename_star())?;
+  if decoded.bytes().any(|byte| byte.is_ascii_control()) {
+    return Err(invalid_filename_star());
+  }
+  Ok(Some(decoded))
+}
+
+fn decode_ext_value_octets(encoded_value: &str) -> Result<Vec<u8>, ContentDispositionParseError> {
+  let mut octets = Vec::with_capacity(encoded_value.len());
+  let bytes = encoded_value.as_bytes();
+  let mut index = 0;
+  while index < bytes.len() {
+    if bytes[index] == b'%' {
+      let hex = bytes
+        .get(index + 1..index + 3)
+        .and_then(|slice| std::str::from_utf8(slice).ok())
+        .ok_or_else(invalid_filename_star)?;
+      let octet = u8::from_str_radix(hex, 16).map_err(|_| invalid_filename_star())?;
+      octets.push(octet);
+      index += 3;
+    } else {
+      octets.push(bytes[index]);
+      index += 1;
+    }
+  }
+  Ok(octets)
 }
 
 fn serialize_content_disposition_parameter_value(name: &str, value: &str) -> String {
@@ -524,4 +600,8 @@ fn invalid_value() -> ContentDispositionParseError {
 
 fn malformed_quoted_string() -> ContentDispositionParseError {
   ContentDispositionParseError::new("malformed Content-Disposition quoted-string")
+}
+
+fn invalid_filename_star() -> ContentDispositionParseError {
+  ContentDispositionParseError::new("invalid Content-Disposition filename* parameter")
 }

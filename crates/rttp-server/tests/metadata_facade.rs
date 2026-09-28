@@ -866,6 +866,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(service_worker_allowed.header_value(), "/");
   assert_eq!(service_worker_allowed.as_str(), "/");
   assert_eq!(content_disposition.disposition_type(), "attachment");
+  assert_eq!(content_disposition.filename(), Some("report.txt"));
+  assert_eq!(
+    content_disposition.filename_ext(),
+    Some("UTF-8''report.txt")
+  );
   assert_eq!(
     content_disposition.parameter("filename"),
     Some("report.txt")

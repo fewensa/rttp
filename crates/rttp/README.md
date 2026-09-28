@@ -1713,14 +1713,14 @@ Raw `HttpResponse::header("Content-Disposition", ...)` values remain preserved
 exactly as ordinary response headers until a typed declaration helper replaces
 them or the typed parser is requested.
 
-`filename` and `filename*` are preserved as separate parameters. The helper
-serializes the parameter values it is given, parses those values back as
-metadata, and does not decode RFC 5987 extended values or choose between
-`filename` and `filename*`. Applications remain responsible for any filename
-precedence, display, storage, or download policy. These helpers are
-metadata-only: RTTP does not start automatic downloads, derive filesystem
-paths, sniff MIME types, negotiate response variants, redirect, retry/replay,
-cache, or attach status-code policy from `Content-Disposition`.
+`filename` and `filename*` are preserved as separate parameters. Valid UTF-8
+`filename*` values are percent-decoded for `filename()` and take precedence
+over `filename`; other charsets fall back to `filename` when present. Raw
+parameter values remain available through `parameter()` and `parameters()`.
+These helpers are metadata-only: RTTP does not start automatic downloads,
+derive filesystem paths, sniff MIME types, negotiate response variants,
+redirect, retry/replay, cache, or attach status-code policy from
+`Content-Disposition`.
 
 ## Bounded NEL response metadata
 
@@ -2259,7 +2259,7 @@ scheduling, or async accept loops.
 | Connection | `HttpConnection`, `Request::connection`, `HttpRequest::connection`, and `HttpResponse::connection` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to hop-by-hop stripping, keep-alive/close, upgrade/h2c, or HTTP/2 rejection |
 | Transfer-Encoding | `HttpTransferEncoding`, `Request::transfer_encoding`, and `HttpRequest::transfer_encoding` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to `request_body_kind`, `TE`, Content-Length, or HTTP/2 decode rejection |
 | Upgrade metadata | `Upgrade`, `HttpUpgrade`, `HttpClient::upgrade_protocols`, `Response::upgrade`, `Request::upgrade`, `HttpRequest::upgrade`, `HttpResponse::with_upgrade`, and `HttpResponse::upgrade` validate, declare, or parse bounded HTTP/1 `Upgrade` protocol metadata while preserving raw headers on parse failures | No automatic `Connection: Upgrade`, h2c selection, client/server socket handoff, ALPN negotiation, or upgraded protocol implementation |
-| Content-Disposition | Protocol-backed `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
+| Content-Disposition | Protocol-backed `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve ordered `filename` and `filename*` parameters, prefer decoded UTF-8 `filename*` for `filename()`, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | NEL | `HttpNel`, `HttpResponse::with_nel`, and `HttpResponse::nel` declare and parse bounded W3C Network Error Logging policy JSON, preserve unknown JSON members as raw metadata, preserve raw headers on parse failures, and replace raw duplicates on typed declaration; the client `Response::nel` parses the same metadata | No network error report sending, policy persistence, Reporting endpoint group configuration, retry, redirect behavior, or status-policy behavior |
 | Reporting-Endpoints | `HttpReportingEndpoints`, `HttpResponse::with_reporting_endpoints`, and `HttpResponse::reporting_endpoints` declare and parse bounded endpoint-name to quoted-URL dictionaries through the shared protocol type, preserve raw headers on parse failures, and replace raw duplicates on typed declaration; the client `Response::reporting_endpoints` parses the same metadata | No report scheduling, sending, persistence, retry, routing, or endpoint policy behavior |
 | Cross-Origin-Opener-Policy-Report-Only | `HttpCrossOriginOpenerPolicyReportOnly`, `HttpResponse::with_cross_origin_opener_policy_report_only`, and `HttpResponse::cross_origin_opener_policy_report_only` declare and parse bounded singleton COOP Report-Only metadata, reuse the canonical COOP directives, retain reporting parameters including `report-to`, preserve raw headers on parse failures, and replace raw duplicates on typed declaration; the client `Response::cross_origin_opener_policy_report_only` parses the same metadata | No browsing-context isolation, report scheduling, sending, persistence, retry, routing, or `Reporting-Endpoints` validation |

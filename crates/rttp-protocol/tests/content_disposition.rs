@@ -11,7 +11,7 @@ fn content_disposition_parses_type_ordered_parameters_and_filenames() {
   .expect("Content-Disposition should parse");
 
   assert_eq!(content_disposition.disposition_type(), "attachment");
-  assert_eq!(content_disposition.filename(), Some("report \"Q1\".txt"));
+  assert_eq!(content_disposition.filename(), Some("report-Q1.txt"));
   assert_eq!(
     content_disposition.filename_ext(),
     Some("UTF-8''report-Q1.txt")
@@ -118,6 +118,15 @@ fn content_disposition_rejects_invalid_syntax() {
     "attachment; filename*=UTF-8' en'report.txt",
     "attachment; filename*=UTF-8'en,'report.txt",
     "attachment; filename*=UTF-8'*'report.txt",
+    "attachment; filename*=UTF-8''%80",
+    "attachment; filename*=UTF-8''%FF",
+    "attachment; filename*=UTF-8''%C0%80",
+    "attachment; filename*=UTF-8''%E2%82",
+    "attachment; filename*=UTF-8''%00name",
+    "attachment; filename*=UTF-8''%0Aname",
+    "attachment; filename*=UTF-8''%1Fname",
+    "attachment; filename*=UTF-8''name%7F",
+    "attachment; filename*=UTF-8''%ED%A0%80",
   ] {
     assert!(
       ContentDisposition::parse(value).is_err(),
@@ -146,6 +155,58 @@ fn content_disposition_accepts_rfc5987_ext_value_charsets_and_languages() {
     assert_eq!(round_trip, parsed);
     assert_eq!(round_trip.header_value(), parsed.header_value());
   }
+}
+
+#[test]
+fn content_disposition_prefers_decoded_utf8_filename_star() {
+  let preferred = ContentDisposition::parse(
+    "attachment; filename=\"plain.txt\"; filename*=UTF-8''%E2%82%AC%20rates.txt",
+  )
+  .expect("UTF-8 filename* should parse");
+  assert_eq!(preferred.filename(), Some("€ rates.txt"));
+  assert_eq!(
+    preferred
+      .parameter("filename")
+      .map(|parameter| parameter.value()),
+    Some("plain.txt")
+  );
+  assert_eq!(
+    preferred.filename_ext(),
+    Some("UTF-8''%E2%82%AC%20rates.txt")
+  );
+  assert_eq!(
+    preferred.header_value(),
+    "attachment; filename=plain.txt; filename*=UTF-8''%E2%82%AC%20rates.txt"
+  );
+
+  let only_star = ContentDisposition::parse("attachment; filename*=utf-8''%C3%A9.txt")
+    .expect("lowercase UTF-8 filename* should parse");
+  assert_eq!(only_star.filename(), Some("é.txt"));
+  assert_eq!(only_star.filename_ext(), Some("utf-8''%C3%A9.txt"));
+
+  let fallback = ContentDisposition::parse(
+    "attachment; filename=\"plain.txt\"; filename*=ISO-8859-1''na%EFve.txt",
+  )
+  .expect("non-UTF-8 filename* should parse");
+  assert_eq!(fallback.filename(), Some("plain.txt"));
+  assert_eq!(fallback.filename_ext(), Some("ISO-8859-1''na%EFve.txt"));
+
+  let encoded_only = ContentDisposition::parse("attachment; filename*=ISO-8859-1''na%EFve.txt")
+    .expect("non-UTF-8 filename* without filename should parse");
+  assert_eq!(encoded_only.filename(), None);
+  assert_eq!(encoded_only.filename_ext(), Some("ISO-8859-1''na%EFve.txt"));
+
+  let star_first = ContentDisposition::parse(
+    "attachment; filename*=UTF-8'en-US'%C3%A9.txt; filename=\"plain.txt\"",
+  )
+  .expect("filename* before filename should parse");
+  assert_eq!(star_first.filename(), Some("é.txt"));
+  assert_eq!(star_first.parameters()[0].name(), "filename*");
+  assert_eq!(star_first.parameters()[1].name(), "filename");
+  assert_eq!(
+    star_first.header_value(),
+    "attachment; filename*=UTF-8'en-US'%C3%A9.txt; filename=plain.txt"
+  );
 }
 
 #[test]
@@ -258,6 +319,9 @@ fn content_disposition_round_trips_canonical_serialization() {
     "attachment; filename=\"report \\\"Q1\\\".txt\"; filename*=UTF-8''report-Q1.txt",
     "attachment; filename=\"é\"",
     r#"attachment; filename="a\"b\\c""#,
+    "attachment; filename=plain.txt; filename*=UTF-8''%E2%82%AC%20rates.txt",
+    "attachment; filename=plain.txt; filename*=ISO-8859-1''na%EFve.txt",
+    "attachment; filename*=UTF-8'en-US'%C3%A9.txt; filename=plain.txt",
   ] {
     let parsed =
       ContentDisposition::parse(value).unwrap_or_else(|_| panic!("{value:?} must parse"));
@@ -278,7 +342,13 @@ fn content_disposition_builds_common_dispositions_and_parameters() {
     .expect("filename* should build");
 
   assert_eq!(content_disposition.disposition_type(), "attachment");
-  assert_eq!(content_disposition.filename(), Some("financial report.txt"));
+  assert_eq!(content_disposition.filename(), Some("financial-report.txt"));
+  assert_eq!(
+    content_disposition
+      .parameter("filename")
+      .map(|parameter| parameter.value()),
+    Some("financial report.txt")
+  );
   assert_eq!(
     content_disposition.filename_ext(),
     Some("UTF-8''financial-report.txt")
@@ -382,6 +452,20 @@ fn content_disposition_builder_rejects_invalid_types_and_parameters() {
       .with_parameter("filename*", "UTF-8''bad%ZZname")
       .is_err(),
     "invalid filename* ext-values must be rejected"
+  );
+  assert!(
+    content_disposition
+      .clone()
+      .with_parameter("filename*", "UTF-8''%80")
+      .is_err(),
+    "invalid UTF-8 filename* octets must be rejected"
+  );
+  assert!(
+    content_disposition
+      .clone()
+      .with_parameter("filename*", "UTF-8''%00name")
+      .is_err(),
+    "decoded control bytes in filename* must be rejected"
   );
   assert!(
     content_disposition
