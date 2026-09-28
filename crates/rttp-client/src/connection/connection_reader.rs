@@ -192,6 +192,9 @@ impl<R: Read + ?Sized> Read for ResponseBodyReader<'_, R> {
       ResponseBodyKind::ContentLength(_) => self.read_fixed_length(buf),
       ResponseBodyKind::Chunked => self.read_chunked(buf),
       ResponseBodyKind::UntilEof => {
+        if buf.is_empty() {
+          return Ok(0);
+        }
         let read = self.reader.read(buf)?;
         if read == 0 {
           self.eof = true;
@@ -281,8 +284,6 @@ impl<'a> ConnectionReader<'a> {
       self.max_buffered_response_body_bytes,
     )
   }
-
-  // todo Connection reader will read more type from io::Reader, like Chunk data, and Stream data.
 }
 
 pub(crate) fn read_response_parts_with_limit<R>(
@@ -1017,6 +1018,29 @@ mod tests {
     assert!(response.trailers().is_empty());
     drop(response);
     assert_eq!((raw.len() - "next".len()) as u64, cursor.position());
+  }
+
+  #[test]
+  fn streaming_response_reads_until_eof_without_consuming_next_read_buffer() {
+    let raw = concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+      "stream"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+    let mut response = reader.streaming_response().unwrap();
+    let mut body = [0; 3];
+
+    assert_eq!(0, response.body_mut().read(&mut []).unwrap());
+    assert_eq!(3, response.body_mut().read(&mut body).unwrap());
+    assert_eq!(b"str", &body);
+    assert_eq!(3, response.body_mut().read(&mut body).unwrap());
+    assert_eq!(b"eam", &body);
+    assert_eq!(0, response.body_mut().read(&mut body).unwrap());
+    assert_eq!(raw.len() as u64, cursor.position());
   }
 
   #[test]
