@@ -12,6 +12,8 @@ pub const MAX_RATE_LIMIT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_RATE_LIMIT_LIMIT_VALUE_BYTES: usize = MAX_RATE_LIMIT_VALUE_BYTES;
 pub const MAX_RATE_LIMIT_REMAINING_VALUE_BYTES: usize = MAX_RATE_LIMIT_VALUE_BYTES;
 pub const MAX_RATE_LIMIT_RESET_VALUE_BYTES: usize = MAX_RATE_LIMIT_VALUE_BYTES;
+/// Maximum value permitted by the Structured Fields integer grammar.
+pub const MAX_RATE_LIMIT_INTEGER: u64 = 999_999_999_999_999;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct RateLimitLimit(Vec<RateLimitLimitItem>);
@@ -30,17 +32,24 @@ impl RateLimitLimit {
     I: IntoIterator<Item = &'a str>,
   {
     let values = collect_list_values(values, "RateLimit-Limit", MAX_RATE_LIMIT_LIMIT_VALUE_BYTES)?;
-    let values = Parser::new(trim_ows(&values))
+    let parsed = Parser::new(trim_ows(&values))
       .parse::<List>()
       .map_err(|_| invalid_value("RateLimit-Limit"))?;
-    if values.is_empty() {
+    if parsed.is_empty() {
       return Err(invalid_value("RateLimit-Limit"));
     }
-    let items = values
+    reject_duplicate_limit_parameters(&values)?;
+    let items = parsed
       .into_iter()
       .map(parse_limit_item)
       .collect::<Result<_, _>>()?;
-    Ok(Self(items))
+    let limit = Self(items);
+    validate_bounded_value(
+      &limit.header_value(),
+      "RateLimit-Limit",
+      MAX_RATE_LIMIT_LIMIT_VALUE_BYTES,
+    )?;
+    Ok(limit)
   }
 
   pub fn items(&self) -> &[RateLimitLimitItem] {
@@ -232,8 +241,12 @@ where
   let mut values = values.into_iter();
   let value = values.next().ok_or_else(|| invalid_value(header_name))?;
   validate_bounded_value(value, header_name, max_value_bytes)?;
-  if let Some(duplicate) = values.next() {
+  let mut has_duplicate = false;
+  for duplicate in values {
+    has_duplicate = true;
     validate_bounded_value(duplicate, header_name, max_value_bytes)?;
+  }
+  if has_duplicate {
     return Err(RateLimitParseError::new(format!(
       "duplicate {header_name} header fields"
     )));
@@ -259,10 +272,32 @@ where
   let mut combined = value.to_owned();
   for value in values {
     validate_bounded_value(value, header_name, max_value_bytes)?;
-    combined.push(',');
+    if combined.len().saturating_add(2).saturating_add(value.len()) > max_value_bytes {
+      return Err(RateLimitParseError::new(format!(
+        "{header_name} header value is too large"
+      )));
+    }
+    combined.push_str(", ");
     combined.push_str(value);
   }
   Ok(combined)
+}
+
+fn reject_duplicate_limit_parameters(value: &str) -> Result<(), RateLimitParseError> {
+  for member in value.split(',') {
+    let mut names = Vec::new();
+    for parameter in member.split(';').skip(1) {
+      let parameter = parameter.trim_start_matches([' ', '\t']);
+      let name = parameter
+        .split_once(['=', ' ', '\t'])
+        .map_or(parameter, |(name, _)| name);
+      if names.iter().any(|seen| *seen == name) {
+        return Err(invalid_value("RateLimit-Limit"));
+      }
+      names.push(name);
+    }
+  }
+  Ok(())
 }
 
 fn parse_limit_item(value: ListEntry) -> Result<RateLimitLimitItem, RateLimitParseError> {
@@ -270,6 +305,9 @@ fn parse_limit_item(value: ListEntry) -> Result<RateLimitLimitItem, RateLimitPar
     return Err(invalid_value("RateLimit-Limit"));
   };
   let value = parse_structured_bare_integer(item.bare_item, "RateLimit-Limit")?;
+  if item.params.keys().any(|name| name.as_str() != "w") {
+    return Err(invalid_value("RateLimit-Limit"));
+  }
   let window = item
     .params
     .get("w")
@@ -292,7 +330,10 @@ fn parse_structured_bare_integer(
   let BareItem::Integer(value) = value else {
     return Err(invalid_value(header_name));
   };
-  u64::try_from(value).map_err(|_| invalid_value(header_name))
+  let value = u64::try_from(value).map_err(|_| invalid_value(header_name))?;
+  (value <= MAX_RATE_LIMIT_INTEGER)
+    .then_some(value)
+    .ok_or_else(|| invalid_value(header_name))
 }
 
 fn validate_bounded_value(
@@ -303,6 +344,14 @@ fn validate_bounded_value(
   if value.len() > max_value_bytes {
     return Err(RateLimitParseError::new(format!(
       "{header_name} header value is too large"
+    )));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(RateLimitParseError::new(format!(
+      "invalid {header_name} control byte"
     )));
   }
   Ok(())
