@@ -99,13 +99,74 @@ fn accept_language_rejects_malformed_q_values() {
 #[test]
 fn accept_language_rejects_invalid_ranges_and_wildcards() {
   for value in [
-    "", " ", "en_US", "en..US", "-en", "en-", "en--US", "*x", "a1", "1en",
+    "",
+    " ",
+    "en_US",
+    "en..US",
+    "-en",
+    "en-",
+    "en--US",
+    "*x",
+    "a1",
+    "1en",
+    "abcdefghi",
+    "en-abcdefghi",
   ] {
     assert!(
       AcceptLanguage::parse(value).is_err(),
       "{value:?} must be rejected"
     );
   }
+}
+
+#[test]
+fn accept_language_accepts_rfc4647_ranges_and_preserves_case() {
+  let languages = AcceptLanguage::parse("EN-US, es-419, abcdefgh; Q=0.8, en-ABCDEFGH")
+    .expect("RFC 4647 ranges and mixed-case q names should parse");
+
+  assert_eq!(
+    languages.ranges(),
+    ["EN-US", "es-419", "abcdefgh", "en-ABCDEFGH"]
+  );
+  assert_eq!(
+    languages.qualities(),
+    [None, None, Some("0.8"), None]
+  );
+  assert_eq!(
+    languages.header_value(),
+    "EN-US, es-419, abcdefgh; q=0.8, en-ABCDEFGH"
+  );
+}
+
+#[test]
+fn accept_language_rejects_control_bytes() {
+  for value in [
+    "en\u{7f}",
+    "en-US\r\nX: y",
+    "\u{0d}en-US",
+    "en-US\0",
+    "en;\u{7f}q=0",
+  ] {
+    assert!(
+      AcceptLanguage::parse(value).is_err(),
+      "{value:?} must reject control bytes other than HTAB"
+    );
+  }
+}
+
+#[test]
+fn accept_language_round_trips_header_value() {
+  let languages = AcceptLanguage::parse("EN-US, fr-CA;Q=0.8, *; q=0")
+    .expect("valid Accept-Language should parse");
+  assert_eq!(
+    languages.header_value(),
+    "EN-US, fr-CA; q=0.8, *; q=0"
+  );
+
+  let round_trip = AcceptLanguage::parse(languages.header_value())
+    .expect("canonical Accept-Language should parse");
+  assert_eq!(round_trip, languages);
+  assert_eq!(round_trip.header_value(), languages.header_value());
 }
 
 #[test]
@@ -151,6 +212,12 @@ fn accept_language_enforces_value_and_count_bounds() {
   ranges.pop();
   assert_eq!(ranges.len(), MAX_ACCEPT_LANGUAGE_RANGES);
   AcceptLanguage::from_ranges(&ranges).expect("exactly 32 ranges should parse");
+
+  let half = "a".repeat(MAX_ACCEPT_LANGUAGE_VALUE_BYTES / 2 + 1);
+  assert!(
+    AcceptLanguage::from_ranges([half.as_str(), half.as_str()]).is_err(),
+    "joined from_ranges values over 64 KiB must be rejected"
+  );
 }
 
 #[test]
