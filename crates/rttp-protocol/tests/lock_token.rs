@@ -28,6 +28,63 @@ fn lock_token_preserves_coded_urls_and_normalizes_ows() {
 }
 
 #[test]
+fn lock_token_accepts_absolute_uri_forms_without_rewriting_them() {
+  for value in [
+    "<mailto:alice@example.test>",
+    "<urn:example:lock/1?mode=read#current>",
+    "<http://[2001:db8::1]/locks/%E2%9C%93?owner=alice%40example.test>",
+    "<tag:example.test,2026-09-28:lock-1>",
+  ] {
+    let token = LockToken::parse(value).expect("absolute URI should parse");
+    assert_eq!(token.as_str(), value);
+    assert_eq!(token.header_value(), value);
+  }
+}
+
+#[test]
+fn lock_token_rejects_malformed_or_nested_angle_delimiters() {
+  for value in [
+    "<http://example.test/locks/1",
+    "http://example.test/locks/1>",
+    "<<http://example.test/locks/1>",
+    "<http://example.test/locks/1>>",
+    "<http://example.test/locks/<1>>",
+    "<http://example.test/locks/1><http://example.test/locks/2>",
+  ] {
+    assert!(
+      LockToken::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn lock_token_rejects_raw_uri_whitespace_and_controls() {
+  for value in [
+    "<http://example.test/lock 1>",
+    "<http://example.test/lock\t1>",
+    "<http://example.test/lock\r1>",
+    "<http://example.test/lock\n1>",
+    "<http://example.test/lock\u{0}1>",
+    "<http://example.test/lock\u{1f}1>",
+    "<http://example.test/lock\u{7f}1>",
+    "<http://example.test/lock\u{80}1>",
+  ] {
+    assert!(
+      LockToken::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  for value in [
+    " \t<http://example.test/locks/1>\t ",
+    "\t<http://example.test/locks/1> ",
+  ] {
+    assert!(LockToken::parse(value).is_ok(), "{value:?} is outer OWS");
+  }
+}
+
+#[test]
 fn lock_token_rejects_empty_missing_brackets_lists_and_relative_uris() {
   for value in [
     "",
@@ -76,7 +133,18 @@ fn lock_token_rejects_injected_obs_text_and_control_bytes() {
 
 #[test]
 fn lock_token_rejects_duplicate_fields() {
-  assert!(LockToken::parse_values([OPAQUE_LOCK_TOKEN, HTTP_LOCK_TOKEN]).is_err());
+  let duplicate_permutations = [
+    [OPAQUE_LOCK_TOKEN, HTTP_LOCK_TOKEN],
+    [HTTP_LOCK_TOKEN, OPAQUE_LOCK_TOKEN],
+  ];
+  for values in duplicate_permutations {
+    assert!(LockToken::parse_values(values).is_err());
+  }
+
+  let first_with_ows = format!(" \t{OPAQUE_LOCK_TOKEN}\t ");
+  let second_with_ows = format!(" \t{HTTP_LOCK_TOKEN} ");
+  assert!(LockToken::parse_values([first_with_ows.as_str(), HTTP_LOCK_TOKEN]).is_err());
+  assert!(LockToken::parse_values([OPAQUE_LOCK_TOKEN, second_with_ows.as_str()]).is_err());
   assert!(LockToken::parse_values([]).is_err());
 }
 
@@ -91,6 +159,25 @@ fn lock_token_enforces_value_bounds() {
   assert!(
     LockToken::parse(&at_bound).is_ok(),
     "a coded URL at the 64 KiB bound should parse"
+  );
+
+  let outer_ows_at_bound = format!(" \t{at_bound} \t");
+  assert!(
+    LockToken::parse(&outer_ows_at_bound).is_err(),
+    "outer OWS counts toward the 64 KiB field-value bound"
+  );
+
+  let uri_prefix = "<http://example.test/";
+  let uri_at_bound_with_outer_ows = format!(
+    " \t{} \t",
+    format!(
+      "{uri_prefix}{}>",
+      "a".repeat(MAX_LOCK_TOKEN_VALUE_BYTES - 4 - uri_prefix.len() - 1)
+    )
+  );
+  assert!(
+    LockToken::parse(&uri_at_bound_with_outer_ows).is_ok(),
+    "a value at the bound including outer OWS should parse"
   );
 
   let oversized = "x".repeat(MAX_LOCK_TOKEN_VALUE_BYTES + 1);
