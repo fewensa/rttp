@@ -1479,7 +1479,7 @@ fn request_cache_control_rejects_directive_counts_across_header_fields() {
     .cache_control()
     .expect_err("too many Cache-Control directives should be rejected");
 
-  assert_eq!("too many Cache-Control directives", error.to_string());
+  assert_eq!("duplicate Cache-Control directive", error.to_string());
 }
 
 #[test]
