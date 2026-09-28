@@ -2053,12 +2053,17 @@ impl CacheControl {
     I: IntoIterator<Item = &'a str>,
   {
     let mut cache_control = Self::default();
+    let mut names = HashSet::new();
     let mut directive_count = 0usize;
     for value in values {
       for directive in split_cache_control_directives(value)? {
         directive_count += 1;
         if directive_count > MAX_CACHE_CONTROL_DIRECTIVES {
           return Err(error::bad_response("Too many Cache-Control directives"));
+        }
+        let name = cache_control_directive_name(&directive)?;
+        if !names.insert(name.to_ascii_lowercase()) {
+          return Err(error::bad_response("Duplicate Cache-Control directive"));
         }
         cache_control.apply_directive(&directive)?;
       }
@@ -2268,6 +2273,17 @@ fn push_directive(directives: &mut Vec<String>, directive: &str) -> error::Resul
   }
   directives.push(directive.to_string());
   Ok(())
+}
+
+fn cache_control_directive_name(directive: &str) -> error::Result<&str> {
+  let name = directive
+    .split_once('=')
+    .map_or(directive, |(name, _)| name)
+    .trim_matches([' ', '\t']);
+  if !is_token(name) {
+    return Err(error::bad_response("Invalid Cache-Control directive"));
+  }
+  Ok(name)
 }
 
 fn parse_directive_value(value: &str) -> error::Result<String> {

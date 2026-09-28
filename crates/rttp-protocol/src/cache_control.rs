@@ -53,10 +53,6 @@ mod tests {
   fn rejects_invalid_syntax_and_control_bytes() {
     for value in [
       "max-age=",
-      "max-age =60",
-      "max-age= 60",
-      "max-age = 60",
-      "custom= \"quoted\"",
       "max-age=not a token",
       "custom=\"unterminated",
       "custom=\"invalid\\\x01\"",
@@ -84,27 +80,42 @@ mod tests {
 
   #[test]
   fn enforces_aggregate_limit_across_repeated_fields() {
-    let exact = vec!["x".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2); 2];
+    let exact = [
+      "x".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2),
+      "y".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2),
+    ];
     assert!(CacheControl::parse_values(exact.iter().map(String::as_str)).is_ok());
 
     let over = [
       "x".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2),
-      "x".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2 + 1),
+      "y".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2 + 1),
     ];
     assert!(CacheControl::parse_values(over.iter().map(String::as_str)).is_err());
   }
 
   #[test]
-  fn preserves_duplicate_directives_and_canonical_round_trip() {
-    let parsed = CacheControl::parse("  no-cache, no-cache=\"a,b\"  ")
-      .expect("duplicate directives should parse");
-    assert_eq!(parsed.directives()[0].name(), "no-cache");
-    assert_eq!(parsed.directives()[1].value(), Some("a,b"));
-    assert_eq!(parsed.header_value(), "no-cache, no-cache=\"a,b\"");
+  fn rejects_case_insensitive_duplicate_directives_across_fields() {
+    for values in [
+      vec!["Max-Age=60", "max-age=120"],
+      vec!["community=one", "COMMUNITY=two"],
+    ] {
+      assert!(CacheControl::parse_values(values).is_err());
+    }
+  }
+
+  #[test]
+  fn parses_ows_and_round_trips_unique_canonical_values() {
+    let parsed = CacheControl::parse("  max-age \t= \t60, community \t= \t\"quoted, value\"  ")
+      .expect("unique directives with OWS should parse");
+    assert_eq!(
+      parsed.header_value(),
+      "max-age=60, community=\"quoted, value\""
+    );
     assert_eq!(CacheControl::parse(parsed.header_value()).unwrap(), parsed);
   }
 }
 
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
@@ -156,6 +167,7 @@ impl CacheControl {
     I: IntoIterator<Item = &'a str>,
   {
     let mut directives = Vec::new();
+    let mut names = HashSet::new();
     let mut aggregate_len = 0usize;
     for value in values {
       if value.len() > MAX_CACHE_CONTROL_VALUE_BYTES {
@@ -176,7 +188,7 @@ impl CacheControl {
           "invalid Cache-Control control byte",
         ));
       }
-      parse_field(value, &mut directives)?;
+      parse_field(value, &mut directives, &mut names)?;
     }
     if directives.is_empty() {
       return Err(CacheControlParseError::new(
@@ -229,6 +241,7 @@ impl CacheControlDirective {
 fn parse_field(
   value: &str,
   directives: &mut Vec<CacheControlDirective>,
+  names: &mut HashSet<String>,
 ) -> Result<(), CacheControlParseError> {
   let bytes = value.as_bytes();
   let mut position = 0usize;
@@ -253,7 +266,13 @@ fn parse_field(
         "too many Cache-Control directives",
       ));
     }
-    directives.push(parse_directive(value, &mut position)?);
+    let directive = parse_directive(value, &mut position)?;
+    if !names.insert(directive.name.to_ascii_lowercase()) {
+      return Err(CacheControlParseError::new(
+        "duplicate Cache-Control directive",
+      ));
+    }
+    directives.push(directive);
     skip_ows(bytes, &mut position);
     if position == bytes.len() {
       return Ok(());
@@ -271,8 +290,10 @@ fn parse_directive(
   position: &mut usize,
 ) -> Result<CacheControlDirective, CacheControlParseError> {
   let name = parse_token(value, position, "invalid Cache-Control directive")?.to_string();
+  skip_ows(value.as_bytes(), position);
   let value = if value.as_bytes().get(*position) == Some(&b'=') {
     *position += 1;
+    skip_ows(value.as_bytes(), position);
     Some(parse_directive_value(value, position)?)
   } else {
     None
