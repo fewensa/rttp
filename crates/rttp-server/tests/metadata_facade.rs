@@ -4997,6 +4997,76 @@ fn server_set_cookie_response_metadata_uses_protocol_representation() {
 }
 
 #[test]
+fn server_set_cookie_response_metadata_preserves_max_age_precedence_and_repeated_fields() {
+  let session = HttpSetCookie::new("session", "abc def")
+    .expect("session cookie should be valid")
+    .with_expires("Wed, 21 Oct 2015 07:28:00 GMT")
+    .expect("Expires should be accepted")
+    .with_max_age(60)
+    .expect("Max-Age should be accepted")
+    .with_same_site(HttpSameSite::None)
+    .expect("SameSite=None should be accepted")
+    .with_secure()
+    .expect("Secure should be accepted");
+  let csrf = HttpSetCookie::new("csrf", "token")
+    .expect("csrf cookie should be valid")
+    .with_path("/form")
+    .expect("path should be accepted")
+    .with_max_age(0)
+    .expect("Max-Age=0 should be accepted")
+    .with_extension("Foo", Some("bar"))
+    .expect("extension should be accepted");
+  let response = HttpResponse::ok("body")
+    .header("Set-Cookie", "stale=old")
+    .with_set_cookie(session)
+    .with_set_cookie(csrf);
+  let cookies = response
+    .set_cookies()
+    .expect("Set-Cookie metadata should parse")
+    .expect("Set-Cookie metadata should be present");
+
+  assert_eq!(3, cookies.len());
+  assert_eq!("stale", cookies.cookies()[0].name());
+  assert_eq!(Some(60), cookies.cookies()[1].max_age());
+  assert_eq!(
+    Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+    cookies.cookies()[1].expires()
+  );
+  assert_eq!(Some(HttpSameSite::None), cookies.cookies()[1].same_site());
+  assert!(cookies.cookies()[1].secure());
+  assert_eq!(Some(0), cookies.cookies()[2].max_age());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(3, serialized.matches("\r\nSet-Cookie: ").count());
+  assert!(serialized.contains("\r\nSet-Cookie: stale=old\r\n"));
+  assert!(serialized.contains(
+    "\r\nSet-Cookie: session=\"abc def\"; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=60; SameSite=None; Secure\r\n"
+  ));
+  assert!(serialized.contains("\r\nSet-Cookie: csrf=token; Path=/form; Max-Age=0; Foo=bar\r\n"));
+  assert_eq!(
+    cookies,
+    HttpSetCookies::parse_values([
+      "stale=old",
+      r#"session="abc def"; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=60; SameSite=None; Secure"#,
+      "csrf=token; Path=/form; Max-Age=0; Foo=bar",
+    ])
+    .expect("protocol collection should parse")
+  );
+
+  let negative = HttpResponse::ok("body").header("Set-Cookie", "session=abc; Max-Age=-1");
+  assert!(negative.set_cookies().is_err());
+  assert!(String::from_utf8(negative.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nSet-Cookie: session=abc; Max-Age=-1\r\n"));
+
+  let overflowing =
+    HttpResponse::ok("body").header("Set-Cookie", "session=abc; Max-Age=18446744073709551616");
+  assert!(overflowing.set_cookies().is_err());
+  assert!(String::from_utf8(overflowing.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nSet-Cookie: session=abc; Max-Age=18446744073709551616\r\n"));
+}
+
+#[test]
 fn response_facade_builds_and_parses_variant_vary_metadata() {
   let response = HttpResponse::ok("body")
     .header("Variant-Vary", "Accept-Encoding")

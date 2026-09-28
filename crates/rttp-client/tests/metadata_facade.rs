@@ -1777,6 +1777,97 @@ fn response_facade_parses_shared_set_cookie_metadata() {
 }
 
 #[test]
+fn response_facade_exposes_max_age_over_expires_and_repeated_set_cookie_fields() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Set-Cookie: session=\"abc def\"; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=60; SameSite=None; Secure\r\n",
+      "Set-Cookie: csrf=token; Path=/form; Max-Age=0; Foo=bar\r\n",
+      "Content-Length: 0\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  let cookies = response
+    .set_cookies()
+    .expect("Set-Cookie should parse")
+    .expect("Set-Cookie should be present");
+
+  assert_eq!(2, cookies.len());
+  assert_eq!(Some(60), cookies.cookies()[0].max_age());
+  assert_eq!(
+    Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+    cookies.cookies()[0].expires()
+  );
+  assert_eq!(Some(HttpSameSite::None), cookies.cookies()[0].same_site());
+  assert!(cookies.cookies()[0].secure());
+  assert!(cookies.cookies()[0].is_value_quoted());
+  assert_eq!(Some(0), cookies.cookies()[1].max_age());
+  assert_eq!(
+    vec![
+      r#"session="abc def"; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=60; SameSite=None; Secure"#,
+      "csrf=token; Path=/form; Max-Age=0; Foo=bar",
+    ],
+    cookies.header_values()
+  );
+  assert_eq!(
+    vec![
+      r#"session="abc def"; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=60; SameSite=None; Secure"#,
+      "csrf=token; Path=/form; Max-Age=0; Foo=bar",
+    ],
+    response
+      .header_values("set-cookie")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+
+  let session = response.cookie("session").expect("legacy session cookie");
+  assert_eq!(session.max_age(), Some(60));
+  assert!(session.expires().is_some());
+  assert_eq!(session.same_site().as_deref(), Some("None"));
+  assert!(session.secure());
+  assert_eq!(
+    r#"session="abc def"; max-age=60; secure; SameSite=None"#,
+    session.string()
+  );
+  assert_eq!(
+    "csrf=token; path=/form; max-age=0",
+    response
+      .cookie("csrf")
+      .expect("legacy csrf cookie")
+      .string()
+  );
+
+  let negative = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nSet-Cookie: session=abc; Max-Age=-1\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(negative.set_cookies().is_err());
+  assert!(negative.cookies().is_empty());
+  assert_eq!(
+    Some(&"session=abc; Max-Age=-1".to_string()),
+    negative.header_value("Set-Cookie")
+  );
+
+  let overflowing = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nSet-Cookie: session=abc; Max-Age=18446744073709551616\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw overflowing Max-Age should remain usable");
+  assert!(overflowing.set_cookies().is_err());
+  assert_eq!(
+    Some(&"session=abc; Max-Age=18446744073709551616".to_string()),
+    overflowing.header_value("Set-Cookie")
+  );
+}
+
+#[test]
 fn response_facade_parses_variant_vary_metadata() {
   let response = rttp_client::response::Response::new(
     rttp_client::types::RoUrl::with("http://example.test/"),
