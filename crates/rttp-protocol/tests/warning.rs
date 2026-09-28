@@ -57,10 +57,8 @@ fn warning_unescapes_quoted_text_and_keeps_commas_inside_quotes() {
 
 #[test]
 fn warning_unescapes_quoted_http_date_including_escaped_quotes() {
-  let warning = Warning::parse(
-    r#"110 - "stale" "Wed, 21 Oct 2015 07:28:00 GM\T""#,
-  )
-  .expect("escaped characters in warn-date should unescape before HTTP-date parse");
+  let warning = Warning::parse(r#"110 - "stale" "Wed, 21 Oct 2015 07:28:00 GM\T""#)
+    .expect("escaped characters in warn-date should unescape before HTTP-date parse");
 
   assert_eq!(
     warning.items()[0].date(),
@@ -71,9 +69,7 @@ fn warning_unescapes_quoted_http_date_including_escaped_quotes() {
     r#"110 - "stale" "Wed, 21 Oct 2015 07:28:00 GMT""#
   );
 
-  let with_escaped_quote = Warning::parse(
-    r#"110 - "stale" "Wed, 21 Oct 2015 07:28:00 GMT\"""#,
-  );
+  let with_escaped_quote = Warning::parse(r#"110 - "stale" "Wed, 21 Oct 2015 07:28:00 GMT\"""#);
   assert!(
     with_escaped_quote.is_err(),
     "escaped quote that survives into HTTP-date content must be rejected"
@@ -134,10 +130,9 @@ fn warning_accepts_rfc3986_empty_ports_on_warn_agents() {
 
 #[test]
 fn warning_retains_ordered_duplicate_list_members() {
-  let warning = Warning::parse(
-    r#"110 - "first", 110 - "first", 111 cache "second", 110 - "first""#,
-  )
-  .expect("duplicate warning-value members are retained in order");
+  let warning =
+    Warning::parse(r#"110 - "first", 110 - "first", 111 cache "second", 110 - "first""#)
+      .expect("duplicate warning-value members are retained in order");
 
   assert_eq!(warning.len(), 4);
   assert_eq!(warning.items()[0].text(), "first");
