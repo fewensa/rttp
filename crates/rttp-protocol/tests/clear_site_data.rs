@@ -2,7 +2,7 @@ use std::error::Error;
 
 use rttp_protocol::clear_site_data::{
   ClearSiteData, ClearSiteDataDirective, ClearSiteDataParseError, MAX_CLEAR_SITE_DATA_DIRECTIVES,
-  MAX_CLEAR_SITE_DATA_VALUE_BYTES,
+  MAX_CLEAR_SITE_DATA_TOTAL_BYTES, MAX_CLEAR_SITE_DATA_VALUE_BYTES,
 };
 
 fn parse_error(value: &str) -> ClearSiteDataParseError {
@@ -324,6 +324,35 @@ fn clear_site_data_rejects_escaped_non_ascii_and_control_bytes() {
 }
 
 #[test]
+fn clear_site_data_enforces_aggregate_raw_field_byte_bound() {
+  assert_eq!(64 * 1024, MAX_CLEAR_SITE_DATA_TOTAL_BYTES);
+
+  let first = format!("\"cache\"{}", " ".repeat(32 * 1024 - 7));
+  let second = format!("\"cookies\"{}", " ".repeat(32 * 1024 - 9));
+  assert_eq!(32 * 1024, first.len());
+  assert_eq!(32 * 1024, second.len());
+  let parsed = ClearSiteData::parse_values([first.as_str(), second.as_str()])
+    .expect("exact 64 KiB aggregate field values should parse");
+  assert_eq!(
+    parsed.directives(),
+    &[
+      ClearSiteDataDirective::Cache,
+      ClearSiteDataDirective::Cookies
+    ]
+  );
+  assert_eq!(parsed.header_value(), "\"cache\", \"cookies\"");
+  assert_eq!(
+    ClearSiteData::parse(parsed.header_value()).expect("canonical value should round trip"),
+    parsed
+  );
+
+  let overflow = format!("{second} ");
+  let error = ClearSiteData::parse_values([first.as_str(), overflow.as_str()])
+    .expect_err("one byte over the aggregate bound should be rejected");
+  assert!(error.to_string().contains("header list is too large"));
+}
+
+#[test]
 fn clear_site_data_enforces_value_byte_and_directive_bounds() {
   assert_eq!(64 * 1024, MAX_CLEAR_SITE_DATA_VALUE_BYTES);
   assert_eq!(256, MAX_CLEAR_SITE_DATA_DIRECTIVES);
@@ -343,14 +372,10 @@ fn clear_site_data_enforces_value_byte_and_directive_bounds() {
   assert!(!parsed.is_wildcard());
 
   let with_neighbor = ClearSiteData::parse_values([exact.as_str(), "\t\"cache\" "])
-    .expect("a second field should remain independent of the per-field byte bound");
-  assert_eq!(
-    with_neighbor.directives(),
-    &[
-      ClearSiteDataDirective::ExecutionContexts,
-      ClearSiteDataDirective::Cache,
-    ]
-  );
+    .expect_err("repeated fields are subject to the aggregate byte bound");
+  assert!(with_neighbor
+    .to_string()
+    .contains("header list is too large"));
 
   let oversized = format!("{exact} ");
   assert_eq!(MAX_CLEAR_SITE_DATA_VALUE_BYTES + 1, oversized.len());
