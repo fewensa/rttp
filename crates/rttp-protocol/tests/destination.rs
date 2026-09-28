@@ -105,18 +105,22 @@ fn enforces_exact_raw_byte_limit_including_ows() {
 #[test]
 fn counts_utf8_bytes_before_uri_validation() {
   let prefix = "https://e/";
-  let exact = format!(
-    "{prefix}{}",
-    "é".repeat((MAX_DESTINATION_VALUE_BYTES - prefix.len()) / 2)
-  );
-  assert!(exact.len() <= MAX_DESTINATION_VALUE_BYTES);
-  assert!(Destination::parse(&exact).is_err());
+  let in_limit_invalid = format!("{prefix}é");
+  assert!(in_limit_invalid.len() <= MAX_DESTINATION_VALUE_BYTES);
+  let invalid = Destination::parse(&in_limit_invalid).expect_err("non-ASCII URI byte");
+  assert_eq!("invalid Destination header value", invalid.to_string());
 
   let oversized = format!(
-    "{}é",
-    "a".repeat(MAX_DESTINATION_VALUE_BYTES - prefix.len())
+    "{prefix}{}é",
+    "a".repeat(MAX_DESTINATION_VALUE_BYTES - prefix.len() - 1)
   );
-  assert!(Destination::parse(format!("{prefix}{oversized}")).is_err());
+  assert!(oversized.chars().count() <= MAX_DESTINATION_VALUE_BYTES);
+  assert_eq!(MAX_DESTINATION_VALUE_BYTES + 1, oversized.len());
+  let too_large = Destination::parse(&oversized).expect_err("UTF-8 oversize");
+  assert_eq!(
+    "Destination header value is too large",
+    too_large.to_string()
+  );
 }
 
 #[test]
