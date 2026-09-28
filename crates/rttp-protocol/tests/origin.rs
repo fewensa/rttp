@@ -83,6 +83,8 @@ fn origin_rejects_invalid_singleton_values() {
     "https://example.test\0",
     "https://example.test\x7f",
     "https://example.test\r\nX-Injected: true",
+    "https://exämple.test",
+    "https://例子.test",
   ] {
     assert!(Origin::parse(value).is_err(), "{value:?} must be rejected");
   }

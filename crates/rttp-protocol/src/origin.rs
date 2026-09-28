@@ -150,6 +150,11 @@ fn validate_value(value: &str) -> Result<(), OriginParseError> {
   if value.len() > MAX_ORIGIN_VALUE_BYTES {
     return Err(OriginParseError::new("Origin header value is too large"));
   }
+  // Serialized origins are ASCII; reject non-ASCII so Unicode hosts cannot be
+  // silently rewritten to punycode.
+  if !value.is_ascii() {
+    return Err(invalid_value());
+  }
   if value
     .bytes()
     .any(|byte| byte.is_ascii_control() && byte != b'\t')
