@@ -39,6 +39,11 @@ impl AcceptLanguage {
           "Accept-Language header value is too large",
         ));
       }
+      if value.bytes().any(is_invalid_control_byte) {
+        return Err(AcceptLanguageParseError::new(
+          "invalid Accept-Language control byte",
+        ));
+      }
       for item in value.split(',') {
         let (range, quality) = parse_accept_language_item(item.trim_matches([' ', '\t']))?;
         if ranges.len() >= MAX_ACCEPT_LANGUAGE_RANGES {
@@ -187,4 +192,8 @@ fn is_valid_qvalue(value: &str) -> bool {
     }
     None => value == "0" || value == "1",
   }
+}
+
+fn is_invalid_control_byte(byte: u8) -> bool {
+  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }
