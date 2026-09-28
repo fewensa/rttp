@@ -291,7 +291,7 @@ fn reject_duplicate_limit_parameters(value: &str) -> Result<(), RateLimitParseEr
       let name = parameter
         .split_once(['=', ' ', '\t'])
         .map_or(parameter, |(name, _)| name);
-      if names.iter().any(|seen| *seen == name) {
+      if names.contains(&name) {
         return Err(invalid_value("RateLimit-Limit"));
       }
       names.push(name);
