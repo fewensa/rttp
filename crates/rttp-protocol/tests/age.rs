@@ -103,7 +103,7 @@ fn age_round_trips_canonical_decimal_values() {
       age
     );
     assert_eq!(
-      Age::parse(&age.header_value()).expect("re-serialized value should parse"),
+      Age::parse(age.header_value()).expect("re-serialized value should parse"),
       age
     );
   }
