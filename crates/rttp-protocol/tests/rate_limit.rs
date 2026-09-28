@@ -1,6 +1,6 @@
 use rttp_protocol::rate_limit::{
   RateLimitLimit, RateLimitLimitItem, RateLimitLimitParseError, RateLimitRemaining,
-  RateLimitRemainingParseError, RateLimitReset, RateLimitResetParseError,
+  RateLimitRemainingParseError, RateLimitReset, RateLimitResetParseError, MAX_RATE_LIMIT_INTEGER,
   MAX_RATE_LIMIT_VALUE_BYTES,
 };
 
@@ -49,6 +49,86 @@ fn rate_limit_trims_optional_whitespace() {
 }
 
 #[test]
+fn rate_limit_accepts_list_separators_and_valid_window_parameters() {
+  let limit = RateLimitLimit::parse("\t100; w=60\t,\t50\t")
+    .expect("SP/HTAB OWS around list members and parameters should parse");
+  assert_eq!(
+    limit,
+    RateLimitLimit::new([
+      RateLimitLimitItem::new(100).with_window(60),
+      RateLimitLimitItem::new(50),
+    ])
+  );
+  assert_eq!("100;w=60, 50", limit.header_value());
+
+  for value in ["100,,50", ",100", "100,", "100;w", "100;w=1.5"] {
+    assert!(
+      RateLimitLimit::parse(value).is_err(),
+      "malformed list or parameter {value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn rate_limit_enforces_structured_integer_bounds() {
+  let maximum = MAX_RATE_LIMIT_INTEGER.to_string();
+  let over_maximum = (MAX_RATE_LIMIT_INTEGER + 1).to_string();
+
+  assert_eq!(
+    RateLimitLimit::parse(format!("{maximum};w={maximum}"))
+      .expect("maximum Structured Fields integers should parse")
+      .header_value(),
+    format!("{maximum};w={maximum}")
+  );
+  assert_eq!(
+    RateLimitRemaining::parse(&maximum)
+      .expect("maximum Structured Fields integer should parse")
+      .header_value(),
+    maximum
+  );
+  assert_eq!(
+    RateLimitReset::parse(&maximum)
+      .expect("maximum Structured Fields integer should parse")
+      .header_value(),
+    maximum
+  );
+
+  for value in [
+    over_maximum.clone(),
+    format!("1;w={over_maximum}"),
+    format!("1;w={}", u64::MAX),
+  ] {
+    assert!(
+      RateLimitLimit::parse(&value).is_err(),
+      "over-limit RateLimit-Limit value {value:?} must be rejected"
+    );
+  }
+  assert!(RateLimitRemaining::parse(&over_maximum).is_err());
+  assert!(RateLimitReset::parse(&over_maximum).is_err());
+}
+
+#[test]
+fn rate_limit_rejects_unsupported_and_duplicate_parameters() {
+  for value in ["100;foo=1", "100;w=1;w=2", "100;w=true"] {
+    assert!(
+      RateLimitLimit::parse(value).is_err(),
+      "unsupported or duplicate parameter {value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn rate_limit_rejects_forbidden_controls_but_accepts_ows() {
+  for control in [0x00_u8, 0x0b, 0x0c, 0x0d, 0x0e, 0x1f, 0x7f] {
+    let value = format!("1{}", char::from(control));
+    assert!(RateLimitLimit::parse(&value).is_err());
+    assert!(RateLimitRemaining::parse(&value).is_err());
+    assert!(RateLimitReset::parse(&value).is_err());
+  }
+  assert_eq!(1, RateLimitRemaining::parse("\t1 ").unwrap().value());
+}
+
+#[test]
 fn rate_limit_rejects_malformed_numeric_values() {
   for value in [
     "",
@@ -90,6 +170,11 @@ fn rate_limit_rejects_invalid_list_and_duplicate_values() {
   );
   assert!(RateLimitRemaining::parse_values(["42", "21"]).is_err());
   assert!(RateLimitReset::parse_values(["60", "30"]).is_err());
+
+  let oversized = "1".repeat(MAX_RATE_LIMIT_VALUE_BYTES + 1);
+  let error = RateLimitRemaining::parse_values(["1", "2", &oversized])
+    .expect_err("every duplicate field must be validated");
+  assert!(error.to_string().contains("too large"));
 }
 
 #[test]
@@ -177,5 +262,21 @@ fn rate_limit_enforces_value_bounds_for_every_field() {
   assert!(
     RateLimitLimit::parse_values(["100", oversized.as_str()]).is_err(),
     "an oversized duplicate must not bypass validation"
+  );
+}
+
+#[test]
+fn rate_limit_bounds_combined_limit_fields_and_round_trips_canonically() {
+  let max_items = MAX_RATE_LIMIT_VALUE_BYTES.div_ceil(3);
+  let values = std::iter::repeat_n("0", max_items).collect::<Vec<_>>();
+  let limit = RateLimitLimit::parse_values(values.iter().copied())
+    .expect("canonical combined list at the byte limit should parse");
+  assert_eq!(MAX_RATE_LIMIT_VALUE_BYTES, limit.header_value().len());
+  assert_eq!(limit, RateLimitLimit::parse(limit.header_value()).unwrap());
+
+  let too_many = std::iter::repeat_n("0", max_items + 1).collect::<Vec<_>>();
+  assert!(
+    RateLimitLimit::parse_values(too_many.iter().copied()).is_err(),
+    "combined list serialization must stay within the aggregate bound"
   );
 }

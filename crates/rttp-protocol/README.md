@@ -324,18 +324,21 @@ freshness, or decide status-code retry policy.
 `rate_limit` owns the bounded, policy-free syntax for the
 `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` response
 fields. `RateLimitLimit::parse_values` combines repeated fields in wire order
-as a structured-field list. Each item contains a non-negative `u64` limit and
-may contain a non-negative `u64` `w` window; `RateLimitLimitItem::new` and
-`with_window` construct the same representation. Duplicate limit items are
-retained, and `header_value()` emits the canonical list form.
+as a structured-field list. Each item contains a non-negative Structured
+Fields integer (at most `999999999999999`) and may contain one non-negative
+`w` window parameter; `RateLimitLimitItem::new` and `with_window` construct
+the same representation. Duplicate limit items are retained, and
+`header_value()` emits the canonical list form.
 
 `RateLimitRemaining` and `RateLimitReset` parse one structured integer field
 each. Their `parse_values` methods reject duplicate fields, while their
 `new`, `value`, and `header_value` methods provide typed construction and
-canonical decimal serialization. All three field values are limited to 64
-KiB, integer overflow and malformed structured fields are rejected, and the
-typed aliases `RateLimitLimitParseError`, `RateLimitRemainingParseError`, and
-`RateLimitResetParseError` share `RateLimitParseError`.
+canonical decimal serialization. Each raw field and each combined canonical
+`RateLimit-Limit` list is limited to 64 KiB; integer overflow, unsupported or
+duplicate parameters, forbidden ASCII controls, and malformed structured
+fields are rejected. Surrounding SP and HTAB optional whitespace is accepted.
+The typed aliases `RateLimitLimitParseError`, `RateLimitRemainingParseError`,
+and `RateLimitResetParseError` share `RateLimitParseError`.
 
 These types report response metadata only. They do not select a window,
 enforce quotas, sleep, retry, schedule work, or apply rate-limit policy.
