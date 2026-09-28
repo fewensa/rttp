@@ -3990,6 +3990,10 @@ fn cross_crate_h2c_extended_connect_matrix_preserves_http11_handoffs() {
         assert_eq!("/chat?room=blue", request.target());
         assert_eq!(Some(addr.to_string().as_str()), request.header("host"));
         assert_eq!(Some("websocket"), request.extended_connect_protocol());
+        assert!(
+          request.body().is_empty(),
+          "empty client extended CONNECT must expose an empty Request::body"
+        );
         HttpResponse::ok("cross-crate extended connect")
       })
       .expect("serve cross-crate h2 extended CONNECT")

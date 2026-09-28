@@ -1,4 +1,38 @@
 //! Compatibility facade for the RTTP client and server crates.
+//!
+//! With the `http2` feature, negotiated RFC 8441 extended CONNECT is visible
+//! through the same `rttp::Http::server` / `rttp::Http::client` surface used
+//! for ordinary requests. Handlers read
+//! [`server::Request::extended_connect_protocol`] and
+//! [`server::Request::body`]; clients opt in with
+//! `HttpClient::http2_extended_connect` and send empty bodies on HEADERS or
+//! non-empty buffered bodies as DATA.
+//!
+//! ```rust,no_run
+//! # #[cfg(feature = "http2")]
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! use rttp::server::HttpResponse;
+//!
+//! let server = rttp::Http::server("127.0.0.1:0")?;
+//! let addr = server.local_addr()?;
+//! std::thread::spawn(move || {
+//!   let _ = server.accept_one(|request| {
+//!     if request.extended_connect_protocol() == Some("websocket") {
+//!       let _body = request.body();
+//!       return HttpResponse::ok("ok");
+//!     }
+//!     HttpResponse::new(400, "Bad Request")
+//!   });
+//! });
+//!
+//! let _response = rttp::Http::client()
+//!   .http2_extended_connect("websocket")
+//!   .url(format!("http://{addr}/chat"))
+//!   .raw("hello")
+//!   .emit_http2_prior_knowledge()?;
+//! # Ok(())
+//! # }
+//! ```
 
 pub struct Http {}
 

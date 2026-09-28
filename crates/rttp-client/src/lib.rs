@@ -91,10 +91,12 @@
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! use rttp_client::HttpClient;
 //!
+//! // Empty bodies end the stream on HEADERS; non-empty buffered bodies use DATA.
 //! let response = HttpClient::new()
 //!   .get()
 //!   .url("http://127.0.0.1:8080/chat")
 //!   .http2_extended_connect("websocket")
+//!   .raw("hello over extended CONNECT")
 //!   .emit_http2_prior_knowledge()?;
 //! # Ok(())
 //! # }
