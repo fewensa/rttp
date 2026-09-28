@@ -169,11 +169,8 @@ fn lock_token_enforces_value_bounds() {
 
   let uri_prefix = "<http://example.test/";
   let uri_at_bound_with_outer_ows = format!(
-    " \t{} \t",
-    format!(
-      "{uri_prefix}{}>",
-      "a".repeat(MAX_LOCK_TOKEN_VALUE_BYTES - 4 - uri_prefix.len() - 1)
-    )
+    " \t{uri_prefix}{}> \t",
+    "a".repeat(MAX_LOCK_TOKEN_VALUE_BYTES - 4 - uri_prefix.len() - 1)
   );
   assert!(
     LockToken::parse(&uri_at_bound_with_outer_ows).is_ok(),
