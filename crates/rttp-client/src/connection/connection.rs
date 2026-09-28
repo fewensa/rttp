@@ -1404,6 +1404,11 @@ mod tests {
   fn test_parse_proxy_connect_response_accepts_ascii_sp_separator() {
     parse_proxy_connect_response(b"HTTP/1.1 200 Connection Established\r\n\r\n").unwrap();
     parse_proxy_connect_response(b"HTTP/1.1 200\r\n\r\n").unwrap();
+    parse_proxy_connect_response(b"HTTP/1.1 200 Connection\tEstablished\r\n\r\n").unwrap();
+    parse_proxy_connect_response("HTTP/1.1 200 Connection\u{00a0}Established\r\n\r\n".as_bytes())
+      .unwrap();
+    parse_proxy_connect_response("HTTP/1.1 200 Connection\u{2003}Established\r\n\r\n".as_bytes())
+      .unwrap();
   }
 
   #[test]
@@ -1417,9 +1422,6 @@ mod tests {
       "HTTP/1.1200 Connection Established\r\n\r\n",
       "HTTP/1.1-200 Connection Established\r\n\r\n",
       "HTTP/1.1/200 Connection Established\r\n\r\n",
-      "HTTP/1.1 200 Connection\tEstablished\r\n\r\n",
-      "HTTP/1.1 200 Connection\u{00a0}Established\r\n\r\n",
-      "HTTP/1.1 200 Connection\u{2003}Established\r\n\r\n",
     ] {
       let error = parse_proxy_connect_response(header.as_bytes())
         .expect_err("non-SP CONNECT status-line separator should be rejected");
