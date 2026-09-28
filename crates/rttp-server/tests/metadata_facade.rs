@@ -4214,6 +4214,20 @@ fn request_via_parses_ordered_hops_without_policy() {
   assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
   assert_eq!("upstream", via.members()[1].received_by());
 
+  let boundary = "1.1 [2001:db8::1]:443 (comma, (nested) obs-\u{00e9})";
+  let boundary_request = HttpRequest::parse(
+    format!("GET / HTTP/1.1\r\nHost: example.test\r\nVia: {boundary}\r\n\r\n").as_bytes(),
+  )
+  .expect("boundary Via request should parse");
+  let boundary_via = boundary_request
+    .via()
+    .expect("boundary Via should parse")
+    .expect("boundary Via should be present");
+  assert_eq!(
+    boundary_via,
+    HttpVia::parse(boundary_via.header_value()).unwrap()
+  );
+
   let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");
   assert_eq!(None, absent.via().expect("missing Via"));
@@ -4255,6 +4269,19 @@ fn response_via_helper_validates_replaces_and_preserves_raw_headers() {
   assert_eq!(2, via.len());
   assert_eq!("edge-a", via.members()[0].received_by());
   assert_eq!("upstream", via.members()[1].received_by());
+
+  let boundary = "1.1 [2001:db8::1]:443 (comma, (nested) obs-é)";
+  let boundary_response = HttpResponse::ok("body")
+    .with_via(boundary)
+    .expect("boundary Via should be accepted");
+  let boundary_via: HttpVia = boundary_response
+    .via()
+    .expect("boundary Via should parse")
+    .expect("boundary Via should be present");
+  assert_eq!(
+    boundary_via,
+    HttpVia::parse(boundary_via.header_value()).expect("serialized Via should parse")
+  );
 
   assert!(HttpResponse::ok("body").with_via("1.1").is_err());
   let raw = HttpResponse::ok("body").header("Via", "1.1 hop extra");

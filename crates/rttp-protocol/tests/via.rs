@@ -45,6 +45,42 @@ fn via_parses_protocol_name_version_port_ipv6_and_comments() {
 }
 
 #[test]
+fn via_accepts_received_by_boundaries_and_round_trips_deterministically() {
+  for value in [
+    "1.1 [2001:db8::1]",
+    "1.1 [2001:db8::1]:443",
+    "1.1 proxy.example:8080",
+    "1.1 pseudonym",
+    "1.1 hop (comma, (nested) and obs-\u{00e9})",
+    r#"1.1 hop (escaped \(paren\) and \\ slash)"#,
+  ] {
+    let via = Via::parse(value).expect("valid Via boundary should parse");
+    let serialized = via.header_value();
+    assert_eq!(
+      via,
+      Via::parse(&serialized).expect("serialized Via should parse")
+    );
+  }
+
+  for value in [
+    "1.1 2001:db8::1",
+    "1.1 [2001:db8::1",
+    "1.1 pseudonym:",
+    "1.1 pseudonym:abc",
+    "1.1 hop(comment)",
+    "1.1 hop (unterminated",
+    "1.1 hop (broken\\)",
+    "1.1 hop (bad\u{000b})",
+    "1.1 hop (comment),, 1.1 other",
+  ] {
+    assert!(
+      Via::parse(value).is_err(),
+      "invalid Via should reject {value:?}"
+    );
+  }
+}
+
+#[test]
 fn via_preserves_token_spelling_comment_content_duplicates_and_order() {
   let via = Via::parse("Http/2 Edge.A (TLS terminator), 1.1 edge-a, Http/2 Edge.A")
     .expect("duplicate hops and mixed-case protocol tokens should parse");
