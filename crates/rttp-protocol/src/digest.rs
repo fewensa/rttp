@@ -8,7 +8,7 @@ use base64::Engine;
 const SFV_BASE64: GeneralPurpose = GeneralPurpose::new(
   &base64::alphabet::STANDARD,
   GeneralPurposeConfig::new()
-    .with_decode_allow_trailing_bits(true)
+    .with_decode_allow_trailing_bits(false)
     .with_decode_padding_mode(DecodePaddingMode::Indifferent),
 );
 
@@ -225,6 +225,7 @@ fn parse_byte_sequence(value: &str, position: &mut usize) -> Result<Vec<u8>, Dig
 fn parse_parameters(value: &str, position: &mut usize) -> Result<(), DigestParseError> {
   let bytes = value.as_bytes();
   let mut parameter_count = 0usize;
+  let mut seen_names = Vec::new();
   while bytes.get(*position) == Some(&b';') {
     parameter_count += 1;
     if parameter_count > MAX_DIGEST_ENTRY_PARAMETERS {
@@ -232,7 +233,11 @@ fn parse_parameters(value: &str, position: &mut usize) -> Result<(), DigestParse
     }
     *position += 1;
     skip_sp(bytes, position);
-    parse_key(value, position)?;
+    let name = parse_key(value, position)?;
+    if seen_names.iter().any(|seen| *seen == name) {
+      return Err(DigestParseError::new("duplicate Digest entry parameter"));
+    }
+    seen_names.push(name);
     if bytes.get(*position) == Some(&b'=') {
       *position += 1;
       parse_bare_item(value, position)?;
@@ -401,8 +406,19 @@ mod tests {
       "sha-256=:YWJj:;foo=1.",
       "sha-256=:YWJj:;Foo=bar",
       "sha-256=:YWJj:;\tfoo=bar",
+      "sha-256=:YWJj:;foo=1;foo=2",
     ] {
       assert!(Digest::parse(value).is_err(), "should reject {value:?}");
+    }
+  }
+
+  #[test]
+  fn digest_rejects_non_canonical_base64_trailing_bits() {
+    for value in ["sha-256=:YR==:", "sha-256=:YR:"] {
+      assert!(
+        Digest::parse(value).is_err(),
+        "non-canonical trailing bits must be rejected: {value:?}"
+      );
     }
   }
 
