@@ -1,6 +1,7 @@
 use rttp_protocol::proxy_status::{
   ProxyStatus, ProxyStatusBareItem, ProxyStatusIdentifier, MAX_PROXY_STATUS_MEMBERS,
-  MAX_PROXY_STATUS_PARAMETERS, MAX_PROXY_STATUS_VALUE_BYTES,
+  MAX_PROXY_STATUS_PARAMETERS, MAX_PROXY_STATUS_PARAMETER_VALUE_BYTES,
+  MAX_PROXY_STATUS_VALUE_BYTES,
 };
 
 #[test]
@@ -126,9 +127,93 @@ fn proxy_status_rejects_empty_malformed_inner_list_and_control_bytes() {
 }
 
 #[test]
-fn proxy_status_rejects_duplicate_parameters() {
+fn proxy_status_parses_all_supported_parameter_bare_items() {
+  let status = ProxyStatus::parse(
+    r#"Proxy; flag; disabled=?0; integer=-42; decimal=1.230; date=@1700000000; bytes=:YWJj:; text="hello"; token=value; display=%"hello%20world%21""#,
+  )
+  .expect("all RFC 9209 bare item forms should parse");
+
+  assert_eq!(
+    status.members()[0].parameter("flag").unwrap().value(),
+    &ProxyStatusBareItem::Boolean(true)
+  );
+  assert_eq!(
+    status.members()[0].parameter("disabled").unwrap().value(),
+    &ProxyStatusBareItem::Boolean(false)
+  );
+  assert_eq!(
+    status.members()[0].parameter("integer").unwrap().value(),
+    &ProxyStatusBareItem::Integer(-42)
+  );
+  assert_eq!(
+    status.members()[0].parameter("decimal").unwrap().value(),
+    &ProxyStatusBareItem::Decimal("1.23".to_string())
+  );
+  assert_eq!(
+    status.members()[0].parameter("date").unwrap().value(),
+    &ProxyStatusBareItem::Date(1_700_000_000)
+  );
+  assert_eq!(
+    status.members()[0].parameter("bytes").unwrap().value(),
+    &ProxyStatusBareItem::ByteSequence(b"abc".to_vec())
+  );
+  assert_eq!(
+    status.members()[0].parameter("text").unwrap().value(),
+    &ProxyStatusBareItem::String("hello".to_string())
+  );
+  assert_eq!(
+    status.members()[0].parameter("token").unwrap().value(),
+    &ProxyStatusBareItem::Token("value".to_string())
+  );
+  assert_eq!(
+    status.members()[0].parameter("display").unwrap().value(),
+    &ProxyStatusBareItem::DisplayString("hello world!".to_string())
+  );
+  assert_eq!(
+    status.header_value(),
+    r#"Proxy;flag;disabled=?0;integer=-42;decimal=1.23;date=@1700000000;bytes=:YWJj:;text="hello";token=value;display=%"hello world!""#
+  );
+  assert_eq!(status, ProxyStatus::parse(status.header_value()).unwrap());
+}
+
+#[test]
+fn proxy_status_rejects_duplicate_parameters_and_malformed_bare_items() {
   assert!(ProxyStatus::parse("ExampleCDN; error=timeout; error=reset").is_err());
   assert!(ProxyStatus::parse(r#"SomeCDN; details="a"; details="b""#).is_err());
+
+  for value in [
+    "Proxy; bytes=:not-base64?:",
+    "Proxy; bytes=:YWJj",
+    "Proxy; date=@1.0",
+    "Proxy; date=@",
+    "Proxy; display=%\"bad%gg\"",
+    "Proxy; display=%\"unterminated",
+  ] {
+    assert!(
+      ProxyStatus::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn proxy_status_rejects_combined_member_and_parameter_value_limits() {
+  let fields = (0..MAX_PROXY_STATUS_MEMBERS)
+    .map(|index| format!("Proxy{index}"))
+    .collect::<Vec<_>>();
+  assert_eq!(
+    ProxyStatus::parse_values(fields.iter().map(String::as_str))
+      .unwrap()
+      .len(),
+    MAX_PROXY_STATUS_MEMBERS
+  );
+  let too_many_fields = (0..=MAX_PROXY_STATUS_MEMBERS)
+    .map(|index| format!("Proxy{index}"))
+    .collect::<Vec<_>>();
+  assert!(ProxyStatus::parse_values(too_many_fields.iter().map(String::as_str)).is_err());
+
+  let oversized = "a".repeat(MAX_PROXY_STATUS_PARAMETER_VALUE_BYTES + 1);
+  assert!(ProxyStatus::parse(format!("Proxy; value=\"{oversized}\"")).is_err());
 }
 
 #[test]
