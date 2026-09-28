@@ -81,6 +81,28 @@ mod tests {
     )
     .is_err());
   }
+
+  #[test]
+  fn enforces_aggregate_limit_across_repeated_fields() {
+    let exact = vec!["x".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2); 2];
+    assert!(CacheControl::parse_values(exact.iter().map(String::as_str)).is_ok());
+
+    let over = [
+      "x".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2),
+      "x".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2 + 1),
+    ];
+    assert!(CacheControl::parse_values(over.iter().map(String::as_str)).is_err());
+  }
+
+  #[test]
+  fn preserves_duplicate_directives_and_canonical_round_trip() {
+    let parsed = CacheControl::parse("  no-cache, no-cache=\"a,b\"  ")
+      .expect("duplicate directives should parse");
+    assert_eq!(parsed.directives()[0].name(), "no-cache");
+    assert_eq!(parsed.directives()[1].value(), Some("a,b"));
+    assert_eq!(parsed.header_value(), "no-cache, no-cache=\"a,b\"");
+    assert_eq!(CacheControl::parse(parsed.header_value()).unwrap(), parsed);
+  }
 }
 
 use std::error::Error;
@@ -134,10 +156,19 @@ impl CacheControl {
     I: IntoIterator<Item = &'a str>,
   {
     let mut directives = Vec::new();
+    let mut aggregate_len = 0usize;
     for value in values {
       if value.len() > MAX_CACHE_CONTROL_VALUE_BYTES {
         return Err(CacheControlParseError::new(
           "Cache-Control header value is too large",
+        ));
+      }
+      aggregate_len = aggregate_len
+        .checked_add(value.len())
+        .ok_or_else(|| CacheControlParseError::new("Cache-Control aggregate value is too large"))?;
+      if aggregate_len > MAX_CACHE_CONTROL_VALUE_BYTES {
+        return Err(CacheControlParseError::new(
+          "Cache-Control aggregate value is too large",
         ));
       }
       if value.bytes().any(is_invalid_control_byte) {

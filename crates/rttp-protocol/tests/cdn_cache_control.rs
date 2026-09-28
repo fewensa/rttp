@@ -60,3 +60,23 @@ fn enforces_cdn_cache_control_bounds() {
   )
   .is_err());
 }
+
+#[test]
+fn enforces_aggregate_limit_across_repeated_cdn_fields() {
+  let fields = [
+    "x".repeat(MAX_CDN_CACHE_CONTROL_VALUE_BYTES / 2),
+    "x".repeat(MAX_CDN_CACHE_CONTROL_VALUE_BYTES / 2 + 1),
+  ];
+  assert!(CdnCacheControl::parse_values(fields.iter().map(String::as_str)).is_err());
+}
+
+#[test]
+fn round_trips_canonical_cdn_cache_control() {
+  let parsed =
+    CdnCacheControl::parse("no-cache, no-cache=\"a,b\"").expect("CDN-Cache-Control should parse");
+  assert_eq!(parsed.header_value(), "no-cache, no-cache=\"a,b\"");
+  assert_eq!(
+    CdnCacheControl::parse(parsed.header_value()).expect("canonical value should parse"),
+    parsed
+  );
+}
