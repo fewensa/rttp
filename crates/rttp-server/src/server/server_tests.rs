@@ -1458,7 +1458,8 @@ fn request_cache_control_rejects_oversized_values_without_panicking() {
 
 #[test]
 fn request_cache_control_rejects_directive_counts_across_header_fields() {
-  let directive_field = std::iter::repeat_n("extension", MAX_CACHE_CONTROL_DIRECTIVES)
+  let directive_field = (0..MAX_CACHE_CONTROL_DIRECTIVES)
+    .map(|index| format!("extension{index}"))
     .collect::<Vec<_>>()
     .join(", ");
   let request = Request {
@@ -1479,7 +1480,7 @@ fn request_cache_control_rejects_directive_counts_across_header_fields() {
     .cache_control()
     .expect_err("too many Cache-Control directives should be rejected");
 
-  assert_eq!("duplicate Cache-Control directive", error.to_string());
+  assert_eq!("too many Cache-Control directives", error.to_string());
 }
 
 #[test]

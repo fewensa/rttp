@@ -54,12 +54,13 @@ fn enforces_cdn_cache_control_bounds() {
     "x".repeat(MAX_CDN_CACHE_CONTROL_DIRECTIVE_VALUE_BYTES + 1)
   ))
   .is_err());
-  assert!(CdnCacheControl::parse(
-    std::iter::repeat_n("x", MAX_CDN_CACHE_CONTROL_DIRECTIVES + 1)
-      .collect::<Vec<_>>()
-      .join(","),
-  )
-  .is_err());
+  let too_many_directives = (0..=MAX_CDN_CACHE_CONTROL_DIRECTIVES)
+    .map(|index| format!("x{index}"))
+    .collect::<Vec<_>>()
+    .join(",");
+  let error = CdnCacheControl::parse(too_many_directives)
+    .expect_err("too many unique CDN-Cache-Control directives should be rejected");
+  assert_eq!("too many CDN-Cache-Control directives", error.to_string());
 }
 
 #[test]
