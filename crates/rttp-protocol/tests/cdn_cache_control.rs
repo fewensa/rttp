@@ -30,10 +30,6 @@ fn rejects_malformed_or_empty_cdn_cache_control_values() {
   for value in [
     "",
     "max-age=",
-    "max-age =60",
-    "max-age= 60",
-    "max-age = 60",
-    "custom= \"quoted\"",
     "max-age=not a token",
     "custom=\"unterminated",
     "max-age=60\r\nno-store",
@@ -46,6 +42,11 @@ fn rejects_malformed_or_empty_cdn_cache_control_values() {
 }
 
 #[test]
+fn rejects_case_insensitive_duplicate_directives() {
+  assert!(CdnCacheControl::parse_values(["Max-Age=60", "max-age=120"]).is_err());
+}
+
+#[test]
 fn enforces_cdn_cache_control_bounds() {
   assert!(CdnCacheControl::parse("x".repeat(MAX_CDN_CACHE_CONTROL_VALUE_BYTES + 1)).is_err());
   assert!(CdnCacheControl::parse(format!(
@@ -53,12 +54,13 @@ fn enforces_cdn_cache_control_bounds() {
     "x".repeat(MAX_CDN_CACHE_CONTROL_DIRECTIVE_VALUE_BYTES + 1)
   ))
   .is_err());
-  assert!(CdnCacheControl::parse(
-    std::iter::repeat_n("x", MAX_CDN_CACHE_CONTROL_DIRECTIVES + 1)
-      .collect::<Vec<_>>()
-      .join(","),
-  )
-  .is_err());
+  let too_many_directives = (0..=MAX_CDN_CACHE_CONTROL_DIRECTIVES)
+    .map(|index| format!("x{index}"))
+    .collect::<Vec<_>>()
+    .join(",");
+  let error = CdnCacheControl::parse(too_many_directives)
+    .expect_err("too many unique CDN-Cache-Control directives should be rejected");
+  assert_eq!("too many CDN-Cache-Control directives", error.to_string());
 }
 
 #[test]
@@ -72,9 +74,9 @@ fn enforces_aggregate_limit_across_repeated_cdn_fields() {
 
 #[test]
 fn round_trips_canonical_cdn_cache_control() {
-  let parsed =
-    CdnCacheControl::parse("no-cache, no-cache=\"a,b\"").expect("CDN-Cache-Control should parse");
-  assert_eq!(parsed.header_value(), "no-cache, no-cache=\"a,b\"");
+  let parsed = CdnCacheControl::parse("max-age \t= \t60, cdn-example=\"a, b\"")
+    .expect("CDN-Cache-Control should parse");
+  assert_eq!(parsed.header_value(), "max-age=60, cdn-example=\"a, b\"");
   assert_eq!(
     CdnCacheControl::parse(parsed.header_value()).expect("canonical value should parse"),
     parsed

@@ -3331,6 +3331,27 @@ fn parses_response_cache_control_from_raw_values() {
 }
 
 #[test]
+fn cache_control_rejects_case_insensitive_duplicates_without_hiding_raw_headers() {
+  let request = parse_request(concat!(
+    "GET /cached HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Cache-Control: max-age=60\r\n",
+    "cache-control: MAX-AGE=120\r\n",
+    "\r\n"
+  ));
+  assert!(request.cache_control().is_err());
+  assert_eq!(Some("max-age=60"), request.header("Cache-Control"));
+
+  let response = HttpResponse::ok("body")
+    .header("Cache-Control", "community=one")
+    .header("cache-control", "COMMUNITY=two");
+  assert!(response.cache_control().is_err());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(serialized.contains("\r\nCache-Control: community=one\r\n"));
+  assert!(serialized.contains("\r\ncache-control: COMMUNITY=two\r\n"));
+}
+
+#[test]
 fn parses_vary_field_names_and_normalizes_case() {
   let vary = HttpVary::parse("Accept-Encoding, accept-language, X-User")
     .expect("valid Vary field list should parse");

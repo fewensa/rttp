@@ -51,7 +51,7 @@ fn cache_control_accepts_sp_htab_ows_around_directives_names_equals_and_values()
 }
 
 #[test]
-fn cache_control_preserves_quoted_strings_duplicates_bounds_and_accessors() {
+fn cache_control_preserves_quoted_strings_bounds_and_accessors() {
   let response = response_with_cache_control_fields(&[
     "no-cache=\"Set-Cookie, Authorization\", max-age=60",
     "private=\"X-User\", community=\"u=1, tier=gold\"",
@@ -102,6 +102,22 @@ fn cache_control_preserves_quoted_strings_duplicates_bounds_and_accessors() {
     CacheControl::parse(&oversized).is_err(),
     "values over 64KiB should be rejected"
   );
+}
+
+#[test]
+fn cache_control_rejects_case_insensitive_duplicates_without_dropping_headers() {
+  for values in [
+    &["max-age=60", "MAX-AGE=120"] as &[&str],
+    &["community=one", "COMMUNITY=two"],
+  ] {
+    let response = response_with_cache_control_fields(values);
+    assert!(response.cache_control().is_err());
+    assert_eq!(
+      Some(&values[0].to_string()),
+      response.header_value("Cache-Control")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
 }
 
 #[test]

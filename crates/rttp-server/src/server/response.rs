@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::*;
 use rttp_protocol::is_sensitive_debug_header;
 
@@ -5148,6 +5150,7 @@ impl HttpRequestCacheControl {
     I: IntoIterator<Item = &'a str>,
   {
     let mut cache_control = Self::default();
+    let mut names = HashSet::new();
     let mut directive_count = 0usize;
     for value in values {
       for directive in split_cache_control_directives(value)? {
@@ -5155,6 +5158,12 @@ impl HttpRequestCacheControl {
         if directive_count > MAX_CACHE_CONTROL_DIRECTIVES {
           return Err(HttpCacheControlParseError::new(
             "too many Cache-Control directives",
+          ));
+        }
+        let name = cache_control_directive_name(&directive)?;
+        if !names.insert(name.to_ascii_lowercase()) {
+          return Err(HttpCacheControlParseError::new(
+            "duplicate Cache-Control directive",
           ));
         }
         cache_control.apply_directive(&directive)?;
@@ -5268,6 +5277,7 @@ impl HttpResponseCacheControl {
     I: IntoIterator<Item = &'a str>,
   {
     let mut cache_control = Self::default();
+    let mut names = HashSet::new();
     let mut directive_count = 0usize;
     for value in values {
       for directive in split_cache_control_directives(value)? {
@@ -5275,6 +5285,12 @@ impl HttpResponseCacheControl {
         if directive_count > MAX_CACHE_CONTROL_DIRECTIVES {
           return Err(HttpCacheControlParseError::new(
             "too many Cache-Control directives",
+          ));
+        }
+        let name = cache_control_directive_name(&directive)?;
+        if !names.insert(name.to_ascii_lowercase()) {
+          return Err(HttpCacheControlParseError::new(
+            "duplicate Cache-Control directive",
           ));
         }
         cache_control.apply_directive(&directive)?;
@@ -5542,6 +5558,19 @@ pub(crate) fn parse_cache_control_directive(
     value,
     value_was_quoted,
   })
+}
+
+fn cache_control_directive_name(directive: &str) -> Result<&str, HttpCacheControlParseError> {
+  let name = directive
+    .split_once('=')
+    .map_or(directive, |(name, _)| name)
+    .trim_matches([' ', '\t']);
+  if !is_http_token(name) {
+    return Err(HttpCacheControlParseError::new(
+      "invalid Cache-Control directive",
+    ));
+  }
+  Ok(name)
 }
 
 pub(crate) fn parse_cache_control_directive_value(

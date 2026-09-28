@@ -635,18 +635,6 @@ pub mod cache_control {
         ],
       },
       RequestCase {
-        name: "request duplicate directives keep helper parity",
-        values: &["max-age=10, max-age=20, no-cache, no-cache"],
-        no_cache: true,
-        no_store: false,
-        max_age: Some(20),
-        max_stale: None,
-        min_fresh: None,
-        no_transform: false,
-        only_if_cached: false,
-        extensions: &[],
-      },
-      RequestCase {
         name: "request max-stale without value remains a bounded helper",
         values: &["max-stale"],
         no_cache: false,
@@ -710,24 +698,6 @@ pub mod cache_control {
           ("escaped", Some("quoted\\value")),
         ],
       },
-      ResponseCase {
-        name: "response duplicate directives keep helper parity",
-        values: &["max-age=10, max-age=20, private=\"A\", private=\"B\""],
-        no_cache: false,
-        no_cache_fields: &[],
-        no_store: false,
-        max_age: Some(20),
-        s_maxage: None,
-        private: true,
-        private_fields: &["B"],
-        public: false,
-        must_revalidate: false,
-        proxy_revalidate: false,
-        immutable: false,
-        stale_while_revalidate: None,
-        stale_if_error: None,
-        extensions: &[],
-      },
     ]
   }
 
@@ -749,6 +719,10 @@ pub mod cache_control {
         name: "request malformed quoted-string",
         value: "extension=\"unterminated",
       },
+      InvalidCase {
+        name: "request case-insensitive duplicate directives",
+        value: "max-age=10, MAX-AGE=20",
+      },
     ]
   }
 
@@ -769,6 +743,10 @@ pub mod cache_control {
       InvalidCase {
         name: "response malformed quoted-string",
         value: "private=\"unterminated",
+      },
+      InvalidCase {
+        name: "response case-insensitive duplicate directives",
+        value: "max-age=10, MAX-AGE=20",
       },
     ]
   }
