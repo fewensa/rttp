@@ -13,8 +13,10 @@
 //! [`MAX_LINK_PARAMETER_VALUE_BYTES`]. Parameter names are matched
 //! case-insensitively, stored lowercase, and must be unique within a value.
 //! Quoted parameter values are unescaped; valueless parameters are preserved
-//! with an empty value. A present field set that yields no value still fails
-//! as invalid.
+//! with an empty value. `header_value()` emits canonical list syntax with
+//! quoted-string escaping, preserved target spelling, lowercase parameter
+//! names, and original parameter order. A present field set that yields no
+//! value still fails as invalid.
 //!
 //! Parsing is syntax validation only: this module does not implement preload,
 //! fetch scheduling, redirects, cache policy, or route generation.
@@ -68,6 +70,7 @@ pub struct LinkValue {
 pub struct LinkParameter {
   name: String,
   value: String,
+  assigned: bool,
 }
 
 /// An error returned when `Link` metadata is malformed or exceeds bounds.
@@ -117,6 +120,15 @@ impl LinkValues {
   pub fn is_empty(&self) -> bool {
     self.values.is_empty()
   }
+
+  pub fn header_value(&self) -> String {
+    self
+      .values
+      .iter()
+      .map(LinkValue::header_value)
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
 }
 
 impl LinkValue {
@@ -135,6 +147,17 @@ impl LinkValue {
       .find(|parameter| parameter.name.eq_ignore_ascii_case(name.as_ref()))
       .map(LinkParameter::value)
   }
+
+  fn header_value(&self) -> String {
+    let mut value = String::from("<");
+    value.push_str(&self.target);
+    value.push('>');
+    for parameter in &self.parameters {
+      value.push_str("; ");
+      value.push_str(&parameter.header_value());
+    }
+    value
+  }
 }
 
 impl LinkParameter {
@@ -144,6 +167,22 @@ impl LinkParameter {
 
   pub fn value(&self) -> &str {
     &self.value
+  }
+
+  fn header_value(&self) -> String {
+    if !self.assigned {
+      return self.name.clone();
+    }
+    let mut serialized = self.name.clone();
+    serialized.push('=');
+    if is_token(&self.value) {
+      serialized.push_str(&self.value);
+    } else {
+      serialized.push('"');
+      serialized.push_str(&escape_quoted(&self.value));
+      serialized.push('"');
+    }
+    serialized
   }
 }
 
@@ -209,7 +248,7 @@ fn parse_parameter(value: &str) -> Result<LinkParameter, LinkParseError> {
   if !is_token(name) {
     return Err(LinkParseError::new("invalid Link parameter name"));
   }
-  let value = match value {
+  let (value, assigned) = match value {
     Some("") => {
       return Err(LinkParseError::new("invalid Link parameter value"));
     }
@@ -217,13 +256,14 @@ fn parse_parameter(value: &str) -> Result<LinkParameter, LinkParseError> {
       if value.len() > MAX_LINK_PARAMETER_VALUE_BYTES {
         return Err(LinkParseError::new("Link parameter value is too large"));
       }
-      parse_parameter_value(value)?
+      (parse_parameter_value(value)?, true)
     }
-    None => String::new(),
+    None => (String::new(), false),
   };
   Ok(LinkParameter {
     name: name.to_ascii_lowercase(),
     value,
+    assigned,
   })
 }
 
@@ -422,4 +462,8 @@ fn is_qdtext(ch: char) -> bool {
 
 fn is_quoted_pair_char(ch: char) -> bool {
   matches!(ch, '\t' | ' '..='~') || ('\u{80}'..='\u{ff}').contains(&ch)
+}
+
+fn escape_quoted(value: &str) -> String {
+  value.replace('\\', "\\\\").replace('"', "\\\"")
 }
