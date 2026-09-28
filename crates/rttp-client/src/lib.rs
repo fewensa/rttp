@@ -3,7 +3,7 @@
 //!
 //! | name | comment |
 //! |------|---------|
-//! | async | Async request APIs, including buffered h2c helpers when combined with `http2` |
+//! | async | Async request APIs |
 //! | http2 | Bounded prior-knowledge h2c over direct `socket2` TCP connections |
 //! | tls-native | HTTPS with `native-tls` |
 //! | tls-rustls | HTTPS with `rustls` |
@@ -12,12 +12,10 @@
 //! to the `socks` crate.
 //! With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a
 //! bounded prior-knowledge h2c request over a direct socket2 TCP connection.
-//! With `async` and `http2` enabled, `rasync_http2_prior_knowledge` and
-//! `rasync_http2_upgrade` expose the same buffered response behavior to async
-//! callers. Buffered h2c responses apply bounded gzip and zlib/raw deflate
-//! decoding in reverse Content-Encoding order, preserve the original binary
-//! capture, and remove stale Content-Encoding and Content-Length headers only
-//! after successful decoding. Streaming and unsupported content codings remain
+//! Buffered h2c responses apply bounded gzip and zlib/raw deflate decoding in
+//! reverse Content-Encoding order, preserve the original binary capture, and
+//! remove stale Content-Encoding and Content-Length headers only after
+//! successful decoding. Streaming and unsupported content codings remain
 //! outside this decoding path.
 //! It opens at most one stream and validates `SETTINGS_MAX_FRAME_SIZE` on both
 //! sides of the handshake. A configured local `H2cClientPolicy::max_frame_size`
