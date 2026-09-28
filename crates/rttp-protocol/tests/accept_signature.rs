@@ -48,11 +48,42 @@ fn combines_repeated_fields_in_wire_order() {
 }
 
 #[test]
+fn preserves_component_and_parameter_order() {
+  let parsed =
+    AcceptSignature::parse(r#"sig1=("x";b=2;a=1 "x";a=1;b=3 "x";a=1;b=4);z="last";a="first""#)
+      .expect("distinct parameterized components should parse");
+  let entry = parsed.entry("sig1").unwrap();
+
+  assert_eq!(
+    entry
+      .components()
+      .iter()
+      .map(|component| component.identifier())
+      .collect::<Vec<_>>(),
+    ["x", "x", "x"]
+  );
+  assert_eq!(
+    entry.components()[0]
+      .parameters()
+      .iter()
+      .map(|parameter| parameter.name())
+      .collect::<Vec<_>>(),
+    ["b", "a"]
+  );
+  assert_eq!(
+    parsed.header_value(),
+    r#"sig1=("x";b=2;a=1 "x";a=1;b=3 "x";a=1;b=4);z="last";a="first""#
+  );
+}
+
+#[test]
 fn rejects_duplicate_labels_and_parameters() {
   for value in [
     r#"sig1=("@method"), sig1=("@path")"#,
     r#"sig1=("@method";sf;sf)"#,
     r#"sig1=("@method");created;created"#,
+    r#"sig1=("@method" "@method")"#,
+    r#"sig1=("x";a=1;b=2 "x";b=2;a=1)"#,
   ] {
     assert!(
       AcceptSignature::parse(value).is_err(),
@@ -91,6 +122,41 @@ fn validates_registered_parameter_forms() {
 }
 
 #[test]
+fn accepts_wildcard_keys_tokens_and_byte_sequences() {
+  let parsed =
+    AcceptSignature::parse(r#"*=("*";mode=token);quoted="value";token=abc;bytes=:AQI=:"#)
+      .expect("valid structured-field wildcard and bare-item forms should parse");
+  let entry = parsed
+    .entry("*")
+    .expect("wildcard label should be retained");
+
+  assert_eq!(entry.components()[0].identifier(), "*");
+  assert_eq!(
+    entry.components()[0].parameter("mode").unwrap().value(),
+    &AcceptSignatureBareItem::Token("token".to_string())
+  );
+  assert_eq!(
+    parsed.header_value(),
+    r#"*=("*";mode=token);quoted="value";token=abc;bytes=:AQI=:"#,
+  );
+}
+
+#[test]
+fn rejects_malformed_byte_sequences_and_controls() {
+  for value in [
+    r#"sig1=("@method");bytes=:not-base64:"#,
+    r#"sig1=("@method");bytes=:AQI"#,
+    "sig1=(\"@method\");bytes=:AQI:\u{000b}",
+    "sig1=(\"@method\");bytes=:AQI:\u{0080}",
+  ] {
+    assert!(
+      AcceptSignature::parse(value).is_err(),
+      "{value:?} should fail"
+    );
+  }
+}
+
+#[test]
 fn accepts_empty_component_lists() {
   let parsed = AcceptSignature::parse("sig1=();created")
     .expect("empty Accept-Signature component lists should parse");
@@ -124,6 +190,15 @@ fn rejects_empty_non_ascii_control_and_non_inner_list_members() {
 
 #[test]
 fn enforces_field_total_and_count_bounds() {
+  let prefix = "sig1=(\"";
+  let suffix = "\")";
+  let exact = format!(
+    "{prefix}{}{suffix}",
+    "a".repeat(MAX_ACCEPT_SIGNATURE_VALUE_BYTES - prefix.len() - suffix.len())
+  );
+  assert_eq!(exact.len(), MAX_ACCEPT_SIGNATURE_VALUE_BYTES);
+  assert!(AcceptSignature::parse(exact).is_ok());
+
   assert!(AcceptSignature::parse("x".repeat(MAX_ACCEPT_SIGNATURE_VALUE_BYTES + 1)).is_err());
   let large_component = "a".repeat(MAX_ACCEPT_SIGNATURE_TOTAL_BYTES / 2);
   let total_values = [
