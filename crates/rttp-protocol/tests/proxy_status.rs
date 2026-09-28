@@ -212,8 +212,42 @@ fn proxy_status_rejects_combined_member_and_parameter_value_limits() {
     .collect::<Vec<_>>();
   assert!(ProxyStatus::parse_values(too_many_fields.iter().map(String::as_str)).is_err());
 
-  let oversized = "a".repeat(MAX_PROXY_STATUS_PARAMETER_VALUE_BYTES + 1);
-  assert!(ProxyStatus::parse(format!("Proxy; value=\"{oversized}\"")).is_err());
+  // Equal constants mean any single-field payload with a parameter value above the
+  // parameter bound also exceeds the field bound, so public parse rejects at the
+  // field-size check. Direct MAX_PROXY_STATUS_PARAMETER_VALUE_BYTES coverage lives
+  // in the crate unit tests that call parse_field below that gate.
+  assert_eq!(
+    MAX_PROXY_STATUS_PARAMETER_VALUE_BYTES, MAX_PROXY_STATUS_VALUE_BYTES,
+    "parameter-value bound equals field bound; field size is the effective public limit"
+  );
+  let oversized_parameter = format!(
+    "Proxy;value={}",
+    "a".repeat(MAX_PROXY_STATUS_PARAMETER_VALUE_BYTES + 1)
+  );
+  assert!(
+    oversized_parameter.len() > MAX_PROXY_STATUS_VALUE_BYTES,
+    "token parameter payloads above the equal bound exceed the field size first"
+  );
+  assert_eq!(
+    ProxyStatus::parse(&oversized_parameter)
+      .expect_err("field-oversized token parameter payloads must be rejected")
+      .to_string(),
+    "Proxy-Status header value is too large"
+  );
+  let oversized_quoted_parameter = format!(
+    "Proxy;value=\"{}\"",
+    "a".repeat(MAX_PROXY_STATUS_PARAMETER_VALUE_BYTES + 1)
+  );
+  assert!(
+    oversized_quoted_parameter.len() > MAX_PROXY_STATUS_VALUE_BYTES,
+    "quoted parameter payloads above the equal bound exceed the field size first"
+  );
+  assert_eq!(
+    ProxyStatus::parse(&oversized_quoted_parameter)
+      .expect_err("field-oversized quoted parameter payloads must be rejected")
+      .to_string(),
+    "Proxy-Status header value is too large"
+  );
 }
 
 #[test]

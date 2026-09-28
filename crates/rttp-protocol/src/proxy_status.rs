@@ -619,3 +619,38 @@ fn is_invalid_control_byte(byte: u8) -> bool {
 fn invalid_list() -> ProxyStatusParseError {
   ProxyStatusParseError::new("invalid Proxy-Status list")
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn parse_field_rejects_oversized_parameter_values_before_field_bound() {
+    // Bypass parse_values' field-size gate so the parameter-value check is reachable
+    // even while MAX_PROXY_STATUS_PARAMETER_VALUE_BYTES equals the field limit.
+    let mut members = Vec::new();
+    let oversized_parameter = format!(
+      "Proxy;value={}",
+      "a".repeat(MAX_PROXY_STATUS_PARAMETER_VALUE_BYTES + 1)
+    );
+    assert_eq!(
+      parse_field(&oversized_parameter, &mut members)
+        .expect_err("token parameter values larger than 64 KiB must be rejected")
+        .to_string(),
+      "Proxy-Status parameter value is too large"
+    );
+    assert!(members.is_empty());
+
+    let oversized_quoted_parameter = format!(
+      "Proxy;value=\"{}\"",
+      "a".repeat(MAX_PROXY_STATUS_PARAMETER_VALUE_BYTES + 1)
+    );
+    assert_eq!(
+      parse_field(&oversized_quoted_parameter, &mut members)
+        .expect_err("quoted parameter values larger than 64 KiB must be rejected")
+        .to_string(),
+      "Proxy-Status parameter value is too large"
+    );
+    assert!(members.is_empty());
+  }
+}
