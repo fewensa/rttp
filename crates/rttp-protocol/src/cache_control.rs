@@ -351,12 +351,10 @@ fn parse_directive(
     skip_ows(value.as_bytes(), position);
     let quoted = value.as_bytes().get(*position) == Some(&b'\"');
     let parsed = parse_directive_value(value, position)?;
-    if is_delta_seconds_directive(&name) {
-      if quoted || parsed.parse::<u64>().is_err() {
-        return Err(CacheControlParseError::new(
-          "invalid Cache-Control delta-seconds",
-        ));
-      }
+    if is_delta_seconds_directive(&name) && (quoted || parsed.parse::<u64>().is_err()) {
+      return Err(CacheControlParseError::new(
+        "invalid Cache-Control delta-seconds",
+      ));
     }
     Some(parsed)
   } else {
