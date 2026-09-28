@@ -4,7 +4,7 @@
 //! exposes the policy members `report_to`, `max_age`, `include_subdomains`,
 //! `success_fraction`, and `failure_fraction` with checked types. Malformed
 //! JSON, invalid member types, non-finite or out-of-range fractions, duplicate
-//! singleton members, oversized input, and duplicate header fields are errors.
+//! member names, oversized input, and duplicate header fields are errors.
 //! Unknown JSON members are preserved verbatim as raw metadata without
 //! assigning them policy semantics.
 //!
@@ -17,7 +17,8 @@
 //! `max_age` is required and must be a non-negative JSON integer literal that
 //! fits in `u64`; fraction and exponent forms such as `1.0` or `1e3` are
 //! rejected for this member. Fractions must parse as finite `f64` values in
-//! the inclusive range `[0.0, 1.0]`.
+//! the inclusive range `[0.0, 1.0]`; signed negatives including `-0` and
+//! `-0.0` are rejected.
 //!
 //! Parsing is policy-free: no reports are sent, no policy is persisted, and no
 //! Reporting endpoint group is configured. Callers own report delivery,
@@ -241,7 +242,7 @@ fn parse_members(
   bytes: &[u8],
   position: &mut usize,
   nel: &mut Nel,
-  seen: &mut HashSet<&'static str>,
+  seen: &mut HashSet<String>,
 ) -> Result<(), NelParseError> {
   skip_ws(bytes, position);
   if bytes.get(*position) == Some(&b'}') {
@@ -262,20 +263,17 @@ fn parse_members(
     }
     *position += 1;
     skip_ws(bytes, position);
+    if !seen.insert(name.clone()) {
+      return Err(NelParseError::new(format!("duplicate NEL member {name}")));
+    }
     match name.as_str() {
       "report_to" => {
-        if !seen.insert("report_to") {
-          return Err(NelParseError::new("duplicate NEL member report_to"));
-        }
         if bytes.get(*position) != Some(&b'"') {
           return Err(NelParseError::new("NEL member report_to must be a string"));
         }
         nel.report_to = Some(parse_string(bytes, position)?);
       }
       "max_age" => {
-        if !seen.insert("max_age") {
-          return Err(NelParseError::new("duplicate NEL member max_age"));
-        }
         let raw = parse_number(value, bytes, position)?;
         if !raw.bytes().all(|byte| byte.is_ascii_digit()) {
           return Err(NelParseError::new(
@@ -287,24 +285,13 @@ fn parse_members(
           .map_err(|_| NelParseError::new("NEL member max_age is out of range"))?;
       }
       "include_subdomains" => {
-        if !seen.insert("include_subdomains") {
-          return Err(NelParseError::new(
-            "duplicate NEL member include_subdomains",
-          ));
-        }
         nel.include_subdomains = Some(parse_bool(bytes, position)?);
       }
       "success_fraction" => {
-        if !seen.insert("success_fraction") {
-          return Err(NelParseError::new("duplicate NEL member success_fraction"));
-        }
         let raw = parse_number(value, bytes, position)?;
         nel.success_fraction = Some(parse_fraction(raw, "success_fraction")?);
       }
       "failure_fraction" => {
-        if !seen.insert("failure_fraction") {
-          return Err(NelParseError::new("duplicate NEL member failure_fraction"));
-        }
         let raw = parse_number(value, bytes, position)?;
         nel.failure_fraction = Some(parse_fraction(raw, "failure_fraction")?);
       }
@@ -346,6 +333,11 @@ fn parse_bool(bytes: &[u8], position: &mut usize) -> Result<bool, NelParseError>
 }
 
 fn parse_fraction(raw: &str, member: &str) -> Result<f64, NelParseError> {
+  if raw.starts_with('-') {
+    return Err(NelParseError::new(format!(
+      "NEL member {member} must be in the inclusive range 0.0 to 1.0"
+    )));
+  }
   let fraction = raw
     .parse::<f64>()
     .map_err(|_| NelParseError::new(format!("NEL member {member} must be a number")))?;
@@ -680,6 +672,15 @@ mod tests {
     let oversized = format!("\"{}\"", "x".repeat(MAX_NEL_STRING_BYTES + 1));
     let result: Result<String, NelParseError> = parse_string(oversized.as_bytes(), &mut position);
     assert!(result.is_err(), "oversized string must be rejected");
+  }
+
+  #[test]
+  fn string_bound_accepts_exact_limit() {
+    let mut position = 0;
+    let exact = format!("\"{}\"", "x".repeat(MAX_NEL_STRING_BYTES));
+    let parsed =
+      parse_string(exact.as_bytes(), &mut position).expect("exact string limit should parse");
+    assert_eq!(parsed.len(), MAX_NEL_STRING_BYTES);
   }
 
   #[test]

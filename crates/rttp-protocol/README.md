@@ -1798,7 +1798,8 @@ to 64 KiB. A second field is rejected after every supplied field is
 bound-checked. `max_age` is required and must be a non-negative JSON integer
 literal that fits in `u64`; fraction and exponent forms are rejected for this
 member. Fractions must parse as finite doubles in the inclusive range `0.0` to
-`1.0`. Malformed JSON, invalid member types, duplicate singleton members,
+`1.0`; signed negatives including `-0` and `-0.0` are rejected. Malformed JSON,
+invalid member types, duplicate member names (including unknown keys),
 non-finite or out-of-range fractions, missing `max_age`, and bound violations
 are errors. Unknown JSON members are preserved verbatim as raw metadata
 without policy semantics. Absent optional members keep their W3C defaults

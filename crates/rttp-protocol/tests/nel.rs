@@ -246,6 +246,8 @@ fn nel_rejects_duplicate_singleton_members() {
     r#"{"include_subdomains":true,"include_subdomains":false,"max_age":1}"#,
     r#"{"success_fraction":0.1,"success_fraction":0.2,"max_age":1}"#,
     r#"{"failure_fraction":1.0,"failure_fraction":0.5,"max_age":1}"#,
+    r#"{"max_age":1,"x":1,"x":2}"#,
+    r#"{"max_age":1,"ext":true,"ext":false}"#,
   ] {
     assert!(Nel::parse(value).is_err(), "{value:?} must be rejected");
   }
@@ -279,11 +281,15 @@ fn nel_rejects_non_finite_and_out_of_range_fractions() {
   for value in [
     r#"{"success_fraction":1.5,"max_age":1}"#,
     r#"{"success_fraction":-0.1,"max_age":1}"#,
+    r#"{"success_fraction":-0,"max_age":1}"#,
+    r#"{"success_fraction":-0.0,"max_age":1}"#,
     r#"{"success_fraction":1e999,"max_age":1}"#,
     r#"{"success_fraction":-1e999,"max_age":1}"#,
     r#"{"success_fraction":2,"max_age":1}"#,
     r#"{"failure_fraction":1.5,"max_age":1}"#,
     r#"{"failure_fraction":-0.01,"max_age":1}"#,
+    r#"{"failure_fraction":-0,"max_age":1}"#,
+    r#"{"failure_fraction":-0.0,"max_age":1}"#,
     r#"{"failure_fraction":1e999,"max_age":1}"#,
   ] {
     assert!(Nel::parse(value).is_err(), "{value:?} must be rejected");
@@ -296,11 +302,36 @@ fn nel_rejects_non_finite_and_out_of_range_fractions() {
 }
 
 #[test]
+fn nel_accepts_false_include_subdomains_and_canonical_header_value() {
+  let nel = Nel::parse(r#"{"max_age":60,"include_subdomains":false,"success_fraction":0.0}"#)
+    .expect("false include_subdomains should parse");
+  assert_eq!(nel.include_subdomains(), Some(false));
+  assert_eq!(nel.success_fraction(), Some(0.0));
+  assert_eq!(
+    nel.header_value(),
+    r#"{"max_age":60,"include_subdomains":false,"success_fraction":0}"#
+  );
+  let reparsed = Nel::parse(nel.header_value()).expect("canonical header_value should reparse");
+  assert_eq!(nel, reparsed);
+}
+
+#[test]
 fn nel_enforces_value_member_count_and_depth_bounds() {
   let oversized = format!("{{\"max_age\":1{}}}", " ".repeat(MAX_NEL_VALUE_BYTES));
   assert!(
     Nel::parse(oversized).is_err(),
     "an oversized NEL field value must be rejected"
+  );
+
+  let exact_prefix = "{\"max_age\":1";
+  let exact_value = format!(
+    "{exact_prefix}{}}}",
+    " ".repeat(MAX_NEL_VALUE_BYTES - exact_prefix.len() - 1)
+  );
+  assert_eq!(exact_value.len(), MAX_NEL_VALUE_BYTES);
+  assert!(
+    Nel::parse(&exact_value).is_ok(),
+    "exact value byte limit should parse"
   );
 
   let too_many = format!(
@@ -312,6 +343,18 @@ fn nel_enforces_value_member_count_and_depth_bounds() {
   );
   assert!(Nel::parse(too_many).is_err());
 
+  let exact_members = format!(
+    "{{\"max_age\":1,{}}}",
+    (0..MAX_NEL_MEMBERS - 1)
+      .map(|index| format!("\"k{index}\":0"))
+      .collect::<Vec<_>>()
+      .join(",")
+  );
+  assert!(
+    Nel::parse(&exact_members).is_ok(),
+    "exact member count limit should parse"
+  );
+
   let nested = format!(
     "{{\"max_age\":1,\"a\":{}0{}}}",
     "[".repeat(MAX_NEL_DEPTH + 8),
@@ -322,13 +365,23 @@ fn nel_enforces_value_member_count_and_depth_bounds() {
     "excessive nesting must be rejected"
   );
 
-  let acceptable = format!(
+  let exact_depth = format!(
     "{{\"max_age\":1,\"a\":{}0{}}}",
-    "[".repeat(MAX_NEL_DEPTH / 2),
-    "]".repeat(MAX_NEL_DEPTH / 2)
+    "[".repeat(MAX_NEL_DEPTH - 1),
+    "]".repeat(MAX_NEL_DEPTH - 1)
   );
   assert!(
-    Nel::parse(acceptable).is_ok(),
-    "bounded nesting should parse"
+    Nel::parse(&exact_depth).is_ok(),
+    "exact depth limit should parse"
+  );
+
+  let over_depth = format!(
+    "{{\"max_age\":1,\"a\":{}0{}}}",
+    "[".repeat(MAX_NEL_DEPTH),
+    "]".repeat(MAX_NEL_DEPTH)
+  );
+  assert!(
+    Nel::parse(over_depth).is_err(),
+    "one past the depth limit must be rejected"
   );
 }
