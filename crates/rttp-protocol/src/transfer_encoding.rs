@@ -28,9 +28,22 @@ impl TransferEncoding {
     I: IntoIterator<Item = &'a str>,
   {
     let mut codings: Vec<String> = Vec::new();
+    let mut total_bytes = 0usize;
 
     for value in values {
       if value.len() > MAX_TRANSFER_ENCODING_VALUE_BYTES {
+        return Err(TransferEncodingParseError::new(
+          "Transfer-Encoding header value is too large",
+        ));
+      }
+      let separator = if total_bytes > 0 { 2 } else { 0 };
+      total_bytes = total_bytes
+        .checked_add(separator)
+        .and_then(|bytes| bytes.checked_add(value.len()))
+        .ok_or_else(|| {
+          TransferEncodingParseError::new("Transfer-Encoding header value is too large")
+        })?;
+      if total_bytes > MAX_TRANSFER_ENCODING_VALUE_BYTES {
         return Err(TransferEncodingParseError::new(
           "Transfer-Encoding header value is too large",
         ));

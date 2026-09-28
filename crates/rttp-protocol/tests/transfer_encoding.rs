@@ -85,6 +85,22 @@ fn transfer_encoding_enforces_value_and_coding_bounds() {
     "oversized values must be rejected"
   );
 
+  let at_value_limit = format!(
+    "{}chunked",
+    " ".repeat(MAX_TRANSFER_ENCODING_VALUE_BYTES - 7)
+  );
+  let transfer_encoding = TransferEncoding::parse(&at_value_limit)
+    .expect("OWS-padded chunked at the exact value limit should parse");
+  assert_eq!(transfer_encoding.codings(), ["chunked"]);
+
+  let large_field = "x".repeat(MAX_TRANSFER_ENCODING_VALUE_BYTES - 7);
+  let error = TransferEncoding::parse_values([large_field.as_str(), "chunked"])
+    .expect_err("combined field values must account for separator overhead");
+  assert_eq!(
+    error.to_string(),
+    "Transfer-Encoding header value is too large"
+  );
+
   let at_value_limit = "x".repeat(MAX_TRANSFER_ENCODING_VALUE_BYTES);
   assert!(
     TransferEncoding::parse(&at_value_limit).is_err(),
