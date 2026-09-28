@@ -93,6 +93,38 @@ const HPACK_HUFFMAN_CODE_LENGTHS: [u8; 257] = [
   24, 24, 26, 23, 26, 27, 26, 26, 27, 27, 27, 27, 27, 28, 27, 27, 27, 27, 27, 26, 30,
 ];
 
+#[cfg(feature = "async")]
+pub(crate) async fn async_h2c_call(
+  origin: crate::request::Request,
+  url: crate::types::RoUrl,
+  header: String,
+  body: Option<crate::request::RequestBody>,
+  upgrade: bool,
+) -> error::Result<Response> {
+  // The HTTP/2 codec is deliberately run on a dedicated thread: unlike an
+  // async-named wrapper around `get`, polling this future never performs a
+  // blocking socket operation on the executor thread.
+  let (sender, receiver) = futures::channel::oneshot::channel();
+  std::thread::spawn(move || {
+    let mut origin = origin;
+    let request = RawRequest {
+      origin: &mut origin,
+      url,
+      header,
+      body,
+    };
+    let result = if upgrade {
+      UpgradeClient::new(request).get()
+    } else {
+      PriorKnowledgeClient::new(request).get()
+    };
+    let _ = sender.send(result);
+  });
+  receiver
+    .await
+    .map_err(|_| error::request("async HTTP/2 worker terminated"))?
+}
+
 pub struct PriorKnowledgeClient<'a> {
   request: RawRequest<'a>,
 }

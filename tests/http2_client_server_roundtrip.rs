@@ -4,8 +4,58 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+#[cfg(feature = "async")]
+use flate2::write::{GzEncoder, ZlibEncoder};
+#[cfg(feature = "async")]
+use flate2::Compression;
+#[cfg(feature = "async")]
+use futures::executor::block_on;
 use rttp_client::{DavClass, HttpClient};
 use rttp_server::server::{Http2ServerPolicy, HttpResponse, HttpScheduleTag, HttpServer, Request};
+
+#[cfg(feature = "async")]
+#[test]
+fn async_h2c_buffered_paths_decode_and_preserve_wire_capture() {
+  let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
+  gzip.write_all(b"async prior body").unwrap();
+  let gzip = gzip.finish().unwrap();
+  let mut zlib = ZlibEncoder::new(Vec::new(), Compression::default());
+  zlib.write_all(b"async upgrade body").unwrap();
+  let zlib = zlib.finish().unwrap();
+
+  for (upgrade, body, encoding, expected) in [
+    (false, gzip, "gzip", b"async prior body".as_slice()),
+    (true, zlib, "deflate", b"async upgrade body".as_slice()),
+  ] {
+    let server = HttpServer::bind("127.0.0.1:0")
+      .expect("bind async h2c server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("async h2c server address");
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|_| HttpResponse::ok(body).header("Content-Encoding", encoding))
+        .expect("serve async h2c response");
+    });
+    let mut client = HttpClient::new();
+    client.get().url(format!("http://{addr}/async-h2c"));
+    let response = block_on(async {
+      if upgrade {
+        client.rasync_http2_upgrade().await
+      } else {
+        client.rasync_http2_prior_knowledge().await
+      }
+    })
+    .expect("async h2c response");
+    assert_eq!(expected, response.body().binary());
+    assert!(response.header("Content-Encoding").is_none());
+    assert!(response
+      .binary()
+      .windows(b"content-encoding".len())
+      .any(|window| window.eq_ignore_ascii_case(b"content-encoding")));
+    handle.join().expect("async h2c server thread");
+  }
+}
 
 #[test]
 fn h2c_upgrade_round_trip_preserves_metadata_trailers_and_complete_body() {

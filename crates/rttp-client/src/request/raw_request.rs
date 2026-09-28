@@ -16,6 +16,16 @@ pub struct RawRequest<'a> {
 }
 
 impl<'a> RawRequest<'a> {
+  #[cfg(all(feature = "async", feature = "http2"))]
+  pub(crate) fn into_async_h2c_parts(&self) -> (Request, RoUrl, String, Option<RequestBody>) {
+    (
+      self.origin.clone(),
+      self.url.clone(),
+      self.header.clone(),
+      self.body.clone(),
+    )
+  }
+
   pub fn block_new(request: &'a mut Request) -> error::Result<RawRequest<'a>> {
     RawBuilder::new(request).raw_request_block()
   }
