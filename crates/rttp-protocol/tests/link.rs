@@ -324,3 +324,211 @@ fn link_values_expose_typed_accessors() {
   assert_eq!("preload", value.parameters()[0].value());
   assert_eq!(Some("preload"), value.parameter("REL"));
 }
+
+#[test]
+fn link_accepts_targets_containing_legal_uri_delimiters() {
+  let links = LinkValues::parse(
+    "</a,b>; rel=self, </search?q=foo=bar&x=1>; rel=search, \
+     <https://ex.test:8443/a#frag>; rel=describedby, \
+     </a!$&'()*+,;=>; rel=up, <../a/./b?size=small#v1>; rel=next",
+  )
+  .expect("URI-reference delimiters inside targets should parse");
+
+  assert_eq!(5, links.len());
+  assert_eq!("/a,b", links.values()[0].target());
+  assert_eq!("/search?q=foo=bar&x=1", links.values()[1].target());
+  assert_eq!("https://ex.test:8443/a#frag", links.values()[2].target());
+  assert_eq!("/a!$&'()*+,;=", links.values()[3].target());
+  assert_eq!("../a/./b?size=small#v1", links.values()[4].target());
+}
+
+#[test]
+fn link_parses_quoted_and_extended_parameters() {
+  let links = LinkValues::parse(
+    "</TheBook/chapter2>; rel=previous; title*=UTF-8'de'letztes%20Kapitel; \
+     type=\"application/json\"; title=\"a,b;c=d\"; media=\"screen and (min-width: 600px)\"",
+  )
+  .expect("quoted and extended parameters should parse");
+
+  assert_eq!("/TheBook/chapter2", links.values()[0].target());
+  assert_eq!(Some("previous"), links.values()[0].parameter("rel"));
+  assert_eq!(
+    Some("UTF-8'de'letztes%20Kapitel"),
+    links.values()[0].parameter("title*")
+  );
+  assert_eq!(
+    Some("application/json"),
+    links.values()[0].parameter("type")
+  );
+  assert_eq!(Some("a,b;c=d"), links.values()[0].parameter("title"));
+  assert_eq!(
+    Some("screen and (min-width: 600px)"),
+    links.values()[0].parameter("media")
+  );
+  assert_eq!(
+    vec![
+      ("rel", "previous"),
+      ("title*", "UTF-8'de'letztes%20Kapitel"),
+      ("type", "application/json"),
+      ("title", "a,b;c=d"),
+      ("media", "screen and (min-width: 600px)"),
+    ],
+    links.values()[0]
+      .parameters()
+      .iter()
+      .map(|parameter: &LinkParameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn link_handles_token_quoted_and_extension_relation_types() {
+  let links = LinkValues::parse(
+    "</a>; REL=Preload, </b>; rel=\"start next\", </c>; rel=\"http://example.net/foo\"",
+  )
+  .expect("relation types should parse");
+
+  assert_eq!(Some("Preload"), links.values()[0].parameter("rel"));
+  assert_eq!("rel", links.values()[0].parameters()[0].name());
+  assert_eq!(Some("start next"), links.values()[1].parameter("rel"));
+  assert_eq!(
+    Some("http://example.net/foo"),
+    links.values()[2].parameter("rel")
+  );
+
+  for value in [
+    "</x>; rel=http://example.net/foo",
+    "</x>; rel=preload prefetch",
+    "</x>; type=application/json",
+    "</x>; anchor=/app",
+  ] {
+    assert!(
+      LinkValues::parse(value).is_err(),
+      "{value:?} must quote non-token parameter values"
+    );
+  }
+}
+
+#[test]
+fn link_rejects_unterminated_quoting_and_dangling_escapes() {
+  for value in [
+    r#"</style.css>; title="unterminated"#,
+    r#"</style.css>; title="abc\"#,
+    r#"</style.css>; title="abc\""#,
+    r#"</style.css>; title="a"b"#,
+    r#"</a>; title="x, </b>"#,
+  ] {
+    assert!(
+      LinkValues::parse(value).is_err(),
+      "{value:?} must reject unterminated or dangling quoted-strings"
+    );
+  }
+}
+
+#[test]
+fn link_enforces_aggregate_limits_across_repeated_fields() {
+  let at_limit = (0..MAX_LINK_VALUES)
+    .map(|index| format!("</asset-{index}>"))
+    .collect::<Vec<_>>();
+  let parsed = LinkValues::parse_values(at_limit.iter().map(String::as_str))
+    .expect("256 Link values across fields should parse");
+  assert_eq!(MAX_LINK_VALUES, parsed.len());
+
+  let too_many = (0..=MAX_LINK_VALUES)
+    .map(|index| format!("</asset-{index}>"))
+    .collect::<Vec<_>>();
+  assert!(
+    LinkValues::parse_values(too_many.iter().map(String::as_str)).is_err(),
+    "257 Link values across fields must be rejected"
+  );
+
+  let first_field = (0..MAX_LINK_VALUES)
+    .map(|index| format!("</asset-{index}>"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(
+    LinkValues::parse_values([first_field.as_str(), "</overflow>"]).is_err(),
+    "the cumulative value cap must apply across repeated fields"
+  );
+
+  let oversized = "x".repeat(MAX_LINK_VALUE_BYTES + 1);
+  assert!(
+    LinkValues::parse_values(["</ok>", oversized.as_str()]).is_err(),
+    "an oversized later field must still be rejected"
+  );
+
+  let at_parameter_limit = format!(
+    "</asset>{}",
+    (0..MAX_LINK_PARAMETERS)
+      .map(|index| format!("; p{index}=v"))
+      .collect::<String>()
+  );
+  let parameters = LinkValues::parse(&at_parameter_limit)
+    .expect("256 parameters should parse")
+    .values()[0]
+    .parameters()
+    .len();
+  assert_eq!(MAX_LINK_PARAMETERS, parameters);
+}
+
+#[test]
+fn link_serializes_canonical_header_values_and_round_trips() {
+  let padded = LinkValues::parse(
+    " \t</style.css>\t;\trel\t=\t\"preload\" \t, \
+     </b.css>; NOPUSH; title=\"\"; type=\"application/json\"",
+  )
+  .expect("OWS, valueless, empty quoted, and quoted parameters should parse");
+  assert_eq!(
+    "</style.css>; rel=preload, </b.css>; nopush; title=\"\"; type=\"application/json\"",
+    padded.header_value()
+  );
+  assert_eq!(
+    padded,
+    LinkValues::parse(padded.header_value()).expect("canonical Link output should reparse")
+  );
+
+  let escaped = LinkValues::parse(r#"</style.css>; title="say \"hi\" and \\""#)
+    .expect("quoted-string escapes should parse");
+  assert_eq!(
+    r#"</style.css>; title="say \"hi\" and \\""#,
+    escaped.header_value()
+  );
+  assert_eq!(
+    escaped,
+    LinkValues::parse(escaped.header_value()).expect("escaped canonical output should reparse")
+  );
+
+  let delimited = LinkValues::parse(
+    "</a,b>; rel=self, </c;d?e=f#g>; rel=\"start next\", \
+     </TheBook/chapter2>; title*=UTF-8'de'letztes%20Kapitel",
+  )
+  .expect("delimited targets and extended parameters should parse");
+  assert_eq!(
+    "</a,b>; rel=self, </c;d?e=f#g>; rel=\"start next\", \
+     </TheBook/chapter2>; title*=UTF-8'de'letztes%20Kapitel",
+    delimited.header_value()
+  );
+  assert_eq!(
+    delimited,
+    LinkValues::parse(delimited.header_value()).expect("delimited canonical output should reparse")
+  );
+
+  let repeated = LinkValues::parse("</a.css>; rel=stylesheet, </b.css>; rel=stylesheet")
+    .expect("repeated links should parse");
+  assert_eq!(
+    "</a.css>; rel=stylesheet, </b.css>; rel=stylesheet",
+    repeated.header_value()
+  );
+  assert_eq!(
+    repeated,
+    LinkValues::parse(repeated.header_value()).expect("repeated canonical output should reparse")
+  );
+
+  let obs_text =
+    LinkValues::parse(r#"</style.css>; title="\é""#).expect("escaped obs-text should parse");
+  assert_eq!(r#"</style.css>; title="é""#, obs_text.header_value());
+  assert_eq!(
+    obs_text,
+    LinkValues::parse(obs_text.header_value()).expect("obs-text canonical output should reparse")
+  );
+}
