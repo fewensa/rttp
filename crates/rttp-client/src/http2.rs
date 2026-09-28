@@ -368,12 +368,20 @@ fn is_supported_request_method(method: &str) -> bool {
     || method.eq_ignore_ascii_case("PATCH")
 }
 
+fn socket_addr(host: &str, port: u32) -> String {
+  if host.contains(':') && !host.starts_with('[') {
+    format!("[{}]:{}", host, port)
+  } else {
+    format!("{}:{}", host, port)
+  }
+}
+
 fn addr(url: &Url) -> error::Result<String> {
   let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
   let port = url
     .port_or_known_default()
     .ok_or(error::url_bad_host(url.clone()))?;
-  Ok(format!("{}:{}", host, port))
+  Ok(socket_addr(host, port.into()))
 }
 
 fn connect_h2c_stream(
@@ -387,7 +395,7 @@ fn connect_h2c_stream(
         "HTTP/2 prior-knowledge supports only HTTP proxies; CONNECT and SOCKS tunnels are unsupported",
       ));
     }
-    return connect_tcp_stream(format!("{}:{}", proxy.host(), proxy.port()), config);
+    return connect_tcp_stream(socket_addr(proxy.host(), proxy.port()), config);
   }
   connect_tcp_stream(addr(url)?, config)
 }
