@@ -371,13 +371,14 @@ impl<'a> PriorKnowledgeClient<'a> {
       &mut peer_settings,
       local_settings,
       STREAM_ID,
+      None,
     )?;
     let response = match write_request(
       &mut stream,
       &self.request,
       &url,
       self.request.url().clone(),
-      peer_settings,
+      &mut peer_settings,
       local_settings,
       STREAM_ID,
       None,
@@ -390,6 +391,8 @@ impl<'a> PriorKnowledgeClient<'a> {
         !is_head,
         local_settings,
         STREAM_ID,
+        None,
+        None,
         None,
       )?,
     };
@@ -415,13 +418,14 @@ impl<'a> PriorKnowledgeClient<'a> {
       &mut session.peer_settings,
       local_settings,
       stream_id,
+      Some(&mut session.request_hpack),
     )?;
     let response = match write_request(
       &mut session.stream,
       &self.request,
       &url,
       self.request.url().clone(),
-      session.peer_settings,
+      &mut session.peer_settings,
       local_settings,
       stream_id,
       Some(&mut session.request_hpack),
@@ -435,6 +439,8 @@ impl<'a> PriorKnowledgeClient<'a> {
         local_settings,
         stream_id,
         Some(&mut session.response_hpack),
+        Some(&mut session.peer_settings),
+        Some(&mut session.request_hpack),
       )?,
     };
     session.next_stream_id = stream_id
@@ -483,13 +489,14 @@ impl<'a> UpgradeClient<'a> {
       &mut peer_settings,
       local_settings,
       UPGRADED_STREAM_ID,
+      None,
     )?;
     let response = match write_request(
       &mut stream,
       &self.request,
       &url,
       self.request.url().clone(),
-      peer_settings,
+      &mut peer_settings,
       local_settings,
       UPGRADED_STREAM_ID,
       None,
@@ -502,6 +509,8 @@ impl<'a> UpgradeClient<'a> {
         !is_head,
         local_settings,
         UPGRADED_STREAM_ID,
+        None,
+        None,
         None,
       )?,
     };
@@ -653,7 +662,9 @@ fn reject_goaway_before_opening_request_stream(
   peer_settings: &mut PeerSettings,
   local_settings: LocalSettings,
   stream_id: u32,
+  request_hpack: Option<&mut RequestHpackEncoder>,
 ) -> error::Result<()> {
+  let mut request_hpack = request_hpack;
   while pending_frame_available(stream)? {
     let frame = read_frame(stream, local_settings)?;
     match (frame.frame_type, frame.stream_id) {
@@ -674,7 +685,11 @@ fn reject_goaway_before_opening_request_stream(
       (FRAME_SETTINGS, _) => {
         validate_settings_frame(&frame)?;
         if frame.flags & FLAG_ACK == 0 {
-          apply_settings_before_opening_request(peer_settings, &frame.payload)?;
+          apply_settings_before_opening_request(
+            peer_settings,
+            &frame.payload,
+            request_hpack.as_deref_mut(),
+          )?;
           write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
           stream.flush().map_err(error::request)?;
         }
@@ -727,10 +742,18 @@ fn handle_ping_frame(stream: &mut TcpStream, frame: &Frame) -> error::Result<()>
 fn apply_settings_before_opening_request(
   peer_settings: &mut PeerSettings,
   payload: &[u8],
+  request_hpack: Option<&mut RequestHpackEncoder>,
 ) -> error::Result<()> {
   let settings = validate_settings_payload(payload)?;
   if settings.header_table_size_changed {
     peer_settings.header_table_size = settings.header_table_size;
+    if let Some(request_hpack) = request_hpack {
+      request_hpack.set_max_size(
+        settings
+          .header_table_size
+          .min(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE),
+      );
+    }
   }
   if settings.max_concurrent_streams_changed {
     peer_settings.max_concurrent_streams = settings.max_concurrent_streams;
@@ -1125,7 +1148,7 @@ fn write_request(
   request: &RawRequest<'_>,
   url: &Url,
   response_url: RoUrl,
-  mut peer_settings: PeerSettings,
+  peer_settings: &mut PeerSettings,
   local_settings: LocalSettings,
   stream_id: u32,
   request_hpack: Option<&mut RequestHpackEncoder>,
@@ -1161,7 +1184,7 @@ fn write_request(
     }
   }
   let trailer_fields = request_trailer_fields(request);
-  enforce_peer_request_header_list_size(request, url, &regular_header_fields, peer_settings)?;
+  enforce_peer_request_header_list_size(request, url, &regular_header_fields, *peer_settings)?;
   let mut dynamic_field_plan = Vec::new();
   dynamic_field_plan.extend(regular_header_fields.iter().cloned());
   dynamic_field_plan.extend(trailer_fields.iter().cloned());
@@ -1201,7 +1224,7 @@ fn write_request(
     if let Some(response) = write_data_frames(
       stream,
       body,
-      &mut peer_settings,
+      peer_settings,
       hpack,
       has_trailers,
       response_url,
@@ -1213,7 +1236,7 @@ fn write_request(
     }
   }
   if has_trailers {
-    enforce_peer_trailer_header_list_size(&trailer_fields, peer_settings)?;
+    enforce_peer_trailer_header_list_size(&trailer_fields, *peer_settings)?;
     let trailer_block = encode_request_trailers(
       &trailer_fields,
       &dynamic_field_plan,
@@ -1471,6 +1494,8 @@ fn read_until_send_window_available(
           local_settings,
           stream_id,
           response_hpack.take(),
+          Some(peer_settings),
+          Some(hpack),
         )
         .map(Some);
       }
@@ -1509,20 +1534,9 @@ fn handle_settings_while_sending(
     }
   }
   if settings.max_frame_size_changed {
-    peer_settings.max_frame_size = settings.max_frame_size;
     *current_max_frame_size = settings.max_frame_size;
   }
-  if settings.header_table_size_changed {
-    peer_settings.header_table_size = settings.header_table_size;
-    hpack.set_max_size(
-      settings
-        .header_table_size
-        .min(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE),
-    );
-  }
-  if settings.max_header_list_size.is_some() {
-    peer_settings.max_header_list_size = settings.max_header_list_size;
-  }
+  apply_settings_before_opening_request(peer_settings, &frame.payload, Some(hpack))?;
   write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
   stream.flush().map_err(error::request)
 }
@@ -1823,6 +1837,7 @@ struct PendingHeaderBlock {
   end_stream: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn read_single_stream_response(
   stream: &mut TcpStream,
   url: RoUrl,
@@ -1830,6 +1845,8 @@ fn read_single_stream_response(
   local_settings: LocalSettings,
   stream_id: u32,
   response_hpack: Option<&mut HpackDecoder>,
+  peer_settings: Option<&mut PeerSettings>,
+  request_hpack: Option<&mut RequestHpackEncoder>,
 ) -> error::Result<Response> {
   let mut owned_hpack = None;
   let hpack = response_hpack.unwrap_or_else(|| {
@@ -1844,9 +1861,12 @@ fn read_single_stream_response(
     local_settings,
     stream_id,
     hpack,
+    peer_settings,
+    request_hpack,
   )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn read_single_stream_response_from_frame(
   stream: &mut TcpStream,
   url: RoUrl,
@@ -1854,6 +1874,8 @@ fn read_single_stream_response_from_frame(
   local_settings: LocalSettings,
   stream_id: u32,
   response_hpack: Option<&mut HpackDecoder>,
+  peer_settings: Option<&mut PeerSettings>,
+  request_hpack: Option<&mut RequestHpackEncoder>,
 ) -> error::Result<Response> {
   let mut owned_hpack = None;
   let hpack = response_hpack.unwrap_or_else(|| {
@@ -1868,9 +1890,12 @@ fn read_single_stream_response_from_frame(
     local_settings,
     stream_id,
     hpack,
+    peer_settings,
+    request_hpack,
   )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn read_single_stream_response_with_first_frame(
   stream: &mut TcpStream,
   url: RoUrl,
@@ -1879,7 +1904,11 @@ fn read_single_stream_response_with_first_frame(
   local_settings: LocalSettings,
   stream_id: u32,
   hpack: &mut HpackDecoder,
+  peer_settings: Option<&mut PeerSettings>,
+  request_hpack: Option<&mut RequestHpackEncoder>,
 ) -> error::Result<Response> {
+  let mut peer_settings = peer_settings;
+  let mut request_hpack = request_hpack;
   let mut header_block = Vec::new();
   let mut headers = Vec::new();
   let mut trailers = Vec::new();
@@ -1922,6 +1951,13 @@ fn read_single_stream_response_with_first_frame(
       (FRAME_SETTINGS, _) => {
         validate_settings_frame(&frame)?;
         if frame.flags & FLAG_ACK == 0 {
+          if let Some(peer_settings) = peer_settings.as_deref_mut() {
+            apply_settings_before_opening_request(
+              peer_settings,
+              &frame.payload,
+              request_hpack.as_deref_mut(),
+            )?;
+          }
           write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
           stream.flush().map_err(error::request)?;
         }

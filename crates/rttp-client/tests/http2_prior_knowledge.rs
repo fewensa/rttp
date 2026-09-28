@@ -3141,6 +3141,99 @@ fn prior_knowledge_async_proxy_reuses_a_healthy_session() {
 
 #[cfg(feature = "async")]
 #[test]
+fn prior_knowledge_async_proxy_applies_settings_before_reusing_a_session() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy peer");
+  let proxy_addr = listener.local_addr().expect("proxy peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept proxy client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let first_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, first_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, first_headers.flags);
+    assert_eq!(1, first_headers.stream_id);
+    let first_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, first_body.frame_type);
+    assert_eq!(0, first_body.flags);
+    assert_eq!(1, first_body.stream_id);
+    let first_trailers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, first_trailers.frame_type);
+    assert_eq!(FLAG_END_HEADERS | FLAG_END_STREAM, first_trailers.flags);
+    assert_eq!(1, first_trailers.stream_id);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(
+      &mut stream,
+      FRAME_SETTINGS,
+      0,
+      0,
+      &settings_payload(SETTING_HEADER_TABLE_SIZE, 0),
+    );
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"first");
+
+    let settings_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, settings_ack.frame_type);
+    assert_eq!(FLAG_ACK, settings_ack.flags);
+    assert_eq!(0, settings_ack.stream_id);
+    assert!(settings_ack.payload.is_empty());
+
+    let second_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, second_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, second_headers.flags);
+    assert_eq!(3, second_headers.stream_id);
+    assert_eq!(
+      0,
+      dynamic_indexed_fields(&second_headers.payload),
+      "a later zero-sized peer table must evict pooled request HPACK entries: {:?}",
+      second_headers.payload
+    );
+    let second_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, second_body.frame_type);
+    assert_eq!(0, second_body.flags);
+    assert_eq!(3, second_body.stream_id);
+    let second_trailers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, second_trailers.frame_type);
+    assert_eq!(FLAG_END_HEADERS | FLAG_END_STREAM, second_trailers.flags);
+    assert_eq!(3, second_trailers.stream_id);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 3, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 3, b"second");
+  });
+
+  let first = futures::executor::block_on(async {
+    HttpClient::new()
+      .post()
+      .url("http://127.0.0.1:8084/first")
+      .header(("X-Repeat", "same-value"))
+      .trailer(("X-Repeat", "same-value"))
+      .expect("configure repeated request trailer")
+      .raw("first body")
+      .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+      .rasync_http2_prior_knowledge()
+      .await
+  })
+  .expect("first proxied async h2c request");
+  let second = futures::executor::block_on(async {
+    HttpClient::new()
+      .post()
+      .url("http://127.0.0.1:8084/second")
+      .header(("X-Repeat", "same-value"))
+      .trailer(("X-Repeat", "same-value"))
+      .expect("configure repeated request trailer")
+      .raw("second body")
+      .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+      .rasync_http2_prior_knowledge()
+      .await
+  })
+  .expect("second proxied async h2c request");
+
+  assert_eq!("first", first.body().string().unwrap());
+  assert_eq!("second", second.body().string().unwrap());
+  handle.join().expect("proxy settings peer thread");
+}
+
+#[cfg(feature = "async")]
+#[test]
 fn prior_knowledge_async_proxy_timeout_drops_session_before_retry() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy peer");
   let proxy_addr = listener.local_addr().expect("proxy peer addr");
