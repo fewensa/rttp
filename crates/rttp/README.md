@@ -2155,7 +2155,9 @@ proxy tunneling and is rejected before handler dispatch. Negotiated extended
 CONNECT is exposed to handlers as a normal `Request` with method `CONNECT`,
 version `HTTP/2`, origin-form target from `:path`, `host` derived from
 `:authority`, and `Request::extended_connect_protocol()` returning the
-`:protocol` value. The handler returns a normal `HttpResponse`; RTTP does not
+`:protocol` value. Request DATA frames are forwarded through the existing
+flow-control, `END_STREAM`, RST, EOF, and body-size checks; request trailers
+remain unsupported. The handler returns a normal `HttpResponse`; RTTP does not
 switch the stream to caller-owned tunnel bytes. HTTP/1.1 `CONNECT`
 authority-form requests and `HttpHandoff::upgrade` for non-h2c protocols
 remain separate handoff paths for caller-owned protocols, and the h2c Upgrade
@@ -2521,8 +2523,9 @@ as `Authorization`, `Connection`, `Content-Length`, `Cookie`, `Host`,
 `Proxy-Connection`, `Set-Cookie`, `TE`, `Trailer`, `Transfer-Encoding`,
 `Upgrade`, and `WWW-Authenticate`. Ordinary `CONNECT`, header-configured RFC
 8441 `:protocol` metadata, HTTP/1.1 `Upgrade` handoff requests, proxy
-tunneling, extended CONNECT request bodies, and extended CONNECT request
-trailers are rejected before a client socket is opened. HTTP/1.1 `CONNECT`
+tunneling, and extended CONNECT request trailers are rejected before a client
+socket is opened. Empty extended CONNECT bodies end the stream on HEADERS;
+non-empty buffered bodies are sent as DATA frames. HTTP/1.1 `CONNECT`
 tunnel handoff and `Upgrade` remain separate client handoff paths; this h2c
 path does not provide full WebSocket-over-h2, proxy h2, TLS ALPN, tunnel
 handoff, persistent multiplex sessions, general tunnel scheduling, or full RFC

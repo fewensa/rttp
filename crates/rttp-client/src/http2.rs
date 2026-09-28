@@ -270,33 +270,27 @@ fn validate_bounded_h2c_request(
   }
   if let Some(protocol) = extended_connect_protocol {
     validate_extended_connect_protocol(protocol)?;
-    if request.body().is_some() {
-      return Err(error::builder_with_message(
-        "HTTP/2 extended CONNECT cannot send a request body",
-      ));
-    }
     if !request.origin().trailers().is_empty() {
       return Err(error::builder_with_message(
         "HTTP/2 extended CONNECT cannot send request trailers",
       ));
     }
-  }
-  if (method.eq_ignore_ascii_case("GET") || is_head) && request.body().is_some() {
+  } else if (method.eq_ignore_ascii_case("GET") || is_head) && request.body().is_some() {
     return Err(error::builder_with_message(
       "HTTP/2 prior-knowledge GET or HEAD cannot send a request body",
     ));
   }
-  if is_delete && request.body().is_some() {
+  if extended_connect_protocol.is_none() && is_delete && request.body().is_some() {
     return Err(error::builder_with_message(
       "HTTP/2 prior-knowledge DELETE cannot send a request body",
     ));
   }
-  if is_options && request.body().is_some() {
+  if extended_connect_protocol.is_none() && is_options && request.body().is_some() {
     return Err(error::builder_with_message(
       "HTTP/2 prior-knowledge OPTIONS cannot send a request body",
     ));
   }
-  if is_trace && request.body().is_some() {
+  if extended_connect_protocol.is_none() && is_trace && request.body().is_some() {
     return Err(error::builder_with_message(
       "HTTP/2 prior-knowledge TRACE cannot send a request body",
     ));

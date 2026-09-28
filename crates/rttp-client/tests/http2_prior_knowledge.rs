@@ -993,9 +993,9 @@ fn extended_connect_sends_enable_connect_protocol_and_pseudo_headers() {
     );
     assert!(
       try_read_frame(&mut stream)
-        .expect("check for unexpected extended CONNECT body")
+        .expect("check for empty extended CONNECT body")
         .is_none(),
-      "extended CONNECT request must not send DATA frames"
+      "empty extended CONNECT request must end on HEADERS without DATA frames"
     );
 
     write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
@@ -1017,31 +1017,209 @@ fn extended_connect_sends_enable_connect_protocol_and_pseudo_headers() {
 }
 
 #[test]
-fn extended_connect_rejects_request_body_before_connecting() {
+fn extended_connect_sends_buffered_request_body_as_data_frames() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
-  listener
-    .set_nonblocking(true)
-    .expect("set listener nonblocking");
   let addr = listener.local_addr().expect("h2 peer addr");
+  let body = "x".repeat(16 * 1024 + 7);
+  let expected_body = body.clone();
 
-  let err = HttpClient::new()
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+    assert_eq!(
+      b"CONNECT",
+      find_header_value(&request_headers.payload, b":method")
+        .expect("request method")
+        .value
+        .as_slice()
+    );
+    assert_eq!(
+      b"websocket",
+      find_header_value(&request_headers.payload, b":protocol")
+        .expect("request protocol")
+        .value
+        .as_slice()
+    );
+
+    let first_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, first_body.frame_type);
+    assert_eq!(0, first_body.flags);
+    assert_eq!(1, first_body.stream_id);
+    assert_eq!(16 * 1024, first_body.payload.len());
+
+    let second_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, second_body.frame_type);
+    assert_eq!(FLAG_END_STREAM, second_body.flags);
+    assert_eq!(1, second_body.stream_id);
+    assert_eq!(7, second_body.payload.len());
+
+    let mut full_body = first_body.payload;
+    full_body.extend_from_slice(&second_body.payload);
+    assert_eq!(expected_body.as_bytes(), full_body.as_slice());
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"connected");
+  });
+
+  let response = HttpClient::new()
     .http2_extended_connect("websocket")
     .url(format!("http://{}/chat", addr))
-    .raw("unsupported body")
+    .raw(&body)
     .emit_http2_prior_knowledge()
-    .expect_err("extended CONNECT with a body must be rejected");
+    .expect("h2 extended CONNECT body response");
 
-  assert!(err.is_builder());
+  assert_eq!(200, response.code());
+  assert_eq!("connected", response.body().string().unwrap());
+  handle.join().expect("h2 extended CONNECT body peer thread");
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn extended_connect_async_sends_buffered_request_body_as_data_frames() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let request_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, request_body.frame_type);
+    assert_eq!(FLAG_END_STREAM, request_body.flags);
+    assert_eq!(b"async body", request_body.payload.as_slice());
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"connected");
+  });
+
+  let response = futures::executor::block_on(async {
+    HttpClient::new()
+      .http2_extended_connect("websocket")
+      .url(format!("http://{}/chat", addr))
+      .raw("async body")
+      .rasync_http2_prior_knowledge()
+      .await
+  })
+  .expect("async h2 extended CONNECT body response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("connected", response.body().string().unwrap());
+  handle
+    .join()
+    .expect("async h2 extended CONNECT body peer thread");
+}
+
+#[test]
+fn extended_connect_pauses_request_body_at_peer_initial_stream_window() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set h2 peer read timeout");
+    complete_h2_handshake_without_request_with_settings(
+      &mut stream,
+      &settings_payload(SETTING_INITIAL_WINDOW_SIZE, 5),
+    );
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let first_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, first_body.frame_type);
+    assert_eq!(0, first_body.flags);
+    assert_eq!(1, first_body.stream_id);
+    assert_eq!(b"abcde", first_body.payload.as_slice());
+
+    match try_read_frame(&mut stream) {
+      Ok(None) => {}
+      Ok(Some(frame)) => panic!(
+        "client sent request frame without stream credit: type={}, stream_id={}, len={}",
+        frame.frame_type,
+        frame.stream_id,
+        frame.payload.len()
+      ),
+      Err(err) => panic!("unexpected frame read error: {err}"),
+    }
+
+    write_frame(&mut stream, FRAME_WINDOW_UPDATE, 0, 1, &7_u32.to_be_bytes());
+
+    let second_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, second_body.frame_type);
+    assert_eq!(FLAG_END_STREAM, second_body.flags);
+    assert_eq!(1, second_body.stream_id);
+    assert_eq!(b"fghijkl", second_body.payload.as_slice());
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+  });
+
+  let response = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{}/flow-controlled", addr))
+    .raw("abcdefghijkl")
+    .emit_http2_prior_knowledge()
+    .expect("h2 extended CONNECT flow-controlled response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn extended_connect_reports_stream_reset_while_sending_request_body() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request_with_settings(
+      &mut stream,
+      &settings_payload(SETTING_INITIAL_WINDOW_SIZE, 5),
+    );
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let first_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, first_body.frame_type);
+    assert_eq!(0, first_body.flags);
+    assert_eq!(1, first_body.stream_id);
+    assert_eq!(b"abcde", first_body.payload.as_slice());
+
+    write_frame(&mut stream, FRAME_RST_STREAM, 0, 1, &8_u32.to_be_bytes());
+  });
+
+  let error = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{}/reset-body", addr))
+    .raw("abcdefghijkl")
+    .emit_http2_prior_knowledge()
+    .expect_err("active stream reset must fail the extended CONNECT body");
+
   assert!(
-    err
-      .to_string()
-      .contains("HTTP/2 extended CONNECT cannot send a request body"),
-    "unexpected error: {err}"
+    error.to_string().contains("RST_STREAM error code 8"),
+    "unexpected error: {error}"
   );
-  assert!(
-    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
-    "extended CONNECT with a body must not open a server connection"
-  );
+  handle.join().expect("h2 reset peer thread");
 }
 
 #[test]
