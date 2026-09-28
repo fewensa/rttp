@@ -1835,6 +1835,76 @@ mod tests {
   }
 
   #[test]
+  fn async_origin_response_preserves_status_line_and_framing_parity() {
+    block_on(async {
+      let mut raw =
+        b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 200 \tOK ".to_vec();
+      raw.push(0xff);
+      raw.extend_from_slice(b"\r\nContent-Length: 2\r\n\r\nOK");
+      let mut cursor = AllowStdIo::new(Cursor::new(raw));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+        .await
+        .unwrap();
+
+      assert_eq!(200, response.code().unwrap());
+      let mut body = Vec::new();
+      response.body_mut().read_to_end(&mut body).await.unwrap();
+      assert_eq!(b"OK", body.as_slice());
+
+      let raw = b"HTTP/1.1 204 No Content\r\nContent-Length: 7\r\n\r\nignored";
+      let mut cursor = AllowStdIo::new(Cursor::new(raw.to_vec()));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+        .await
+        .unwrap();
+      let mut body = Vec::new();
+      response.body_mut().read_to_end(&mut body).await.unwrap();
+
+      assert_eq!(204, response.code().unwrap());
+      assert!(body.is_empty());
+      assert_eq!(
+        raw.len() - b"ignored".len(),
+        cursor.get_ref().position() as usize
+      );
+    });
+  }
+
+  #[test]
+  fn async_origin_response_rejects_non_sp_status_lines_before_body_reads() {
+    block_on(async {
+      for status_line in [
+        "HTTP/1.1\t200 OK",
+        "HTTP/1.1\u{000b}200 OK",
+        "HTTP/1.1\u{000c}200 OK",
+        "HTTP/1.1\u{00a0}200 OK",
+        "HTTP/1.1\u{2003}200 OK",
+        "HTTP/1.1200 OK",
+        "HTTP/1.1 200OK",
+      ] {
+        let raw = format!("{status_line}\r\nContent-Length: 2\r\n\r\nOK");
+        let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+        let error = async_read_response_head(&mut cursor)
+          .await
+          .expect_err("non-SP origin status-line separator should be rejected");
+
+        assert!(
+          error.to_string().contains("Response status not have code")
+            || error
+              .to_string()
+              .contains("Response status code is not a number"),
+          "unexpected error for {status_line:?}: {error}"
+        );
+        assert_eq!(
+          raw.len() - b"OK".len(),
+          cursor.get_ref().position() as usize,
+          "invalid status lines must be rejected before body bytes are consumed"
+        );
+      }
+    });
+  }
+
+  #[test]
   fn async_streaming_response_reads_fixed_length_body_incrementally() {
     block_on(async {
       let raw = concat!(
