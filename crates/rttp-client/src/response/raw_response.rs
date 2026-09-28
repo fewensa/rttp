@@ -290,11 +290,22 @@ impl Parser {
             )?;
           }
           ContentDecoder::Deflate => {
-            read_decoded_body_to_end(
+            match read_decoded_body_to_end(
               &mut flate2::read::ZlibDecoder::new(current.as_slice()),
               &mut decoded,
               self.max_body_bytes,
-            )?;
+            ) {
+              Ok(()) => {}
+              Err(error) if error.is_body_too_large() => return Err(error),
+              Err(_) => {
+                decoded.clear();
+                read_decoded_body_to_end(
+                  &mut flate2::read::DeflateDecoder::new(current.as_slice()),
+                  &mut decoded,
+                  self.max_body_bytes,
+                )?;
+              }
+            }
           }
         }
         current = decoded;

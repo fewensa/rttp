@@ -206,9 +206,9 @@ fn fixtures() -> Vec<Fixture> {
       name: "raw-deflate",
       encoding: "deflate",
       body: raw_deflate_bytes(b"OK"),
-      expected_body: Vec::new(),
+      expected_body: b"OK".to_vec(),
       decoded_limit: None,
-      outcome: Outcome::DecodeError,
+      outcome: Outcome::Decoded,
     },
     Fixture {
       name: "malformed-inner-stack",
