@@ -8,7 +8,7 @@ use base64::Engine;
 const SFV_BASE64: GeneralPurpose = GeneralPurpose::new(
   &base64::alphabet::STANDARD,
   GeneralPurposeConfig::new()
-    .with_decode_allow_trailing_bits(false)
+    .with_decode_allow_trailing_bits(true)
     .with_decode_padding_mode(DecodePaddingMode::Indifferent),
 );
 
@@ -251,10 +251,31 @@ fn parse_bare_item(value: &str, position: &mut usize) -> Result<(), DigestParseE
     Some(b'?') => parse_boolean(value, position),
     Some(b':') => parse_byte_sequence(value, position).map(|_| ()),
     Some(b'"') => parse_string(value, position),
+    Some(b'@') => parse_date(value, position),
     Some(b'-' | b'0'..=b'9') => parse_number(value, position),
     Some(b'*' | b'a'..=b'z' | b'A'..=b'Z') => parse_token(value, position),
     _ => Err(DigestParseError::new("invalid Digest parameter value")),
   }
+}
+
+fn parse_date(value: &str, position: &mut usize) -> Result<(), DigestParseError> {
+  let bytes = value.as_bytes();
+  if bytes.get(*position) != Some(&b'@') {
+    return Err(DigestParseError::new("invalid Digest parameter value"));
+  }
+  *position += 1;
+  if bytes.get(*position) == Some(&b'-') {
+    *position += 1;
+  }
+  let start = *position;
+  while matches!(bytes.get(*position), Some(b'0'..=b'9')) {
+    *position += 1;
+  }
+  let digit_len = *position - start;
+  if digit_len == 0 || digit_len > 15 {
+    return Err(DigestParseError::new("invalid Digest parameter value"));
+  }
+  Ok(())
 }
 
 fn parse_boolean(value: &str, position: &mut usize) -> Result<(), DigestParseError> {
@@ -407,17 +428,34 @@ mod tests {
       "sha-256=:YWJj:;Foo=bar",
       "sha-256=:YWJj:;\tfoo=bar",
       "sha-256=:YWJj:;foo=1;foo=2",
+      "sha-256=:YWJj:;created=@",
+      "sha-256=:YWJj:;created=@1.0",
+      "sha-256=:YWJj:;created=@1234567890123456",
     ] {
       assert!(Digest::parse(value).is_err(), "should reject {value:?}");
     }
   }
 
   #[test]
-  fn digest_rejects_non_canonical_base64_trailing_bits() {
+  fn digest_accepts_date_valued_item_parameters() {
+    let digest = Digest::parse("sha-256=:YWJj:;created=@0")
+      .expect("Structured Fields date parameters should parse and be discarded");
+    assert_eq!(
+      Some(&b"abc"[..]),
+      digest.entry("sha-256").map(|entry| entry.value())
+    );
+    assert_eq!("sha-256=:YWJj:", digest.header_value());
+  }
+
+  #[test]
+  fn digest_accepts_non_zero_base64_trailing_bits() {
     for value in ["sha-256=:YR==:", "sha-256=:YR:"] {
-      assert!(
-        Digest::parse(value).is_err(),
-        "non-canonical trailing bits must be rejected: {value:?}"
+      let digest = Digest::parse(value)
+        .expect("Structured Fields byte sequences may have non-zero unused trailing bits");
+      assert_eq!(
+        Some(&b"a"[..]),
+        digest.entry("sha-256").map(|entry| entry.value()),
+        "{value:?}"
       );
     }
   }

@@ -72,7 +72,7 @@ fn repr_digest_looks_up_first_matching_algorithm_key() {
 #[test]
 fn repr_digest_discards_well_formed_item_parameters() {
   let digest = ReprDigest::parse(
-    "sha-256=:YWJj:;foo=bar;enabled;count=2;flag=?1;bin=:YWJj:;note=\"ok\", sha-512=:ZGVm:;dec=1.5",
+    "sha-256=:YWJj:;foo=bar;enabled;count=2;flag=?1;bin=:YWJj:;note=\"ok\";created=@0, sha-512=:ZGVm:;dec=1.5",
   )
   .expect("Repr-Digest should parse item parameters");
 
@@ -86,6 +86,19 @@ fn repr_digest_discards_well_formed_item_parameters() {
     Some(&b"def"[..])
   );
   assert_eq!(digest.header_value(), "sha-256=:YWJj:, sha-512=:ZGVm:");
+}
+
+#[test]
+fn repr_digest_accepts_non_zero_base64_trailing_bits() {
+  for value in ["sha-256=:YR==:", "sha-256=:YR:"] {
+    let digest = ReprDigest::parse(value)
+      .expect("Structured Fields byte sequences may have non-zero unused trailing bits");
+    assert_eq!(
+      digest.entry("sha-256").map(|entry| entry.value()),
+      Some(&b"a"[..]),
+      "{value:?}"
+    );
+  }
 }
 
 #[test]
@@ -151,12 +164,13 @@ fn repr_digest_rejects_empty_malformed_duplicate_and_non_byte_values() {
     "sha-256=:@@@:",
     "sha-256=:A:",
     "sha-256=:Y=Q:",
-    "sha-256=:YR==:",
-    "sha-256=:YR:",
     "sha-256=:YWJj",
     "sha-256=YWJj:",
     "sha-256=:YWJj:;foo=",
     "sha-256=:YWJj:;foo=1.",
+    "sha-256=:YWJj:;created=@",
+    "sha-256=:YWJj:;created=@1.0",
+    "sha-256=:YWJj:;created=@1234567890123456",
     "sha-256=:YWJj:;Foo=bar",
     "sha-256=:YWJj:;\tfoo=bar",
     "sha-256=:YWJj:;foo=1;foo=2",
