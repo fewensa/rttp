@@ -143,7 +143,7 @@ impl ForwardedElement {
       .iter()
       .map(ForwardedParameter::header_value)
       .collect::<Vec<_>>()
-      .join("; ")
+      .join(";")
   }
 }
 
@@ -210,12 +210,10 @@ fn parse_element(
   loop {
     let name =
       parse_token(value, position, "invalid Forwarded parameter name")?.to_ascii_lowercase();
-    skip_ows(value.as_bytes(), position);
     if value.as_bytes().get(*position) != Some(&b'=') {
       return Err(ForwardedParseError::new("invalid Forwarded parameter"));
     }
     *position += 1;
-    skip_ows(value.as_bytes(), position);
     let parameter_value = parse_value(value, position)?;
     if parameters
       .iter()
@@ -230,16 +228,23 @@ fn parse_element(
       name,
       value: parameter_value,
     });
-    skip_ows(value.as_bytes(), position);
     match value.as_bytes().get(*position) {
       Some(b';') => {
         *position += 1;
-        skip_ows(value.as_bytes(), position);
         if *position == value.len() {
           return Err(ForwardedParseError::new("invalid Forwarded parameter"));
         }
       }
       Some(b',') | None => return Ok(()),
+      Some(b' ') | Some(b'\t') => {
+        let delimiter_start = *position;
+        skip_ows(value.as_bytes(), position);
+        if matches!(value.as_bytes().get(*position), Some(b',') | None) {
+          return Ok(());
+        }
+        *position = delimiter_start;
+        return Err(ForwardedParseError::new("invalid Forwarded parameter"));
+      }
       _ => return Err(ForwardedParseError::new("invalid Forwarded parameter")),
     }
   }

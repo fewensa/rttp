@@ -17,8 +17,8 @@ fn forwarded_parses_rfc_examples_and_exposes_parameters() {
   assert_eq!(Some("198.51.100.17"), forwarded.elements()[1].for_value());
   assert_eq!(Some("http"), forwarded.elements()[1].proto());
   assert_eq!(
-    "for=192.0.2.43; proto=https; by=203.0.113.43, \
-     for=198.51.100.17; proto=http",
+    "for=192.0.2.43;proto=https;by=203.0.113.43, \
+     for=198.51.100.17;proto=http",
     forwarded.header_value()
   );
 }
@@ -103,22 +103,18 @@ fn forwarded_accepts_http_ows_and_serializes_canonically() {
   for value in [
     " for=192.0.2.43;proto=https ",
     "\tfor=192.0.2.43;proto=https\t",
-    "for = 192.0.2.43 ; proto = https",
-    "for\t=\t192.0.2.43\t;\tproto\t=\thttps",
-    " \tfor = 192.0.2.43\t;\tproto = https\t ",
   ] {
     let forwarded = Forwarded::parse(value)
       .unwrap_or_else(|error| panic!("{value:?} must accept HTTP OWS padding: {error}"));
     assert_eq!(1, forwarded.len(), "{value:?}");
     assert_eq!(Some("192.0.2.43"), forwarded.elements()[0].for_value());
     assert_eq!(Some("https"), forwarded.elements()[0].proto());
-    assert_eq!("for=192.0.2.43; proto=https", forwarded.header_value());
+    assert_eq!("for=192.0.2.43;proto=https", forwarded.header_value());
   }
 
   for value in [
     " for=192.0.2.43 , for=198.51.100.17 ",
     "for=192.0.2.43,\tfor=198.51.100.17",
-    "\tfor = 192.0.2.43\t,\tfor = 198.51.100.17\t",
   ] {
     let forwarded = Forwarded::parse(value)
       .unwrap_or_else(|error| panic!("{value:?} must accept HTTP OWS list padding: {error}"));
@@ -128,6 +124,24 @@ fn forwarded_accepts_http_ows_and_serializes_canonically() {
     assert_eq!(
       "for=192.0.2.43, for=198.51.100.17",
       forwarded.header_value()
+    );
+  }
+}
+
+#[test]
+fn forwarded_rejects_ows_around_pair_delimiters() {
+  for value in [
+    "for =192.0.2.43",
+    "for= 192.0.2.43",
+    "for\t=\t192.0.2.43",
+    "for=192.0.2.43 ;proto=https",
+    "for=192.0.2.43; proto=https",
+    "for=192.0.2.43\t;\tproto=https",
+    "for=192.0.2.43, for = 198.51.100.17",
+  ] {
+    assert!(
+      Forwarded::parse(value).is_err(),
+      "Forwarded should reject OWS around pair delimiters in {value:?}"
     );
   }
 }
@@ -178,7 +192,7 @@ fn forwarded_aggregates_elements_across_repeated_fields() {
   );
   assert_eq!(Some("_hidden"), forwarded.elements()[1].by());
   assert_eq!(
-    r#"for=192.0.2.43; proto=https, for="[2001:db8:cafe::17]:4711"; by=_hidden"#,
+    r#"for=192.0.2.43;proto=https, for="[2001:db8:cafe::17]:4711";by=_hidden"#,
     forwarded.header_value()
   );
 
@@ -209,7 +223,7 @@ fn forwarded_parse_serialize_round_trips_quoted_nodes_and_obfuscated_ids() {
     r#"for="_gazonk";by=unknown"#,
     r#"for="quoted\\value\"""#,
     "for=192.0.2.43;proto=https;by=203.0.113.43, for=198.51.100.17;proto=http",
-    " FOR = 192.0.2.43 ; PROTO = https ",
+    " FOR=192.0.2.43;PROTO=https ",
   ] {
     let parsed =
       Forwarded::parse(value).unwrap_or_else(|error| panic!("{value:?} should parse: {error}"));
