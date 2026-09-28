@@ -83,15 +83,26 @@ impl AcceptLanguage {
     let mut value = String::new();
 
     for (index, range) in ranges.into_iter().enumerate() {
-      if index > 0 {
-        value.push_str(", ");
+      if index >= MAX_ACCEPT_LANGUAGE_RANGES {
+        return Err(AcceptLanguageParseError::new(
+          "too many Accept-Language ranges",
+        ));
       }
-      value.push_str(range.as_ref());
-      if value.len() > MAX_ACCEPT_LANGUAGE_VALUE_BYTES {
+      let range = range.as_ref();
+      let separator_len = if index > 0 { 2 } else { 0 };
+      let combined_len = value
+        .len()
+        .checked_add(separator_len)
+        .and_then(|length| length.checked_add(range.len()));
+      if combined_len.is_none_or(|length| length > MAX_ACCEPT_LANGUAGE_VALUE_BYTES) {
         return Err(AcceptLanguageParseError::new(
           "Accept-Language header value is too large",
         ));
       }
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(range);
     }
 
     Self::parse(value)
