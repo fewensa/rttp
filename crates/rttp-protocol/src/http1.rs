@@ -98,7 +98,7 @@ pub fn split_status_line(status_line: &str) -> Option<(&str, &str, &str)> {
     Some((code, reason)) => (code, reason),
     None => (rest, ""),
   };
-  if !code.bytes().all(|byte| byte.is_ascii_digit()) {
+  if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
     return None;
   }
 
@@ -265,6 +265,24 @@ mod tests {
       split_status_line("HTTP/1.1 103 Early Hints"),
       Some(("HTTP/1.1", "103", "Early Hints"))
     );
+  }
+
+  #[test]
+  fn split_status_line_rejects_non_three_digit_status_codes() {
+    for status_line in [
+      "HTTP/1.1 20 OK",
+      "HTTP/1.1 2000 OK",
+      "HTTP/1.1 ",
+      "HTTP/1.1  OK",
+      "HTTP/1.1 20A OK",
+      "HTTP/1.1 abc OK",
+    ] {
+      assert_eq!(
+        split_status_line(status_line),
+        None,
+        "expected rejection for {status_line:?}"
+      );
+    }
   }
 
   #[test]
