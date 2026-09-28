@@ -29,19 +29,63 @@ fn host_parses_name_port_and_ipv6_authorities() {
 }
 
 #[test]
-fn host_trims_http_optional_whitespace() {
-  let host = Host::parse("\texample.test:80 ").expect("OWS-padded Host must parse");
+fn host_accepts_ipv4_and_numeric_port_boundaries() {
+  for (value, expected_host, expected_port) in [
+    ("0.0.0.0", "0.0.0.0", None),
+    ("255.255.255.255", "255.255.255.255", None),
+    ("192.0.2.1:0", "192.0.2.1", Some("0")),
+    ("192.0.2.1:00080", "192.0.2.1", Some("00080")),
+  ] {
+    let host = Host::parse(value).expect("IPv4 authority must parse");
 
-  assert_eq!("example.test", host.host());
-  assert_eq!(Some("80"), host.port());
-  assert_eq!("example.test:80", host.header_value());
+    assert_eq!(expected_host, host.host());
+    assert_eq!(expected_port, host.port());
+    assert_eq!(value, host.header_value());
+  }
+}
+
+#[test]
+fn host_trims_http_optional_whitespace() {
+  for (value, expected) in [
+    (" example.test:80", "example.test:80"),
+    ("\texample.test:80", "example.test:80"),
+    (" example.test:80\t", "example.test:80"),
+    ("\t[::1]:080 \t", "[::1]:080"),
+  ] {
+    let host = Host::parse(value).expect("OWS-padded Host must parse");
+
+    assert_eq!(expected, host.header_value());
+  }
 }
 
 #[test]
 fn host_accepts_inbound_reg_name_characters() {
-  for value in ["foo_bar.example", "foo~bar", "foo%2Dbar", "foo!bar"] {
+  for value in [
+    "foo_bar.example",
+    "foo~bar",
+    "foo!$&'()*+,;=bar",
+    "foo%00%2F%40%5B%5Dbar",
+    "foo%2Dbar",
+  ] {
     let host = Host::parse(value).expect("inbound-legal host must parse");
     assert_eq!(value, host.header_value());
+  }
+}
+
+#[test]
+fn host_preserves_authority_spelling_through_header_round_trips() {
+  for value in [
+    "Example.TEST:00080",
+    "foo%2dbar",
+    "[2001:0DB8::1]:0443",
+    "[VAb.xyz]:00001",
+  ] {
+    let parsed = Host::parse(value).expect("authority must parse");
+    let header_value = parsed.header_value();
+    let reparsed = Host::parse(&header_value).expect("serialized authority must parse");
+
+    assert_eq!(parsed, reparsed, "round trip changed {value:?}");
+    assert_eq!(value, header_value);
   }
 }
 
@@ -118,6 +162,8 @@ fn host_rejects_empty_path_userinfo_and_malformed_values() {
     "example.test#frag",
     "example.test#",
     "example.test:",
+    "example.test:port",
+    "example.test:80x",
     "2001:db8::1",
     "[]",
     "[::1",
@@ -138,6 +184,13 @@ fn host_rejects_empty_path_userinfo_and_malformed_values() {
     "foo%GG",
     "foo%2G",
     "example.test:80:443",
+    "example.test?query",
+    "example.test#fragment",
+    "example.test@other.test",
+    "example.test\t:80",
+    "exa\tmple.test",
+    "[::\t1]",
+    "[::1]\t:80",
   ] {
     assert!(Host::parse(value).is_err(), "{value:?} must be rejected");
   }
@@ -165,10 +218,35 @@ fn host_rejects_control_bytes() {
       "{value:?}"
     );
   }
+
+  for byte in 0..=31 {
+    if byte == b'\t' {
+      continue;
+    }
+    let value = format!("example.{}test", char::from(byte));
+    assert_eq!(
+      "invalid Host header control byte",
+      Host::parse(&value)
+        .expect_err("all CTLs except HTAB must be rejected")
+        .to_string(),
+      "control byte {byte} must be rejected"
+    );
+  }
+  let value = "example.\u{7f}test";
+  assert_eq!(
+    "invalid Host header control byte",
+    Host::parse(value)
+      .expect_err("DEL must be rejected")
+      .to_string()
+  );
 }
 
 #[test]
 fn host_rejects_duplicate_singleton_fields() {
+  let single =
+    Host::parse_values(["\texample.test:00080\t"]).expect("one Host field must be accepted");
+  assert_eq!("example.test:00080", single.header_value());
+
   assert!(Host::parse_values(["example.test", "other.test"]).is_err());
   assert!(Host::parse_values(["example.test", "example.test"]).is_err());
   assert!(Host::parse_values(["[::1]", "[::1]:80"]).is_err());
@@ -176,6 +254,11 @@ fn host_rejects_duplicate_singleton_fields() {
 
 #[test]
 fn host_enforces_value_bounds_without_panicking() {
+  let exact = "a".repeat(MAX_HOST_VALUE_BYTES);
+  assert_eq!(MAX_HOST_VALUE_BYTES, exact.len());
+  let parsed = Host::parse(&exact).expect("exact limit must parse");
+  assert_eq!(exact, parsed.host());
+
   assert!(Host::parse("a".repeat(MAX_HOST_VALUE_BYTES + 1)).is_err());
 
   let oversized_duplicate = "a".repeat(MAX_HOST_VALUE_BYTES + 1);
