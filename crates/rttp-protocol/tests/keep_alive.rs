@@ -106,6 +106,83 @@ fn keep_alive_parses_checked_integers_with_leading_zeros_and_round_trips() {
 }
 
 #[test]
+fn keep_alive_accepts_u64_max_timeout_and_max_and_round_trips() {
+  const U64_MAX: &str = "18446744073709551615";
+
+  let keep_alive = KeepAlive::parse(format!("timeout={U64_MAX}, max={U64_MAX}"))
+    .expect("u64::MAX timeout and max should parse");
+  assert_eq!(keep_alive.timeout(), Some(u64::MAX));
+  assert_eq!(keep_alive.max(), Some(u64::MAX));
+  assert_eq!(
+    keep_alive.header_value(),
+    format!("timeout={U64_MAX}, max={U64_MAX}")
+  );
+  assert_eq!(
+    KeepAlive::parse(keep_alive.header_value())
+      .expect("formatted u64::MAX Keep-Alive should round-trip")
+      .header_value(),
+    keep_alive.header_value()
+  );
+
+  let zero = KeepAlive::parse("timeout=0, max=0").expect("zero timeout and max should parse");
+  assert_eq!(zero.timeout(), Some(0));
+  assert_eq!(zero.max(), Some(0));
+  assert_eq!(zero.header_value(), "timeout=0, max=0");
+}
+
+#[test]
+fn keep_alive_rejects_duplicate_timeout_and_max_across_fields() {
+  assert!(
+    KeepAlive::parse_values(["timeout=5", "timeout=6"]).is_err(),
+    "duplicate timeout across fields must be rejected"
+  );
+  assert!(
+    KeepAlive::parse_values(["timeout=5", "TIMEOUT=6"]).is_err(),
+    "case-insensitive duplicate timeout across fields must be rejected"
+  );
+  assert!(
+    KeepAlive::parse_values(["max=1", "max=2"]).is_err(),
+    "duplicate max across fields must be rejected"
+  );
+  assert!(
+    KeepAlive::parse_values(["max=1", "MAX=2"]).is_err(),
+    "case-insensitive duplicate max across fields must be rejected"
+  );
+  assert!(
+    KeepAlive::parse_values(["timeout=5, max=1", "MAX=2"]).is_err(),
+    "duplicate max after a combined field must be rejected"
+  );
+}
+
+#[test]
+fn keep_alive_rejects_quoted_non_token_and_non_ows_values() {
+  for value in [
+    r#"timeout="5""#,
+    r#"max="100""#,
+    r#"vendor="abc""#,
+    r#"timeout="""#,
+    "vendor=a b",
+    "ven dor=1",
+    "timeout=5;max=100",
+    "timeout=5\r\nX: injected",
+    "timeout=5\r",
+    "timeout=5\n",
+    "\u{00a0}timeout=5",
+    "timeout=\u{00a0}5",
+    "timeout=5\u{00a0}",
+    "timeout=5,\u{00a0}max=1",
+    "timeout=5\u{000b}",
+    "timeout=5\u{000c}",
+    "timeout=5\u{3000}",
+  ] {
+    assert!(
+      KeepAlive::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
 fn keep_alive_rejects_malformed_missing_duplicate_and_overflow() {
   for value in [
     "",
@@ -119,6 +196,7 @@ fn keep_alive_rejects_malformed_missing_duplicate_and_overflow() {
     "=5",
     "timeout=abc",
     "timeout=-5",
+    "timeout=+5",
     "timeout=5.0",
     "timeout=5 max=100",
     "timeout=5, timeout=6",
@@ -141,6 +219,17 @@ fn keep_alive_rejects_malformed_missing_duplicate_and_overflow() {
 
 #[test]
 fn keep_alive_enforces_value_and_item_bounds() {
+  let exact_bytes = format!("x={}", "y".repeat(MAX_KEEP_ALIVE_VALUE_BYTES - 2));
+  assert_eq!(exact_bytes.len(), MAX_KEEP_ALIVE_VALUE_BYTES);
+  let at_byte_bound =
+    KeepAlive::parse(&exact_bytes).expect("exactly bounded Keep-Alive value should parse");
+  assert_eq!(at_byte_bound.extensions().len(), 1);
+  assert_eq!(at_byte_bound.extensions()[0].name(), "x");
+  assert_eq!(
+    at_byte_bound.extensions()[0].value().len(),
+    MAX_KEEP_ALIVE_VALUE_BYTES - 2
+  );
+
   assert!(KeepAlive::parse("x".repeat(MAX_KEEP_ALIVE_VALUE_BYTES + 1)).is_err());
   assert!(
     KeepAlive::parse_values([
@@ -149,6 +238,20 @@ fn keep_alive_enforces_value_and_item_bounds() {
     ])
     .is_err(),
     "an oversized later field must not bypass validation"
+  );
+
+  let at_item_bound = (0..MAX_KEEP_ALIVE_ITEMS)
+    .map(|index| format!("e{index}=1"))
+    .collect::<Vec<_>>();
+  let parsed_items = KeepAlive::parse(at_item_bound.join(", "))
+    .expect("exactly bounded Keep-Alive item count should parse");
+  assert_eq!(parsed_items.extensions().len(), MAX_KEEP_ALIVE_ITEMS);
+  assert_eq!(
+    KeepAlive::parse_values(at_item_bound.iter().map(String::as_str))
+      .expect("exact item bound should parse across fields")
+      .extensions()
+      .len(),
+    MAX_KEEP_ALIVE_ITEMS
   );
 
   let excessive = (0..=MAX_KEEP_ALIVE_ITEMS)
