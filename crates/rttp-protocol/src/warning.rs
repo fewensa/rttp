@@ -281,21 +281,10 @@ fn parse_quoted_http_date(
   value: &str,
   position: &mut usize,
 ) -> Result<SystemTime, WarningParseError> {
-  let bytes = value.as_bytes();
-  if bytes.get(*position) != Some(&b'"') {
-    return Err(WarningParseError::new("invalid Warning HTTP-date"));
-  }
-  *position += 1;
-  let start = *position;
-  while *position < bytes.len() && bytes[*position] != b'"' {
-    *position += 1;
-  }
-  if *position == bytes.len() {
-    return Err(WarningParseError::new("invalid Warning HTTP-date"));
-  }
-  let date = &value[start..*position];
-  *position += 1;
-  httpdate::parse_http_date(date).map_err(|_| WarningParseError::new("invalid Warning HTTP-date"))
+  // warn-date is a quoted-string whose unescaped content must be an HTTP-date.
+  let date = parse_quoted_string(value, position)
+    .map_err(|_| WarningParseError::new("invalid Warning HTTP-date"))?;
+  httpdate::parse_http_date(&date).map_err(|_| WarningParseError::new("invalid Warning HTTP-date"))
 }
 
 fn parse_quoted_string(value: &str, position: &mut usize) -> Result<String, WarningParseError> {

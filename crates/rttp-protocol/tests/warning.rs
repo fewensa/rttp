@@ -1,8 +1,8 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp_protocol::warning::{
-  Warning, CODE_MISCELLANEOUS_PERSISTENT_WARNING, CODE_RESPONSE_IS_STALE, MAX_WARNING_ITEMS,
-  MAX_WARNING_TEXT_BYTES, MAX_WARNING_VALUE_BYTES,
+  Warning, CODE_MISCELLANEOUS_PERSISTENT_WARNING, CODE_RESPONSE_IS_STALE, MAX_WARNING_AGENT_BYTES,
+  MAX_WARNING_ITEMS, MAX_WARNING_TEXT_BYTES, MAX_WARNING_VALUE_BYTES,
 };
 
 #[test]
@@ -56,6 +56,31 @@ fn warning_unescapes_quoted_text_and_keeps_commas_inside_quotes() {
 }
 
 #[test]
+fn warning_unescapes_quoted_http_date_including_escaped_quotes() {
+  let warning = Warning::parse(
+    r#"110 - "stale" "Wed, 21 Oct 2015 07:28:00 GM\T""#,
+  )
+  .expect("escaped characters in warn-date should unescape before HTTP-date parse");
+
+  assert_eq!(
+    warning.items()[0].date(),
+    Some(UNIX_EPOCH + Duration::from_secs(1_445_412_480))
+  );
+  assert_eq!(
+    warning.header_value(),
+    r#"110 - "stale" "Wed, 21 Oct 2015 07:28:00 GMT""#
+  );
+
+  let with_escaped_quote = Warning::parse(
+    r#"110 - "stale" "Wed, 21 Oct 2015 07:28:00 GMT\"""#,
+  );
+  assert!(
+    with_escaped_quote.is_err(),
+    "escaped quote that survives into HTTP-date content must be rejected"
+  );
+}
+
+#[test]
 fn warning_accepts_empty_quoted_text_ows_and_rfc7234_agents() {
   let warning = Warning::parse(
     "110\t-\t\"\" , 111 cache \"Revalidation Failed\", 299 example.com:80 \"host port\", 199 [2001:db8::1]:443 \"Deprecated API\"\t\"Wed, 21 Oct 2015 07:28:00 GMT\"",
@@ -74,6 +99,28 @@ fn warning_accepts_empty_quoted_text_ows_and_rfc7234_agents() {
 }
 
 #[test]
+fn warning_accepts_host_authorities_empty_ports_and_token_pseudonyms() {
+  for (value, agent) in [
+    (r#"110 example.com "text""#, "example.com"),
+    (r#"110 example.com:80 "text""#, "example.com:80"),
+    (r#"110 example.com: "text""#, "example.com:"),
+    (r#"110 192.0.2.1 "text""#, "192.0.2.1"),
+    (r#"110 192.0.2.1:8080 "text""#, "192.0.2.1:8080"),
+    (r#"110 [::1] "text""#, "[::1]"),
+    (r#"110 [::1]: "text""#, "[::1]:"),
+    (r#"110 [2001:db8::1]:443 "text""#, "[2001:db8::1]:443"),
+    (r#"110 - "text""#, "-"),
+    (r#"110 cache "text""#, "cache"),
+    (r#"110 proxy! "text""#, "proxy!"),
+    (r#"110 Some_Proxy "text""#, "Some_Proxy"),
+  ] {
+    let warning = Warning::parse(value).expect("host or pseudonym warn-agent should parse");
+    assert_eq!(warning.items()[0].agent(), agent, "{value:?}");
+    assert_eq!(warning.items()[0].text(), "text", "{value:?}");
+  }
+}
+
+#[test]
 fn warning_accepts_rfc3986_empty_ports_on_warn_agents() {
   for (value, agent) in [
     (r#"110 example.com: "text""#, "example.com:"),
@@ -83,6 +130,25 @@ fn warning_accepts_rfc3986_empty_ports_on_warn_agents() {
     assert_eq!(warning.items()[0].agent(), agent, "{value:?}");
     assert_eq!(warning.items()[0].text(), "text", "{value:?}");
   }
+}
+
+#[test]
+fn warning_retains_ordered_duplicate_list_members() {
+  let warning = Warning::parse(
+    r#"110 - "first", 110 - "first", 111 cache "second", 110 - "first""#,
+  )
+  .expect("duplicate warning-value members are retained in order");
+
+  assert_eq!(warning.len(), 4);
+  assert_eq!(warning.items()[0].text(), "first");
+  assert_eq!(warning.items()[1].text(), "first");
+  assert_eq!(warning.items()[2].code(), 111);
+  assert_eq!(warning.items()[2].text(), "second");
+  assert_eq!(warning.items()[3].text(), "first");
+  assert_eq!(
+    warning.header_value(),
+    r#"110 - "first", 110 - "first", 111 cache "second", 110 - "first""#
+  );
 }
 
 #[test]
@@ -126,7 +192,7 @@ fn warning_rejects_malformed_quoting_invalid_codes_and_empty_members() {
     r#"110 - "ok" "not a date""#,
     r#"110  "missing-agent""#,
     r#"110 - "test""Sun, 06 Nov 1994 08:49:37 GMT""#,
-    r#"110 - "test" "Sun, 06 Nov 1994 08:49:37 GM\T""#,
+    r#"110 - "test" "Sun, 06 Nov 1994 08:49:37 GM\"""#,
   ] {
     assert!(Warning::parse(value).is_err(), "{value:?} must be rejected");
   }
@@ -141,10 +207,12 @@ fn warning_rejects_malformed_quoting_invalid_codes_and_empty_members() {
 fn warning_rejects_malformed_agents_with_controls_and_invalid_syntax() {
   for value in [
     "110 foo@bar \"text\"",
+    "110 user:pass@host \"text\"",
     "110 foo/bar \"text\"",
     "110 foo?bar \"text\"",
     "110 foo:bar:baz \"text\"",
     "110 [2001:db8::1 \"text\"",
+    "110 [::g] \"text\"",
     "110 agent\r \"text\"",
     "110 agent\n \"text\"",
     "110 agent\r\nX-Injected:1 \"text\"",
@@ -174,13 +242,46 @@ fn warning_formats_three_digit_codes_with_leading_zeros() {
 }
 
 #[test]
-fn warning_enforces_value_text_and_item_bounds_including_later_fields() {
+fn warning_header_value_round_trips_escaped_text_and_http_date() {
+  let warning = Warning::parse(
+    r#"099 proxy "say \"hi\"\\" "Wed, 21 Oct 2015 07:28:00 GM\T", 214 example.com: "Transformed""#,
+  )
+  .expect("escaped text and date should parse");
+
+  assert_eq!(warning.items()[0].text(), r#"say "hi"\"#);
+  assert_eq!(
+    warning.items()[0].date(),
+    Some(UNIX_EPOCH + Duration::from_secs(1_445_412_480))
+  );
+  assert_eq!(warning.items()[1].agent(), "example.com:");
+
+  let canonical = warning.header_value();
+  assert_eq!(
+    canonical,
+    r#"099 proxy "say \"hi\"\\" "Wed, 21 Oct 2015 07:28:00 GMT", 214 example.com: "Transformed""#
+  );
+
+  let round_trip = Warning::parse(&canonical).expect("canonical header_value should round-trip");
+  assert_eq!(round_trip, warning);
+  assert_eq!(round_trip.header_value(), canonical);
+}
+
+#[test]
+fn warning_enforces_value_text_agent_and_item_bounds_including_later_fields() {
   assert!(Warning::parse("x".repeat(MAX_WARNING_VALUE_BYTES + 1)).is_err());
   assert!(Warning::parse(format!(
     r#"110 - "{}""#,
     "x".repeat(MAX_WARNING_TEXT_BYTES + 1)
   ))
   .is_err());
+  assert!(
+    Warning::parse(format!(
+      r#"110 {} """#,
+      "a".repeat(MAX_WARNING_AGENT_BYTES + 1)
+    ))
+    .is_err(),
+    "oversized warn-agent must be rejected"
+  );
   assert!(
     Warning::parse_values([
       r#"110 - "ok""#,
