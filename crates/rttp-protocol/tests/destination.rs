@@ -125,14 +125,7 @@ fn counts_utf8_bytes_before_uri_validation() {
 
 #[test]
 fn rejects_destination_control_byte_injection() {
-  for control in 0u8..=31 {
-    let value = format!("https://example.test/a{}b", char::from(control));
-    assert!(
-      Destination::parse(value).is_err(),
-      "control byte {control} accepted"
-    );
-  }
-  for control in [127u8] {
+  for control in (0u8..=31).chain([127u8]) {
     let value = format!("https://example.test/a{}b", char::from(control));
     assert!(
       Destination::parse(value).is_err(),
