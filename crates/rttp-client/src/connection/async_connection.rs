@@ -33,9 +33,7 @@ use crate::connection::connection_reader::{
 };
 use crate::error;
 use crate::request::RawRequest;
-use crate::response::content_decode::{
-  strip_stale_representation_headers, StreamingDecodeStack,
-};
+use crate::response::content_decode::{strip_stale_representation_headers, StreamingDecodeStack};
 use crate::response::Response;
 use crate::types::{Header, Proxy, ProxyType};
 const CRLF: &[u8] = b"\r\n";
@@ -2334,7 +2332,9 @@ mod tests {
       let mut buf = [0u8; 8];
       let error = response.body_mut().read(&mut buf).await.unwrap_err();
       assert!(
-        error.to_string().starts_with("error decoding response body"),
+        error
+          .to_string()
+          .starts_with("error decoding response body"),
         "unexpected error: {error}"
       );
 

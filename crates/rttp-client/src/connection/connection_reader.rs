@@ -2198,12 +2198,10 @@ mod tests {
     let mut reader = ConnectionReader::new(&url, &mut cursor, false);
     let mut response = reader.streaming_response().unwrap();
 
-    assert!(response
-      .headers()
-      .unwrap()
-      .iter()
-      .all(|header| !header.name().eq_ignore_ascii_case("Content-Encoding")
-        && !header.name().eq_ignore_ascii_case("Content-Length")));
+    assert!(response.headers().unwrap().iter().all(|header| !header
+      .name()
+      .eq_ignore_ascii_case("Content-Encoding")
+      && !header.name().eq_ignore_ascii_case("Content-Length")));
 
     let mut decoded = Vec::new();
     let mut byte = [0u8; 1];

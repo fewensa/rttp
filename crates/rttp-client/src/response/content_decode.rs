@@ -114,12 +114,8 @@ pub(crate) struct StreamingDecodeStack {
 }
 
 enum DecoderLayer {
-  Gzip {
-    decoder: MultiGzDecoder<Vec<u8>>,
-  },
-  Deflate {
-    compressed: Vec<u8>,
-  },
+  Gzip { decoder: MultiGzDecoder<Vec<u8>> },
+  Deflate { compressed: Vec<u8> },
 }
 
 impl StreamingDecodeStack {
@@ -345,7 +341,7 @@ impl StreamingDecodeStack {
 
 pub(crate) fn streaming_decode_io_error(err: error::Error) -> io::Error {
   if err.is_body_too_large() {
-    io::Error::new(io::ErrorKind::Other, err)
+    io::Error::other(err)
   } else {
     io::Error::new(io::ErrorKind::InvalidData, err)
   }

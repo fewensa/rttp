@@ -736,12 +736,10 @@ fn test_streaming_gzip_decode_fragmented_and_concatenated_members() {
   let mut reader = ConnectionReader::new(&url, &mut cursor, false);
   let mut response = reader.streaming_response().unwrap();
 
-  assert!(response
-    .headers()
-    .unwrap()
-    .iter()
-    .all(|header| !header.name().eq_ignore_ascii_case("Content-Encoding")
-      && !header.name().eq_ignore_ascii_case("Content-Length")));
+  assert!(response.headers().unwrap().iter().all(|header| !header
+    .name()
+    .eq_ignore_ascii_case("Content-Encoding")
+    && !header.name().eq_ignore_ascii_case("Content-Length")));
 
   let mut decoded = Vec::new();
   let mut byte = [0u8; 1];
@@ -758,8 +756,16 @@ fn test_streaming_gzip_decode_fragmented_and_concatenated_members() {
 #[test]
 fn test_streaming_deflate_zlib_raw_malformed_and_materialize_wire() {
   for (label, body, plaintext) in [
-    ("zlib", zlib_bytes(b"stream-zlib"), b"stream-zlib".as_slice()),
-    ("raw", raw_deflate_bytes(b"stream-raw"), b"stream-raw".as_slice()),
+    (
+      "zlib",
+      zlib_bytes(b"stream-zlib"),
+      b"stream-zlib".as_slice(),
+    ),
+    (
+      "raw",
+      raw_deflate_bytes(b"stream-raw"),
+      b"stream-raw".as_slice(),
+    ),
   ] {
     let mut raw = format!(
       "HTTP/1.1 200 OK\r\nContent-Encoding: deflate\r\nContent-Length: {}\r\n\r\n",
