@@ -12,6 +12,11 @@
 //!   malformed responses. It retains the original binary for
 //!   `binary_get()` and `Response::binary()`; `string()` re-renders from
 //!   the parsed fields.
+//! - `content_decode` owns the shared Content-Encoding decoder-stack helpers
+//!   used by buffered `RawResponse` parsing and by sync/async streaming body
+//!   readers. Streaming installs a reverse-order gzip/deflate stack when the
+//!   coding list is fully supported, enforces decoded-size limits while
+//!   reading, and retains undecoded wire bytes for materialize paths.
 //! - `response` owns `Response`, the typed helper layer. It wraps `RawResponse`
 //!   and adds typed interpretation: status predicates, header, trailer, and
 //!   cookie lookups, typed header parsers such as `etag()`, `cache_control()`,
@@ -102,6 +107,7 @@ pub use rttp_protocol::cross_origin_resource_policy::{
 };
 pub use rttp_protocol::nel::{Nel, NelParseError, NelUnknownMember};
 
+pub(crate) mod content_decode;
 mod raw_response;
 mod response;
 

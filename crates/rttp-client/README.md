@@ -114,7 +114,22 @@ Successful buffered reads preserve the response status, headers, cookies, and
 trailers for access through the normal `Response` APIs. Successful content
 decoding still removes stale `Content-Encoding` and `Content-Length` from the
 parsed header view, while `Response::binary()` retains the original capture.
-Streaming bodies stay out of this buffered path; the async HTTP/2 APIs are buffered and apply the same decoder and limits as synchronous h2c responses.
+
+Sync and async HTTP/1.1 streaming body readers apply the same reverse-order
+`gzip`/`deflate` stack when the coding list is fully supported. Streaming
+differs from buffered decoding in a few deliberate ways: supported stacks are
+installed when the streaming response is created (and stale
+`Content-Encoding`/`Content-Length` are dropped from `headers()` at setup),
+decoded bytes are produced as `body_mut()` is read, gzip layers accept
+concatenated members, deflate layers buffer compressed input until framed EOF
+before the zlib-then-raw fallback, and `max_buffered_response_body_bytes`
+bounds decoded output while streaming. Materializing with
+`StreamingResponse::read_to_response` (or the async equivalent path) still
+captures undecoded wire bytes in `Response::binary()` and reuses the buffered
+decoder. Dropping a streaming response early cancels further body reads without
+panicking. Unsupported or parse-invalid stacks leave the framed body undecoded,
+matching buffered behavior. The async HTTP/2 APIs remain buffered and apply the
+same decoder and limits as synchronous h2c responses.
 
 ## Bounded Max-Forwards diagnostics
 
@@ -2239,7 +2254,8 @@ header-block model.
 | area | tested coverage | limits |
 |------|-----------------|--------|
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, up to 16 retained informational responses, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | A seventeenth skippable informational response is rejected; not a complete RFC conformance suite |
-| Buffered content decoding | Automatic gzip and deflate stacks (zlib-wrapped and raw DEFLATE) in reverse header order on buffered HTTP/1.1 and supported h2c paths; successful decoding drops stale `Content-Encoding`/`Content-Length`; unsupported or invalid stacks preserve headers and body; malformed layers fail atomically; size bounds apply per decoded layer; `Response::binary()` retains the original capture | No extra compression formats, streaming decode, or async HTTP/2 |
+| Buffered content decoding | Automatic gzip and deflate stacks (zlib-wrapped and raw DEFLATE) in reverse header order on buffered HTTP/1.1 and supported h2c paths; successful decoding drops stale `Content-Encoding`/`Content-Length`; unsupported or invalid stacks preserve headers and body; malformed layers fail atomically; size bounds apply per decoded layer; `Response::binary()` retains the original capture | No extra compression formats or async HTTP/2 streaming decode |
+| Streaming content decoding | Sync/async HTTP/1.1 streaming body readers install the same reverse-order gzip/deflate stack when fully supported; `headers()` drops stale `Content-Encoding`/`Content-Length` after setup; gzip accepts concatenated members; deflate buffers until framed EOF then zlib-then-raw; decoded-size limits apply while reading; materialize retains undecoded wire; early drop is safe; unsupported stacks leave framed bytes undecoded | No streaming HTTP/2 decode; deflate output is not incremental before framed EOF |
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata through the shared protocol type | Expect metadata does not gate body transmission; raw `header(("Expect", value))` remains an escape hatch; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, request blocking, prefetch execution, or cache behavior |
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |

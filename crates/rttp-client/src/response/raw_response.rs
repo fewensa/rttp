@@ -1,11 +1,13 @@
 use std::fmt;
-use std::io::Read;
 
 use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
 use crate::error;
+use crate::response::content_decode::{
+  content_decoders, decode_deflate_buffer, read_decoded_body_to_end,
+  strip_stale_representation_headers, ContentDecoder,
+};
 use crate::response::ResponseBody;
 use crate::types::{Cookie, Header, RoUrl, ToUrl};
-use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::cookie::HttpSetCookie;
 use rttp_protocol::http1::{is_header_value_byte, is_token, split_status_line};
 use rttp_protocol::is_sensitive_debug_header;
@@ -280,40 +282,20 @@ impl Parser {
     if let Some(decoders) = content_decoders(response.headers_get()) {
       let mut current = binary;
       for decoder in decoders.iter().rev() {
-        let mut decoded = Vec::new();
-        match decoder {
+        current = match decoder {
           ContentDecoder::Gzip => {
+            let mut decoded = Vec::new();
             read_decoded_body_to_end(
               &mut flate2::read::GzDecoder::new(current.as_slice()),
               &mut decoded,
               self.max_body_bytes,
             )?;
+            decoded
           }
-          ContentDecoder::Deflate => {
-            match read_decoded_body_to_end(
-              &mut flate2::read::ZlibDecoder::new(current.as_slice()),
-              &mut decoded,
-              self.max_body_bytes,
-            ) {
-              Ok(()) => {}
-              Err(error) if error.is_body_too_large() => return Err(error),
-              Err(_) => {
-                decoded.clear();
-                read_decoded_body_to_end(
-                  &mut flate2::read::DeflateDecoder::new(current.as_slice()),
-                  &mut decoded,
-                  self.max_body_bytes,
-                )?;
-              }
-            }
-          }
-        }
-        current = decoded;
+          ContentDecoder::Deflate => decode_deflate_buffer(&current, self.max_body_bytes)?,
+        };
       }
-      response.headers.retain(|header| {
-        !header.name().eq_ignore_ascii_case("Content-Encoding")
-          && !header.name().eq_ignore_ascii_case("Content-Length")
-      });
+      strip_stale_representation_headers(&mut response.headers);
       let body = ResponseBody::new(current);
       response.body(body);
       return Ok(());
@@ -322,28 +304,6 @@ impl Parser {
     let body = ResponseBody::new(binary);
     response.body(body);
     Ok(())
-  }
-}
-
-fn read_decoded_body_to_end<R: Read>(
-  reader: &mut R,
-  body: &mut Vec<u8>,
-  max_body_bytes: usize,
-) -> error::Result<()> {
-  let mut buffer = [0u8; 8 * 1024];
-  loop {
-    let remaining = max_body_bytes - body.len();
-    let read_limit = buffer.len().min(remaining.saturating_add(1));
-    let read = reader
-      .read(&mut buffer[..read_limit])
-      .map_err(error::decode)?;
-    if read == 0 {
-      return Ok(());
-    }
-    if read > remaining {
-      return Err(error::body_too_large(max_body_bytes));
-    }
-    body.extend_from_slice(&buffer[..read]);
   }
 }
 
@@ -364,32 +324,6 @@ fn decode_http1_text(bytes: &[u8]) -> String {
 
 fn response_status_has_no_body(status_code: u32) -> bool {
   (100..200).contains(&status_code) || status_code == 204 || status_code == 304
-}
-
-enum ContentDecoder {
-  Gzip,
-  Deflate,
-}
-
-fn content_decoders(headers: &[Header]) -> Option<Vec<ContentDecoder>> {
-  let parsed = ContentEncoding::parse_values(
-    headers
-      .iter()
-      .filter(|header| header.name().eq_ignore_ascii_case("Content-Encoding"))
-      .map(|header| header.value().as_str()),
-  )
-  .ok()?;
-  let mut decoders = Vec::with_capacity(parsed.len());
-  for coding in parsed.codings() {
-    if coding.eq_ignore_ascii_case("gzip") {
-      decoders.push(ContentDecoder::Gzip);
-    } else if coding.eq_ignore_ascii_case("deflate") {
-      decoders.push(ContentDecoder::Deflate);
-    } else {
-      return None;
-    }
-  }
-  Some(decoders)
 }
 
 #[cfg(test)]

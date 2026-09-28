@@ -27,12 +27,15 @@ use crate::connection::connection_reader::{
   append_informational_response, content_length_from_response_body_kind,
   is_skippable_informational_status, parse_informational_response, parse_response_field_line,
   response_body_kind, response_connection_reusable, response_connection_should_close,
-  response_headers, response_status_code, validate_response_trailer_header, ResponseBodyKind,
-  ResponseParts, MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_INFORMATIONAL_RESPONSES,
-  MAX_RESPONSE_HEAD_BYTES,
+  response_headers, response_status_code, streaming_decode_for_body,
+  validate_response_trailer_header, ResponseBodyKind, ResponseParts,
+  MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_INFORMATIONAL_RESPONSES, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::error;
 use crate::request::RawRequest;
+use crate::response::content_decode::{
+  strip_stale_representation_headers, StreamingDecodeStack,
+};
 use crate::response::Response;
 use crate::types::{Header, Proxy, ProxyType};
 const CRLF: &[u8] = b"\r\n";
@@ -194,6 +197,7 @@ impl AsyncWrite for AsyncHandoffConnection {
 
 pub struct AsyncStreamingResponse<'a, S: AsyncRead + Unpin + ?Sized> {
   head: Vec<u8>,
+  headers: Vec<Header>,
   body: AsyncResponseBodyReader<'a, S>,
 }
 
@@ -203,7 +207,7 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
   }
 
   pub fn headers(&self) -> error::Result<Vec<Header>> {
-    response_headers(&self.head)
+    Ok(self.headers.clone())
   }
 
   pub fn head(&self) -> &[u8] {
@@ -235,7 +239,7 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
     let mut binary = self.head;
     self
       .body
-      .read_to_end_bounded(&mut binary, max_body_bytes)
+      .read_wire_to_end_bounded(&mut binary, max_body_bytes)
       .await?;
     Ok(ResponseParts {
       binary,
@@ -256,10 +260,20 @@ pub struct AsyncResponseBodyReader<'a, S: AsyncRead + Unpin + ?Sized> {
   chunk_needs_crlf: bool,
   trailers: Vec<Header>,
   eof: bool,
+  decode: Option<StreamingDecodeStack>,
 }
 
 impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
+  #[allow(dead_code)]
   fn new(stream: &'a mut S, kind: ResponseBodyKind) -> Self {
+    Self::new_with_decode(stream, kind, None)
+  }
+
+  fn new_with_decode(
+    stream: &'a mut S,
+    kind: ResponseBodyKind,
+    decode: Option<StreamingDecodeStack>,
+  ) -> Self {
     let remaining = match kind {
       ResponseBodyKind::ContentLength(length) => length,
       _ => 0,
@@ -273,6 +287,7 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
       chunk_needs_crlf: false,
       trailers: Vec::new(),
       eof,
+      decode,
     }
   }
 
@@ -281,6 +296,13 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
   }
 
   pub async fn read(&mut self, buf: &mut [u8]) -> error::Result<usize> {
+    if self.decode.is_some() {
+      return self.read_decoded(buf).await;
+    }
+    self.read_framed(buf).await
+  }
+
+  async fn read_framed(&mut self, buf: &mut [u8]) -> error::Result<usize> {
     match self.kind {
       ResponseBodyKind::NoBody => Ok(0),
       ResponseBodyKind::ContentLength(_) => self.read_fixed_length(buf).await,
@@ -292,6 +314,37 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
         }
         Ok(read)
       }
+    }
+  }
+
+  async fn read_decoded(&mut self, buf: &mut [u8]) -> error::Result<usize> {
+    if buf.is_empty() {
+      return Ok(0);
+    }
+    loop {
+      if let Some(decode) = self.decode.as_mut() {
+        if let Some(copy) = decode.fill_pending(buf) {
+          return Ok(copy);
+        }
+        if decode.output_finished() {
+          return Ok(0);
+        }
+      }
+
+      let mut chunk = [0u8; 8 * 1024];
+      let read = self.read_framed(&mut chunk).await?;
+      let decode = self
+        .decode
+        .as_mut()
+        .expect("decode present for read_decoded");
+      if read == 0 {
+        decode.finish_input()?;
+        if let Some(copy) = decode.fill_pending(buf) {
+          return Ok(copy);
+        }
+        return Ok(0);
+      }
+      decode.feed_wire(&chunk[..read])?;
     }
   }
 
@@ -307,6 +360,7 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
     }
   }
 
+  #[allow(dead_code)]
   async fn read_to_end_bounded(
     &mut self,
     body: &mut Vec<u8>,
@@ -327,6 +381,44 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
       }
       body.extend_from_slice(&buffer[..read]);
     }
+  }
+
+  async fn read_wire_to_end_bounded(
+    &mut self,
+    binary: &mut Vec<u8>,
+    max_body_bytes: usize,
+  ) -> error::Result<usize> {
+    let mut wire = if let Some(decode) = self.decode.as_mut() {
+      decode.take_wire_capture()
+    } else {
+      Vec::new()
+    };
+    let decode = self.decode.take();
+    let start = wire.len();
+    let mut buffer = [0u8; 8 * 1024];
+    let result = loop {
+      let body_len = wire.len();
+      let remaining = max_body_bytes.saturating_sub(body_len);
+      let read_limit = buffer.len().min(remaining.saturating_add(1));
+      let read = match self.read_framed(&mut buffer[..read_limit]).await {
+        Ok(read) => read,
+        Err(error) => break Err(error),
+      };
+      if read == 0 {
+        break Ok(wire.len() - start);
+      }
+      if read > remaining {
+        break Err(error::body_too_large(max_body_bytes));
+      }
+      wire.extend_from_slice(&buffer[..read]);
+    };
+    self.decode = decode;
+    let read = result?;
+    if wire.len() > max_body_bytes {
+      return Err(error::body_too_large(max_body_bytes));
+    }
+    binary.extend_from_slice(&wire);
+    Ok(read)
   }
 
   async fn read_fixed_length(&mut self, buf: &mut [u8]) -> error::Result<usize> {
@@ -701,11 +793,15 @@ impl<'a> AsyncConnection<'a> {
   where
     S: AsyncRead + Unpin,
   {
-    let mut parts =
-      async_streaming_response_after_header(stream, self.conn.expect_no_response_body(), binary)
-        .await?
-        .read_to_parts(self.conn.config().max_buffered_response_body_bytes())
-        .await?;
+    let mut parts = async_streaming_response_after_header_with_limit(
+      stream,
+      self.conn.expect_no_response_body(),
+      binary,
+      self.conn.config().max_buffered_response_body_bytes(),
+    )
+    .await?
+    .read_to_parts(self.conn.config().max_buffered_response_body_bytes())
+    .await?;
     parts.informational_responses = informational_responses;
     Ok(parts)
   }
@@ -806,10 +902,34 @@ pub async fn async_streaming_response_after_header<S>(
 where
   S: AsyncRead + Unpin + ?Sized,
 {
+  async_streaming_response_after_header_with_limit(
+    stream,
+    expect_no_body,
+    head,
+    DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+  )
+  .await
+}
+
+pub async fn async_streaming_response_after_header_with_limit<S>(
+  stream: &mut S,
+  expect_no_body: bool,
+  head: Vec<u8>,
+  max_body_bytes: usize,
+) -> error::Result<AsyncStreamingResponse<'_, S>>
+where
+  S: AsyncRead + Unpin + ?Sized,
+{
   let kind = response_body_kind(&head, expect_no_body)?;
+  let mut headers = response_headers(&head)?;
+  let decode = streaming_decode_for_body(&headers, &kind, max_body_bytes);
+  if decode.is_some() {
+    strip_stale_representation_headers(&mut headers);
+  }
   Ok(AsyncStreamingResponse {
     head,
-    body: AsyncResponseBodyReader::new(stream, kind),
+    headers,
+    body: AsyncResponseBodyReader::new_with_decode(stream, kind, decode),
   })
 }
 
@@ -2107,6 +2227,165 @@ mod tests {
         cursor.get_ref().position(),
         "the extra informational head should be rejected before the final response is read"
       );
+    });
+  }
+
+  fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
+  }
+
+  fn zlib_bytes(bytes: &[u8]) -> Vec<u8> {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
+  }
+
+  fn raw_deflate_bytes(bytes: &[u8]) -> Vec<u8> {
+    use flate2::write::DeflateEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes).unwrap();
+    encoder.finish().unwrap()
+  }
+
+  fn encoded_streaming_raw(encoding: &str, body: &[u8]) -> Vec<u8> {
+    let mut raw = format!(
+      "HTTP/1.1 200 OK\r\nContent-Encoding: {encoding}\r\nContent-Length: {}\r\n\r\n",
+      body.len()
+    )
+    .into_bytes();
+    raw.extend_from_slice(body);
+    raw
+  }
+
+  #[test]
+  fn async_streaming_decode_gzip_fragmented_and_multi_member() {
+    block_on(async {
+      let body = gzip_bytes(b"async-hello");
+      let raw = encoded_streaming_raw("gzip", &body);
+      let mut cursor = AllowStdIo::new(Cursor::new(raw));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+        .await
+        .unwrap();
+      assert!(response
+        .headers()
+        .unwrap()
+        .iter()
+        .all(|header| !header.name().eq_ignore_ascii_case("Content-Encoding")));
+      let mut decoded = Vec::new();
+      let mut byte = [0u8; 1];
+      loop {
+        let read = response.body_mut().read(&mut byte).await.unwrap();
+        if read == 0 {
+          break;
+        }
+        decoded.push(byte[0]);
+      }
+      assert_eq!(b"async-hello", decoded.as_slice());
+
+      let mut multi = gzip_bytes(b"a");
+      multi.extend_from_slice(&gzip_bytes(b"b"));
+      let raw = encoded_streaming_raw("gzip", &multi);
+      let mut cursor = AllowStdIo::new(Cursor::new(raw));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+        .await
+        .unwrap();
+      let mut decoded = Vec::new();
+      response.body_mut().read_to_end(&mut decoded).await.unwrap();
+      assert_eq!(b"ab", decoded.as_slice());
+    });
+  }
+
+  #[test]
+  fn async_streaming_decode_zlib_raw_malformed_limit_and_early_drop() {
+    block_on(async {
+      for (expected, body) in [
+        (b"zlib-ok".as_slice(), zlib_bytes(b"zlib-ok")),
+        (b"raw-ok".as_slice(), raw_deflate_bytes(b"raw-ok")),
+      ] {
+        let raw = encoded_streaming_raw("deflate", &body);
+        let mut cursor = AllowStdIo::new(Cursor::new(raw));
+        let head = async_read_response_head(&mut cursor).await.unwrap();
+        let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+          .await
+          .unwrap();
+        let mut decoded = Vec::new();
+        response.body_mut().read_to_end(&mut decoded).await.unwrap();
+        assert_eq!(expected, decoded.as_slice());
+      }
+
+      let raw = encoded_streaming_raw("gzip", b"not-gzip");
+      let mut cursor = AllowStdIo::new(Cursor::new(raw));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+        .await
+        .unwrap();
+      let mut buf = [0u8; 8];
+      let error = response.body_mut().read(&mut buf).await.unwrap_err();
+      assert!(
+        error.to_string().starts_with("error decoding response body"),
+        "unexpected error: {error}"
+      );
+
+      let decoded = vec![b'a'; 256];
+      let body = gzip_bytes(&decoded);
+      assert!(body.len() <= 64);
+      let raw = encoded_streaming_raw("gzip", &body);
+      let mut cursor = AllowStdIo::new(Cursor::new(raw));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+      let mut response =
+        super::async_streaming_response_after_header_with_limit(&mut cursor, false, head, 64)
+          .await
+          .unwrap();
+      let mut out = Vec::new();
+      let error = response.body_mut().read_to_end(&mut out).await.unwrap_err();
+      assert!(error.is_body_too_large());
+      assert_eq!(Some(64), error.body_limit());
+
+      let body = gzip_bytes(b"early-drop");
+      let raw = encoded_streaming_raw("gzip", &body);
+      let mut cursor = AllowStdIo::new(Cursor::new(raw));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+        .await
+        .unwrap();
+      let mut buf = [0u8; 3];
+      let _ = response.body_mut().read(&mut buf).await.unwrap();
+      drop(response);
+    });
+  }
+
+  #[test]
+  fn async_streaming_decode_http11_parity_with_fragmented_stack() {
+    block_on(async {
+      let body = zlib_bytes(&gzip_bytes(b"parity"));
+      let raw = encoded_streaming_raw("gzip, deflate", &body);
+      let mut cursor = AllowStdIo::new(Cursor::new(raw));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+        .await
+        .unwrap();
+      let mut decoded = Vec::new();
+      let mut byte = [0u8; 1];
+      loop {
+        let read = response.body_mut().read(&mut byte).await.unwrap();
+        if read == 0 {
+          break;
+        }
+        decoded.push(byte[0]);
+      }
+      assert_eq!(b"parity", decoded.as_slice());
     });
   }
 }
