@@ -157,6 +157,12 @@ fn parse_media_type(
     } else {
       parse_token(value, position, header_name)?.to_string()
     };
+    if parameters
+      .iter()
+      .any(|parameter: &MediaTypeParameter| parameter.name.eq_ignore_ascii_case(&name))
+    {
+      return Err(format!("duplicate {header_name} media type parameter"));
+    }
     parameters.push(MediaTypeParameter {
       name,
       value: parameter_value,
