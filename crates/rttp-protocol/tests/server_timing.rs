@@ -96,6 +96,9 @@ fn server_timing_rejects_duplicates_malformed_durations_and_empty_members() {
     "db;dur=not-a-number",
     "db;dur=-1",
     "db;dur=-0.1",
+    "db;dur=-0",
+    "db;dur=-0.0",
+    "db;dur=-0e0",
     "db;dur=inf",
     "db;dur=+inf",
     "db;dur=-inf",
@@ -139,6 +142,37 @@ fn server_timing_rejects_duplicates_malformed_durations_and_empty_members() {
       ServerTiming::parse_values(values).is_err(),
       "empty combined fields must be rejected at index {index}"
     );
+  }
+}
+
+#[test]
+fn server_timing_accepts_exponent_durations_and_serializes_canonically() {
+  let timing = ServerTiming::parse("db;dur=1e3, cache;dur=2.50e-1")
+    .expect("finite non-negative exponent durations should parse");
+
+  assert_eq!(Some(1000.0), timing.metrics()[0].duration());
+  assert_eq!(Some(0.25), timing.metrics()[1].duration());
+  assert_eq!("db; dur=1000, cache; dur=0.25", timing.header_value());
+  assert_eq!(timing, ServerTiming::parse(timing.header_value()).unwrap());
+}
+
+#[test]
+fn server_timing_accepts_quoted_pair_controls_and_obs_text_without_corruption() {
+  let timing = ServerTiming::parse("db;desc=\"tab\\\t obs\\é raw-é\";note=\"\\é\"")
+    .expect("HTAB and obs-text quoted-pairs should parse");
+
+  assert_eq!(Some("tab\t obsé raw-é"), timing.metrics()[0].description());
+  assert_eq!(Some("é"), timing.metrics()[0].parameters()[0].value());
+  let canonical = timing.header_value();
+  assert_eq!("db; desc=\"tab\t obsé raw-é\"; note=\"é\"", canonical);
+  assert_eq!(timing, ServerTiming::parse(canonical).unwrap());
+
+  for value in [
+    "db;desc=\"bad\\\r\"",
+    "db;desc=\"bad\\\n\"",
+    "db;desc=\"bad\\\x00\"",
+  ] {
+    assert!(ServerTiming::parse(value).is_err(), "{value:?} must reject");
   }
 }
 
@@ -263,4 +297,29 @@ fn server_timing_enforces_value_metric_and_parameter_bounds() {
     ServerTiming::parse(&too_many_parameters).is_err(),
     "more than 256 extension parameters must be rejected"
   );
+
+  let repeated_at_limit = (0..MAX_SERVER_TIMING_PARAMETERS)
+    .map(|index| format!(";ext{index}=value"))
+    .collect::<String>();
+  let repeated_field = format!("db{repeated_at_limit}");
+  let parsed_repeated =
+    ServerTiming::parse_values([repeated_field.as_str(), repeated_field.as_str()])
+      .expect("parameter limits should apply independently to repeated metrics");
+  assert_eq!(2, parsed_repeated.len());
+  assert!(parsed_repeated
+    .metrics()
+    .iter()
+    .all(|metric| metric.parameters().len() == MAX_SERVER_TIMING_PARAMETERS));
+
+  let repeated_over_limit = format!("db{repeated_at_limit};overflow=value");
+  assert!(
+    ServerTiming::parse(&repeated_over_limit).is_err(),
+    "more than 256 parameters on one metric must be rejected"
+  );
+
+  let parsed_exact_value_repeated =
+    ServerTiming::parse_values([exact_value.as_str(), exact_value.as_str()]).expect(
+      "an exact-size field should remain valid when repeated in another Server-Timing field",
+    );
+  assert_eq!(2, parsed_exact_value_repeated.len());
 }

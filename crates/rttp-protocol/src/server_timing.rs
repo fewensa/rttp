@@ -220,7 +220,10 @@ fn parse_parameter(
     let duration = duration
       .parse::<f64>()
       .map_err(|_| ServerTimingParseError::new("invalid Server-Timing dur parameter"))?;
-    if !duration.is_finite() || duration < 0.0 || metric.duration.replace(duration).is_some() {
+    if !duration.is_finite()
+      || duration.is_sign_negative()
+      || metric.duration.replace(duration).is_some()
+    {
       return Err(ServerTimingParseError::new(
         "invalid Server-Timing dur parameter",
       ));
@@ -273,37 +276,34 @@ fn parse_quoted_string(
 ) -> Result<String, ServerTimingParseError> {
   let bytes = value.as_bytes();
   *position += 1;
-  let mut parsed = String::new();
-  let mut unescaped_start = *position;
-  let mut escaped = false;
-  while *position < bytes.len() {
-    let byte = bytes[*position];
-    if escaped {
-      *position += 1;
-      if !(byte == b'\t' || (0x20..=0x7e).contains(&byte)) {
+  let mut parsed = Vec::new();
+  while let Some(&byte) = bytes.get(*position) {
+    *position += 1;
+    match byte {
+      b'"' => {
+        return String::from_utf8(parsed)
+          .map_err(|_| ServerTimingParseError::new("invalid Server-Timing quoted-string"));
+      }
+      b'\\' => {
+        let Some(&escaped) = bytes.get(*position) else {
+          return Err(ServerTimingParseError::new(
+            "invalid Server-Timing quoted-string",
+          ));
+        };
+        if !is_quoted_pair_byte(escaped) {
+          return Err(ServerTimingParseError::new(
+            "invalid Server-Timing quoted-string",
+          ));
+        }
+        *position += 1;
+        parsed.push(escaped);
+      }
+      _ if is_quoted_text_byte(byte) => parsed.push(byte),
+      _ => {
         return Err(ServerTimingParseError::new(
           "invalid Server-Timing quoted-string",
-        ));
+        ))
       }
-      parsed.push(byte as char);
-      escaped = false;
-      unescaped_start = *position;
-    } else if byte == b'\\' {
-      parsed.push_str(&value[unescaped_start..*position]);
-      *position += 1;
-      escaped = true;
-    } else if byte == b'"' {
-      parsed.push_str(&value[unescaped_start..*position]);
-      *position += 1;
-      return Ok(parsed);
-    } else if !(byte == b'\t'
-      || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e | 0x80..=0xff))
-    {
-      return Err(ServerTimingParseError::new(
-        "invalid Server-Timing quoted-string",
-      ));
-    } else {
-      *position += 1;
     }
   }
   Err(ServerTimingParseError::new(
@@ -337,6 +337,12 @@ fn is_token(value: &str) -> bool {
 }
 fn is_token_byte(byte: u8) -> bool {
   matches!(byte, b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~' | b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z')
+}
+fn is_quoted_text_byte(byte: u8) -> bool {
+  byte == b'\t' || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e | 0x80..=0xff)
+}
+fn is_quoted_pair_byte(byte: u8) -> bool {
+  byte == b'\t' || matches!(byte, 0x20..=0x7e | 0x80..=0xff)
 }
 fn escape_quoted(value: &str) -> String {
   value.replace('\\', "\\\\").replace('"', "\\\"")
