@@ -4199,3 +4199,87 @@ fn set_cookie_facade_reuses_protocol_type_across_server_and_client() {
     assert!(!format!("{client_cookies:?}").contains("abc def"));
   }
 }
+
+#[test]
+fn set_cookie_facade_exposes_max_age_over_expires_and_repeated_fields() {
+  let session = HttpSetCookie::new("session", "abc def")
+    .expect("session cookie should be valid")
+    .with_expires("Wed, 21 Oct 2015 07:28:00 GMT")
+    .expect("Expires should be accepted")
+    .with_max_age(60)
+    .expect("Max-Age should be accepted")
+    .with_same_site(HttpSameSite::None)
+    .expect("SameSite=None should be accepted")
+    .with_secure()
+    .expect("Secure should be accepted");
+  let csrf = HttpSetCookie::new("csrf", "token")
+    .expect("csrf cookie should be valid")
+    .with_path("/form")
+    .expect("path should be accepted")
+    .with_max_age(0)
+    .expect("Max-Age=0 should be accepted");
+  let response = HttpResponse::ok("ok")
+    .with_set_cookie(session)
+    .with_set_cookie(csrf);
+  let server_cookies = response
+    .set_cookies()
+    .expect("server Set-Cookie should parse")
+    .expect("server Set-Cookie should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(2, server_cookies.len());
+  assert_eq!(Some(60), server_cookies.cookies()[0].max_age());
+  assert_eq!(
+    Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+    server_cookies.cookies()[0].expires()
+  );
+  assert_eq!(
+    Some(HttpSameSite::None),
+    server_cookies.cookies()[0].same_site()
+  );
+  assert!(server_cookies.cookies()[0].secure());
+  assert_eq!(Some(0), server_cookies.cookies()[1].max_age());
+  assert_eq!(2, serialized.matches("\r\nSet-Cookie: ").count());
+  assert_eq!(
+    server_cookies,
+    HttpSetCookies::parse_values([
+      r#"session="abc def"; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=60; SameSite=None; Secure"#,
+      "csrf=token; Path=/form; Max-Age=0",
+    ])
+    .expect("protocol collection should parse")
+  );
+
+  #[cfg(feature = "client")]
+  {
+    let client_response = rttp_client::response::Response::new(
+      rttp_client::types::RoUrl::with("http://example.test/"),
+      serialized.into_bytes(),
+    )
+    .expect("client should parse the server response");
+    let client_cookies = client_response
+      .set_cookies()
+      .expect("client Set-Cookie should parse")
+      .expect("client Set-Cookie should be present");
+    assert_eq!(server_cookies, client_cookies);
+    assert_eq!(
+      vec![
+        r#"session="abc def"; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=60; SameSite=None; Secure"#,
+        "csrf=token; Path=/form; Max-Age=0"
+      ],
+      client_response
+        .header_values("set-cookie")
+        .iter()
+        .map(|value| value.as_str())
+        .collect::<Vec<_>>()
+    );
+    let session = client_response
+      .cookie("session")
+      .expect("legacy session cookie");
+    assert_eq!(session.max_age(), Some(60));
+    assert!(session.expires().is_some());
+    assert_eq!(
+      r#"session="abc def"; max-age=60; secure; SameSite=None"#,
+      session.string()
+    );
+  }
+}

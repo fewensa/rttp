@@ -71,11 +71,11 @@ impl Cookie {
       ));
     }
     if self.persistent {
-      if let Some(expires) = self.expires {
+      if let Some(max_age) = self.max_age {
+        text.push_str(&format!("; max-age={}", max_age));
+      } else if let Some(expires) = self.expires {
         let http_date = httpdate::fmt_http_date(expires);
         text.push_str(&format!("; expires={}", http_date));
-      } else if let Some(max_age) = self.max_age {
-        text.push_str(&format!("; max-age={}", max_age));
       } else {
         text.push_str("; max-age=0")
       }
@@ -261,6 +261,7 @@ impl Cookie {
 #[cfg(test)]
 mod tests {
   use super::{Cookie, ToCookie};
+  use rttp_protocol::cookie::HttpSetCookie;
 
   fn assert_no_forbidden_wire_bytes(serialized: &str) {
     assert!(
@@ -563,15 +564,37 @@ mod tests {
   }
 
   #[test]
-  fn parse_expires_still_wins_over_max_age_in_string() {
+  fn parse_max_age_wins_over_expires_in_string() {
     let cookie =
       Cookie::parse("token=value; Max-Age=3600; Expires=Wed, 21 Oct 2015 07:28:00 GMT").unwrap();
 
     assert_eq!(cookie.max_age(), Some(3600));
     assert!(cookie.expires().is_some());
     assert!(cookie.persistent());
-    assert!(cookie.string().contains("expires="));
-    assert!(!cookie.string().contains("max-age="));
+    assert!(cookie.string().contains("max-age=3600"));
+    assert!(!cookie.string().contains("expires="));
+  }
+
+  #[test]
+  fn from_set_cookie_prefers_max_age_over_expires_and_keeps_samesite_none_secure() {
+    let set_cookie = HttpSetCookie::parse(
+      r#"token="abc def"; Max-Age=3600; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Secure; SameSite=None"#,
+    )
+    .expect("protocol Set-Cookie should parse");
+    let cookie = Cookie::from_set_cookie(&set_cookie);
+
+    assert_eq!(cookie.name(), "token");
+    assert_eq!(cookie.value(), "abc def");
+    assert_eq!(cookie.max_age(), Some(3600));
+    assert!(cookie.expires().is_some());
+    assert!(cookie.persistent());
+    assert!(cookie.secure());
+    assert_eq!(cookie.same_site().as_deref(), Some("None"));
+    assert_eq!(
+      cookie.string(),
+      r#"token="abc def"; max-age=3600; secure; SameSite=None"#
+    );
+    assert_no_forbidden_wire_bytes(&cookie.string());
   }
 
   #[test]
