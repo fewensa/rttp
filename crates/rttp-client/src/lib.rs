@@ -46,10 +46,11 @@
 //! direct `socket2` transport boundary: the client advertises
 //! `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`, emits `:method CONNECT` with
 //! `:protocol`, `:scheme`, `:authority`, and `:path`, and returns the peer's
-//! response through the normal `Response` API. Ordinary `CONNECT`,
+//! response through the normal `Response` API. Empty bodies end the stream on
+//! request HEADERS; non-empty buffered bodies are sent as DATA frames with
+//! `END_STREAM` and the existing flow-control path. Ordinary `CONNECT`,
 //! header-configured `:protocol` metadata, HTTP/1.1 `Upgrade` handoff requests,
-//! proxies, request bodies, and request trailers are rejected before the h2c
-//! request is sent.
+//! proxies, and request trailers are rejected before the h2c request is sent.
 //! It decodes incoming padded HEADERS, DATA, and trailer frames without
 //! exposing padding bytes, including response HPACK dynamic table entries.
 //! Peer `SETTINGS_HEADER_TABLE_SIZE` bounds outbound request dynamic indexing;

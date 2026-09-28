@@ -237,13 +237,6 @@ impl Http2RequestStream {
     self.decoded_headers.is_some() && self.end_stream && !self.in_header_continuation
   }
 
-  pub(crate) fn is_extended_connect(&self) -> bool {
-    self
-      .decoded_headers
-      .as_ref()
-      .is_some_and(DecodedHttp2RequestHeaders::is_extended_connect)
-  }
-
   pub(crate) fn finish_header_block(
     &mut self,
     decoder: &mut Http2HeaderDecoder,
@@ -788,10 +781,10 @@ pub(crate) fn invalid_http2_enable_connect_protocol_settings_error() -> io::Erro
   )
 }
 
-pub(crate) fn unsupported_http2_extended_connect_body_error() -> io::Error {
+pub(crate) fn unsupported_http2_extended_connect_trailers_error() -> io::Error {
   io::Error::new(
     io::ErrorKind::InvalidData,
-    "HTTP/2 extended CONNECT request bodies are unsupported",
+    "HTTP/2 extended CONNECT request trailers are unsupported",
   )
 }
 
@@ -902,10 +895,6 @@ pub(crate) struct DecodedHttp2RequestHeaders {
 }
 
 impl DecodedHttp2RequestHeaders {
-  pub(crate) fn is_extended_connect(&self) -> bool {
-    self.extended_connect_protocol.is_some()
-  }
-
   pub(crate) fn into_request(
     self,
     body: Vec<u8>,
@@ -926,8 +915,8 @@ impl DecodedHttp2RequestHeaders {
         "HTTP/2 extended CONNECT :protocol requires CONNECT",
       ));
     }
-    if self.extended_connect_protocol.is_some() && (!body.is_empty() || !trailers.is_empty()) {
-      return Err(unsupported_http2_extended_connect_body_error());
+    if self.extended_connect_protocol.is_some() && !trailers.is_empty() {
+      return Err(unsupported_http2_extended_connect_trailers_error());
     }
     let target = self
       .target
@@ -1929,9 +1918,6 @@ pub(crate) fn read_http2_response_flow_control_frame<S: Read + Write>(
           ));
         }
         let header_block_kind = if request_stream.decoded_headers.is_some() {
-          if request_stream.is_extended_connect() {
-            return Err(unsupported_http2_extended_connect_body_error());
-          }
           if frame.flags & HTTP2_FLAG_END_STREAM != HTTP2_FLAG_END_STREAM {
             return Err(io::Error::new(
               io::ErrorKind::InvalidData,
@@ -2022,9 +2008,6 @@ pub(crate) fn read_http2_response_flow_control_frame<S: Read + Write>(
             io::ErrorKind::InvalidData,
             "HTTP/2 DATA frame arrived before request headers",
           ));
-        }
-        if request_stream.is_extended_connect() {
-          return Err(unsupported_http2_extended_connect_body_error());
         }
 
         let data_payload = http2_data_payload_to_data(&frame.payload, frame.flags)?;
@@ -2804,7 +2787,9 @@ mod tests {
 
     let protocol_with_setting = encode_literal_fields(&[
       (b":method", b"CONNECT"),
+      (b":scheme", b"https"),
       (b":authority", b"example.test"),
+      (b":path", b"/ws"),
       (b":protocol", b"websocket"),
     ]);
     let decoded = decode_request_headers(&protocol_with_setting, true)
@@ -2812,6 +2797,66 @@ mod tests {
     assert_eq!(
       Some("websocket"),
       decoded.extended_connect_protocol.as_deref()
+    );
+
+    let request = decoded
+      .into_request(b"hello over extended CONNECT".to_vec(), Vec::new())
+      .expect("extended CONNECT request bodies should decode");
+    assert_eq!("CONNECT", request.method());
+    assert_eq!(Some("websocket"), request.extended_connect_protocol());
+    assert_eq!(b"hello over extended CONNECT", request.body());
+
+    let trailers = decode_request_headers(&protocol_with_setting, true)
+      .expect(":protocol should decode for trailer rejection");
+    let error = expect_decode_error(
+      trailers.into_request(
+        Vec::new(),
+        vec![("x-late".to_string(), "unsupported".to_string())],
+      ),
+      "extended CONNECT request trailers must be rejected",
+    );
+    assert_eq!(
+      "HTTP/2 extended CONNECT request trailers are unsupported",
+      error.to_string()
+    );
+
+    let ordinary_connect = decode_request_headers(
+      &encode_literal_fields(&[
+        (b":method", b"CONNECT"),
+        (b":authority", b"example.test:443"),
+        (b":path", b"/"),
+        (b":scheme", b"https"),
+      ]),
+      true,
+    )
+    .expect("ordinary CONNECT headers should decode");
+    let error = expect_decode_error(
+      ordinary_connect.into_request(Vec::new(), Vec::new()),
+      "ordinary CONNECT without :protocol must remain unsupported",
+    );
+    assert_eq!(
+      "HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported",
+      error.to_string()
+    );
+
+    let non_connect_protocol = decode_request_headers(
+      &encode_literal_fields(&[
+        (b":method", b"GET"),
+        (b":authority", b"example.test"),
+        (b":path", b"/"),
+        (b":scheme", b"https"),
+        (b":protocol", b"websocket"),
+      ]),
+      true,
+    )
+    .expect("non-CONNECT :protocol headers should decode");
+    let error = expect_decode_error(
+      non_connect_protocol.into_request(Vec::new(), Vec::new()),
+      "non-CONNECT :protocol must remain unsupported",
+    );
+    assert_eq!(
+      "HTTP/2 extended CONNECT :protocol requires CONNECT",
+      error.to_string()
     );
   }
 

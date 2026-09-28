@@ -694,9 +694,6 @@ impl HttpServer {
               ));
             }
             let header_block_kind = if request_stream.decoded_headers.is_some() {
-              if request_stream.is_extended_connect() {
-                return Err(unsupported_http2_extended_connect_body_error());
-              }
               if frame.flags & HTTP2_FLAG_END_STREAM != HTTP2_FLAG_END_STREAM {
                 return Err(io::Error::new(
                   io::ErrorKind::InvalidData,
@@ -786,9 +783,6 @@ impl HttpServer {
               io::ErrorKind::InvalidData,
               "HTTP/2 DATA frame arrived before request headers",
             ));
-          }
-          if request_stream.is_extended_connect() {
-            return Err(unsupported_http2_extended_connect_body_error());
           }
 
           let data_payload = http2_data_payload_to_data(&frame.payload, frame.flags)?;

@@ -200,9 +200,10 @@ impl HttpClient {
   /// This is only honored by `emit_http2_prior_knowledge` with the `http2`
   /// feature enabled. The client opens a direct `socket2` h2c TCP connection,
   /// advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`, emits `:method
-  /// CONNECT`, and includes the configured `:protocol` pseudo-header. It
-  /// returns the peer's HTTP/2 response through the normal `Response` API; it
-  /// does not hand an upgraded socket to the caller.
+  /// CONNECT`, and includes the configured `:protocol` pseudo-header. Empty
+  /// bodies end the stream on request HEADERS; non-empty buffered bodies are
+  /// sent as DATA frames. It returns the peer's HTTP/2 response through the
+  /// normal `Response` API; it does not hand an upgraded socket to the caller.
   #[cfg(feature = "http2")]
   pub fn http2_extended_connect<S: AsRef<str>>(&mut self, protocol: S) -> &mut Self {
     self

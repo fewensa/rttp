@@ -3499,29 +3499,39 @@ fn h2c_extended_connect_dispatches_after_initial_connect_protocol_negotiation() 
 }
 
 #[test]
-fn h2c_extended_connect_rejects_body_or_trailers_before_handler() {
-  for case in ["data", "trailers"] {
+fn h2c_extended_connect_forwards_empty_data_end_stream_and_fragmented_bodies() {
+  for (case, chunks, expected_body) in [
+    ("empty-data-end-stream", vec![&b""[..]], Vec::new()),
+    (
+      "fragmented",
+      vec![&b"hel"[..], &b"lo"[..]],
+      b"hello".to_vec(),
+    ),
+  ] {
     let server = rttp::Http::server("127.0.0.1:0")
-      .expect("bind bounded h2 extended connect server")
+      .expect("bind h2 extended connect body server")
       .with_read_timeout(Some(Duration::from_secs(2)))
       .with_write_timeout(Some(Duration::from_secs(2)));
-    let addr = server
-      .local_addr()
-      .expect("bounded h2 extended connect addr");
+    let addr = server.local_addr().expect("h2 extended connect body addr");
     let (tx, rx) = mpsc::channel();
+    let expected = expected_body.clone();
 
     let handle = thread::spawn(move || {
-      server.accept_one(|request| {
-        tx.send((request.method().to_string(), request.body().to_vec()))
-          .expect("send unexpected extended CONNECT body dispatch");
-        HttpResponse::ok("unexpected extended CONNECT body dispatch")
-      })
+      server
+        .accept_one(|request| {
+          assert_eq!("CONNECT", request.method());
+          assert_eq!(Some("websocket"), request.extended_connect_protocol());
+          tx.send(request.body().to_vec())
+            .expect("send extended CONNECT body");
+          HttpResponse::ok("extended connect body dispatched")
+        })
+        .expect("serve extended CONNECT body")
     });
 
-    let mut stream = TcpStream::connect(addr).expect("connect bounded h2 extended connect server");
+    let mut stream = TcpStream::connect(addr).expect("connect h2 extended connect body server");
     stream
-      .set_read_timeout(Some(Duration::from_millis(200)))
-      .expect("set bounded h2 extended connect read timeout");
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set h2 extended connect body read timeout");
     complete_h2_server_handshake_with_settings(
       &mut stream,
       &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
@@ -3531,47 +3541,323 @@ fn h2c_extended_connect_rejects_body_or_trailers_before_handler() {
       H2_FRAME_HEADERS,
       H2_FLAG_END_HEADERS,
       1,
-      &h2_extended_connect_headers(b"/bounded-ws", addr.to_string().as_bytes(), b"websocket"),
+      &h2_extended_connect_headers(
+        format!("/{case}").as_bytes(),
+        addr.to_string().as_bytes(),
+        b"websocket",
+      ),
     );
-    match case {
-      "data" => write_h2_frame(
-        &mut stream,
-        H2_FRAME_DATA,
-        H2_FLAG_END_STREAM,
-        1,
-        b"outside bounded scope",
-      ),
-      "trailers" => write_h2_frame(
-        &mut stream,
-        H2_FRAME_HEADERS,
-        H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
-        1,
-        &h2_literal_new_name(b"x-late", b"outside-bounded-scope"),
-      ),
-      _ => unreachable!(),
+    for (index, chunk) in chunks.iter().enumerate() {
+      let flags = if index + 1 == chunks.len() {
+        H2_FLAG_END_STREAM
+      } else {
+        0
+      };
+      write_h2_frame(&mut stream, H2_FRAME_DATA, flags, 1, chunk);
     }
-    stream
-      .flush()
-      .expect("flush bounded h2 extended CONNECT request");
-    let _ = try_read_h2_frame(&mut stream);
-    drop(stream);
+    stream.flush().expect("flush extended CONNECT body request");
 
-    let err = handle
+    let body = rx
+      .recv_timeout(Duration::from_secs(2))
+      .unwrap_or_else(|_| panic!("receive extended CONNECT {case} body"));
+    assert_eq!(expected, body, "{case}");
+    handle
       .join()
-      .expect("bounded h2 extended connect server thread")
-      .expect_err("extended CONNECT body boundary must reject before handler");
-    assert_eq!(io::ErrorKind::InvalidData, err.kind(), "{case}");
-    assert!(
-      err
-        .to_string()
-        .contains("HTTP/2 extended CONNECT request bodies are unsupported"),
-      "unexpected bounded extended CONNECT rejection for {case}: {err}"
-    );
-    assert!(
-      rx.try_recv().is_err(),
-      "bounded extended CONNECT {case} must not dispatch"
-    );
+      .expect("h2 extended connect body server thread");
   }
+}
+
+#[test]
+fn h2c_extended_connect_rejects_bounded_flow_controlled_cancelled_malformed_and_trailer_bodies() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind bounded h2 extended connect server")
+    .with_max_request_body_bytes(4)
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("bounded h2 extended connect addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request.body().to_vec())
+        .expect("send unexpected oversized extended CONNECT body");
+      HttpResponse::ok("unexpected oversized extended CONNECT body")
+    })
+  });
+  let mut stream = TcpStream::connect(addr).expect("connect bounded h2 extended connect server");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_extended_connect_headers(b"/bounded-ws", addr.to_string().as_bytes(), b"websocket"),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"abc");
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 1, b"de");
+  stream.flush().expect("flush bounded extended CONNECT body");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown bounded extended CONNECT write");
+  let err = handle
+    .join()
+    .expect("bounded h2 extended connect server thread")
+    .expect_err("oversized extended CONNECT body must reject before handler");
+  assert_eq!(io::ErrorKind::InvalidData, err.kind());
+  assert_eq!("request body is too large", err.to_string());
+  assert!(
+    rx.try_recv().is_err(),
+    "oversized extended CONNECT body must not dispatch"
+  );
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind flow-controlled h2 extended connect server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("flow-controlled h2 extended connect addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.body().to_vec())
+          .expect("send flow-controlled extended CONNECT body");
+        HttpResponse::ok("flow-controlled extended connect")
+      })
+      .expect("serve flow-controlled extended CONNECT")
+  });
+  let mut stream =
+    TcpStream::connect(addr).expect("connect flow-controlled h2 extended connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set flow-controlled extended CONNECT read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_extended_connect_headers(
+      b"/flow-controlled-ws",
+      addr.to_string().as_bytes(),
+      b"websocket",
+    ),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"flow");
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 1, b"-ok");
+  stream
+    .flush()
+    .expect("flush flow-controlled extended CONNECT body");
+  let connection_window = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_WINDOW_UPDATE, connection_window.frame_type);
+  assert_eq!(0, connection_window.stream_id);
+  assert_eq!(4u32.to_be_bytes(), connection_window.payload.as_slice());
+  let stream_window = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_WINDOW_UPDATE, stream_window.frame_type);
+  assert_eq!(1, stream_window.stream_id);
+  assert_eq!(4u32.to_be_bytes(), stream_window.payload.as_slice());
+  assert_eq!(
+    b"flow-ok".to_vec(),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("receive flow-controlled extended CONNECT body")
+  );
+  handle
+    .join()
+    .expect("flow-controlled h2 extended connect server thread");
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind cancelled h2 extended connect server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("cancelled h2 extended connect addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(1, |request| {
+        tx.send((
+          request.target().to_string(),
+          request.body().to_vec(),
+          request.extended_connect_protocol().map(str::to_string),
+        ))
+        .expect("send surviving extended CONNECT request");
+        HttpResponse::ok("survived reset")
+      })
+      .expect("serve extended CONNECT after reset")
+  });
+  let mut stream = TcpStream::connect(addr).expect("connect cancelled h2 extended connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set cancelled extended CONNECT read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_extended_connect_headers(b"/reset-ws", addr.to_string().as_bytes(), b"websocket"),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"drop this body");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_RST_STREAM,
+    0,
+    1,
+    &H2_ERROR_CANCEL.to_be_bytes(),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_extended_connect_headers(
+      b"/after-reset-ws",
+      addr.to_string().as_bytes(),
+      b"websocket",
+    ),
+  );
+  stream
+    .flush()
+    .expect("flush cancelled extended CONNECT matrix");
+  let response_headers = (0..8)
+    .map(|_| read_h2_frame(&mut stream))
+    .find(|frame| frame.frame_type == H2_FRAME_HEADERS && frame.stream_id == 3)
+    .expect("surviving extended CONNECT response headers");
+  assert_eq!(3, response_headers.stream_id);
+  assert_eq!(
+    (
+      "/after-reset-ws".to_string(),
+      Vec::new(),
+      Some("websocket".to_string()),
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("receive surviving extended CONNECT request")
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "reset extended CONNECT stream must not dispatch"
+  );
+  handle
+    .join()
+    .expect("cancelled h2 extended connect server thread");
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind malformed h2 extended connect server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("malformed h2 extended connect addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request.body().to_vec())
+        .expect("send unexpected malformed extended CONNECT body");
+      HttpResponse::ok("unexpected malformed extended CONNECT body")
+    })
+  });
+  let mut stream = TcpStream::connect(addr).expect("connect malformed h2 extended connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set malformed extended CONNECT read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_extended_connect_headers(b"/malformed-ws", addr.to_string().as_bytes(), b"websocket"),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_DATA,
+    H2_FLAG_PADDED | H2_FLAG_END_STREAM,
+    1,
+    &[10, b'x'],
+  );
+  stream
+    .flush()
+    .expect("flush malformed extended CONNECT body");
+  drop(stream);
+  let err = handle
+    .join()
+    .expect("malformed h2 extended connect server thread")
+    .expect_err("malformed extended CONNECT DATA must reject before handler");
+  assert_eq!(io::ErrorKind::InvalidData, err.kind());
+  assert!(rx.try_recv().is_err(), "malformed DATA must not dispatch");
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind trailer h2 extended connect server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("trailer h2 extended connect addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request.body().to_vec())
+        .expect("send unexpected extended CONNECT trailer dispatch");
+      HttpResponse::ok("unexpected extended CONNECT trailer dispatch")
+    })
+  });
+  let mut stream = TcpStream::connect(addr).expect("connect trailer h2 extended connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set trailer extended CONNECT read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_extended_connect_headers(b"/trailer-ws", addr.to_string().as_bytes(), b"websocket"),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_literal_new_name(b"x-late", b"outside-bounded-scope"),
+  );
+  stream
+    .flush()
+    .expect("flush extended CONNECT trailer request");
+  let _ = try_read_h2_frame(&mut stream);
+  drop(stream);
+  let err = handle
+    .join()
+    .expect("trailer h2 extended connect server thread")
+    .expect_err("extended CONNECT trailers must reject before handler");
+  assert_eq!(io::ErrorKind::InvalidData, err.kind());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 extended CONNECT request trailers are unsupported"),
+    "unexpected extended CONNECT trailer rejection: {err}"
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "extended CONNECT trailers must not dispatch"
+  );
 }
 
 #[test]
@@ -3724,30 +4010,95 @@ fn cross_crate_h2c_extended_connect_matrix_preserves_http11_handoffs() {
     .join()
     .expect("cross-crate h2 extended connect server thread");
 
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind cross-crate body preflight peer");
-  listener
-    .set_nonblocking(true)
-    .expect("set cross-crate body preflight peer nonblocking");
-  let addr = listener
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind cross-crate extended CONNECT body server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
     .local_addr()
-    .expect("cross-crate body preflight addr");
-  let err = HttpClient::new()
+    .expect("cross-crate extended CONNECT body addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.method().to_string(),
+          request.target().to_string(),
+          request.extended_connect_protocol().map(str::to_string),
+          request.body().to_vec(),
+        ))
+        .expect("send cross-crate extended CONNECT body");
+        HttpResponse::ok("cross-crate extended connect body")
+      })
+      .expect("serve cross-crate h2 extended CONNECT body")
+  });
+  let response = HttpClient::new()
     .http2_extended_connect("websocket")
     .url(format!("http://{}/chat", addr))
-    .raw("outside bounded extended CONNECT scope")
+    .raw("hello over extended CONNECT")
     .emit_http2_prior_knowledge()
-    .expect_err("extended CONNECT request body must be rejected before connecting");
-  assert!(err.is_builder());
-  assert!(
-    err
-      .to_string()
-      .contains("HTTP/2 extended CONNECT cannot send a request body"),
-    "unexpected cross-crate body preflight error: {err}"
+    .expect("cross-crate h2 extended CONNECT body response");
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    "cross-crate extended connect body",
+    response.body().string().unwrap()
   );
-  assert!(
-    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
-    "cross-crate extended CONNECT body preflight must not open a server connection"
+  assert_eq!(
+    (
+      "CONNECT".to_string(),
+      "/chat".to_string(),
+      Some("websocket".to_string()),
+      b"hello over extended CONNECT".to_vec(),
+    ),
+    rx.recv()
+      .expect("receive cross-crate extended CONNECT body")
   );
+  handle
+    .join()
+    .expect("cross-crate h2 extended connect body server thread");
+
+  #[cfg(feature = "async")]
+  {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind async cross-crate extended CONNECT body server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server
+      .local_addr()
+      .expect("async cross-crate extended CONNECT body addr");
+    let (tx, rx) = mpsc::channel();
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send(request.body().to_vec())
+            .expect("send async extended CONNECT body");
+          HttpResponse::ok("async extended connect body")
+        })
+        .expect("serve async h2 extended CONNECT body")
+    });
+    let response = futures::executor::block_on(async {
+      HttpClient::new()
+        .http2_extended_connect("websocket")
+        .url(format!("http://{}/async-chat", addr))
+        .raw("async body")
+        .rasync_http2_prior_knowledge()
+        .await
+    })
+    .expect("async cross-crate h2 extended CONNECT body response");
+    assert_eq!(200, response.code());
+    assert_eq!(
+      "async extended connect body",
+      response.body().string().unwrap()
+    );
+    assert_eq!(
+      b"async body".to_vec(),
+      rx.recv().expect("receive async extended CONNECT body")
+    );
+    handle
+      .join()
+      .expect("async cross-crate h2 extended connect body server thread");
+  }
 
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind missing-connect-protocol server")
