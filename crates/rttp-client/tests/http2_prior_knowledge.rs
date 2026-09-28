@@ -3045,16 +3045,15 @@ fn prior_knowledge_put_and_patch_send_body_data_frames() {
 }
 
 #[test]
-fn prior_knowledge_rejects_configured_proxy_before_connecting() {
+fn prior_knowledge_routes_through_configured_http_proxy() {
   let err = HttpClient::new()
     .get()
     .url("http://127.0.0.1:9/proxy")
     .proxy(Proxy::http("127.0.0.1", 8080))
     .emit_http2_prior_knowledge()
-    .expect_err("prior knowledge does not support proxies");
+    .expect_err("the configured proxy should be contacted");
 
-  assert!(err.is_builder());
-  assert!(err.to_string().contains("does not support proxies"));
+  assert!(!err.is_builder());
 }
 
 #[test]
