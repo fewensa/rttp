@@ -870,9 +870,12 @@ delegate to the shared protocol type and return bounded `HttpExpectations`
 aliases. `expects_continue()` identifies the standardized expectation, while
 `unsupported()` preserves extension names for handler policy. Absent fields
 return `Ok(None)`; malformed, duplicate, oversized, or excessive values
-return `HttpExpectParseError` without changing the raw request. The server
-does not automatically send `100 Continue` or reject unsupported
-expectations.
+return `HttpExpectParseError` without changing the raw request. For HTTP/1.1
+requests with a non-empty body, the server validates syntax, expectation policy,
+framing, `Host`, and configured limits, then sends and flushes exactly one
+`100 Continue` before consuming the body. Unsupported or malformed
+expectations and other head-validation failures receive a final error response
+without an interim response.
 
 ### Bounded Authorization request metadata
 
@@ -3449,8 +3452,10 @@ chunked request bodies, exposes chunked request trailers, applies bounded
 request head/body validation, handles `HEAD` without writing a response body,
 honors `Connection` close/keep-alive semantics across a bounded
 `serve_requests` loop, writes response body framing and response trailers
-consistently, and exposes `Expect: 100-continue` metadata without automatically
-sending an interim response or rejecting extensions. On the same socket2 listener,
+consistently, and handles `Expect: 100-continue` by validating the request
+head and sending one flushed interim response before body consumption.
+Unsupported expectations are rejected with `417 Expectation Failed` without
+an interim response. On the same socket2 listener,
 the accept path detects either the HTTP/2 client preface or an HTTP/1.1
 `Upgrade: h2c` request and dispatches the resulting h2c connection to the same
 minimal bounded handler, including bodyless DELETE, OPTIONS, and TRACE
@@ -3597,7 +3602,7 @@ TLS or async accept loops.
 
 | area | tested coverage | limits |
 |------|-----------------|--------|
-| HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, protocol-owned `Expect` metadata including `100-continue`, and obsolete line folding rejection | Expect metadata does not send `100 Continue` or reject unsupported extensions; intended for local tests and simple embedded use, not full RFC coverage |
+| HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, protocol-owned `Expect` metadata including `100-continue`, and obsolete line folding rejection | Expect policy is limited to `100-continue`; unsupported expectations receive `417`; intended for local tests and simple embedded use, not full RFC coverage |
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` gates it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range`, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, MIME detection, automatic cache validation, automatic static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |

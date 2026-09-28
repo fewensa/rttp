@@ -5312,7 +5312,7 @@ fn server_request_body_stops_at_declared_content_length() {
 }
 
 #[test]
-fn server_exposes_continue_metadata_without_sending_an_interim_response() {
+fn server_exposes_continue_metadata_after_sending_an_interim_response() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -5354,7 +5354,7 @@ fn server_exposes_continue_metadata_without_sending_an_interim_response() {
   let request: Request = rx.recv().expect("receive parsed request");
   assert_eq!(b"hello", request.body());
   assert_eq!(
-    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
     response
   );
 
@@ -5413,7 +5413,8 @@ fn server_keeps_expect_metadata_request_body_aligned_before_follow_up_request() 
     .shutdown(std::net::Shutdown::Write)
     .expect("shutdown write");
 
-  let expected_first = b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nserved /first";
+  let expected_first =
+    b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nserved /first";
   let mut first = vec![0u8; expected_first.len()];
   stream.read_exact(&mut first).expect("read first response");
   assert_eq!(expected_first, first.as_slice());
@@ -5443,7 +5444,7 @@ fn server_keeps_expect_metadata_request_body_aligned_before_follow_up_request() 
 }
 
 #[test]
-fn server_reads_expected_chunked_body_without_sending_an_interim_response() {
+fn server_reads_expected_chunked_body_after_sending_an_interim_response() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -5487,7 +5488,7 @@ fn server_reads_expected_chunked_body_without_sending_an_interim_response() {
   let request: Request = rx.recv().expect("receive parsed request");
   assert_eq!(b"Wikipedia", request.body());
   assert_eq!(
-    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
     response
   );
 
@@ -5534,7 +5535,7 @@ fn server_does_not_send_continue_for_expect_with_zero_content_length() {
 }
 
 #[test]
-fn server_exposes_unsupported_expectation_to_the_handler() {
+fn server_rejects_unsupported_expectation_without_handler_dispatch() {
   let (response, handler_called) = send_raw_request(
     concat!(
       "POST /submit HTTP/1.1\r\n",
@@ -5547,25 +5548,20 @@ fn server_exposes_unsupported_expectation_to_the_handler() {
     .as_bytes(),
   );
 
-  assert!(handler_called);
+  assert!(!handler_called);
   assert_eq!(
-    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    "HTTP/1.1 417 Expectation Failed\r\nContent-Length: 18\r\nConnection: close\r\n\r\nExpectation Failed",
     response
   );
 }
 
 #[test]
-fn server_does_not_reject_unsupported_expectation_before_body_is_sent() {
+fn server_rejects_unsupported_expectation_before_body_is_sent() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
-  let (tx, rx) = mpsc::channel();
-
   let handle = thread::spawn(move || {
     server
-      .accept_one(|request| {
-        tx.send(request).expect("send parsed request");
-        HttpResponse::ok("unexpected")
-      })
+      .accept_one(|_| panic!("handler must not run"))
       .expect("serve one request");
   });
 
@@ -5586,15 +5582,14 @@ fn server_does_not_reject_unsupported_expectation_before_body_is_sent() {
     )
     .expect("write request head");
 
-  stream.write_all(b"hello").expect("write request body");
   stream
     .shutdown(std::net::Shutdown::Write)
     .expect("shutdown write");
   let mut response = String::new();
   stream.read_to_string(&mut response).expect("read response");
 
-  assert!(response.starts_with("HTTP/1.1 200 OK"));
-  assert_eq!(b"hello", rx.recv().expect("receive request").body());
+  assert!(response.starts_with("HTTP/1.1 417 Expectation Failed"));
+  assert!(!response.contains("100 Continue"));
 
   handle.join().expect("server thread");
 }

@@ -2320,7 +2320,7 @@ fn live_socket2_server_keeps_http10_alive_when_explicitly_requested() {
 }
 
 #[test]
-fn live_socket2_server_reads_shared_expect_body_without_an_interim_response() {
+fn live_socket2_server_reads_shared_expect_body_after_an_interim_response() {
   let fixture = fixtures::request::expect_continue_fixed_length();
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -2354,7 +2354,7 @@ fn live_socket2_server_reads_shared_expect_body_without_an_interim_response() {
     .read_to_string(&mut response)
     .expect("read final response");
 
-  assert!(response.starts_with("HTTP/1.1 200 OK"));
+  assert!(response.starts_with("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK"));
   assert_eq!(
     (fixture.target.to_string(), fixture.body.to_vec()),
     rx.recv().expect("parsed request")
@@ -2364,17 +2364,12 @@ fn live_socket2_server_reads_shared_expect_body_without_an_interim_response() {
 }
 
 #[test]
-fn live_socket2_server_exposes_unsupported_expectation_without_rejecting_body() {
+fn live_socket2_server_rejects_unsupported_expectation_without_handler_dispatch() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
-  let (tx, rx) = mpsc::channel();
-
   let handle = thread::spawn(move || {
     server
-      .accept_one(|request| {
-        tx.send(request.target().to_string()).expect("send request");
-        HttpResponse::ok("unexpected")
-      })
+      .accept_one(|_| panic!("handler must not run"))
       .expect("serve one request");
   });
 
@@ -2395,18 +2390,12 @@ fn live_socket2_server_exposes_unsupported_expectation_without_rejecting_body() 
     )
     .expect("write unsupported expectation head");
 
-  stream
-    .write_all(b"request body")
-    .expect("write request body");
   stream.shutdown(Shutdown::Write).expect("shutdown write");
   let mut response = String::new();
   stream.read_to_string(&mut response).expect("read response");
 
-  assert!(response.starts_with("HTTP/1.1 200 OK"));
-  assert_eq!(
-    "/matrix/unsupported-expect",
-    rx.recv().expect("parsed request")
-  );
+  assert!(response.starts_with("HTTP/1.1 417 Expectation Failed"));
+  assert!(!response.contains("100 Continue"));
 
   handle.join().expect("server thread");
 }

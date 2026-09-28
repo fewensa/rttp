@@ -500,19 +500,61 @@ pub(crate) fn validate_http2_settings_payload(payload: &[u8]) -> io::Result<()> 
 }
 
 pub(crate) fn h2c_upgrade_settings(request: &Request) -> io::Result<Option<Vec<u8>>> {
-  if !request
-    .header("Upgrade")
-    .is_some_and(|value| connection_header_has_token(Some(value), "h2c"))
-  {
+  parse_h2c_upgrade_settings(
+    request.version(),
+    request.method(),
+    request
+      .headers
+      .iter()
+      .map(|(name, value)| (name.as_str(), value.as_str())),
+    request.body().is_empty(),
+  )
+}
+
+pub(crate) fn validate_h2c_upgrade_head(
+  head: &RequestHead,
+  body_kind: RequestBodyKind,
+) -> io::Result<()> {
+  parse_h2c_upgrade_settings(
+    &head.version,
+    &head.method,
+    head
+      .headers
+      .iter()
+      .map(|(name, value)| (name.as_str(), value.as_str())),
+    matches!(body_kind, RequestBodyKind::ContentLength(0)),
+  )
+  .map(|_| ())
+}
+
+fn parse_h2c_upgrade_settings<'a>(
+  version: &str,
+  method: &str,
+  headers: impl IntoIterator<Item = (&'a str, &'a str)>,
+  body_is_empty: bool,
+) -> io::Result<Option<Vec<u8>>> {
+  let headers: Vec<(&str, &str)> = headers.into_iter().collect();
+  if !headers.iter().any(|(name, value)| {
+    name.eq_ignore_ascii_case("Upgrade") && connection_header_has_token(Some(value), "h2c")
+  }) {
     return Ok(None);
   }
 
-  if request.version() != "HTTP/1.1"
-    || request.method().eq_ignore_ascii_case("CONNECT")
-    || !request.connection_header_has_token("upgrade")
-    || !request.connection_header_has_token("http2-settings")
-    || request.headers_named("HTTP2-Settings").count() != 1
-    || !request.body().is_empty()
+  let connection_has_token = |token: &str| {
+    headers.iter().any(|(name, value)| {
+      name.eq_ignore_ascii_case("Connection") && connection_header_has_token(Some(value), token)
+    })
+  };
+  if version != "HTTP/1.1"
+    || method.eq_ignore_ascii_case("CONNECT")
+    || !connection_has_token("upgrade")
+    || !connection_has_token("http2-settings")
+    || headers
+      .iter()
+      .filter(|(name, _)| name.eq_ignore_ascii_case("HTTP2-Settings"))
+      .count()
+      != 1
+    || !body_is_empty
   {
     return Err(io::Error::new(
       io::ErrorKind::InvalidData,
@@ -520,8 +562,10 @@ pub(crate) fn h2c_upgrade_settings(request: &Request) -> io::Result<Option<Vec<u
     ));
   }
 
-  let settings = request
-    .header("HTTP2-Settings")
+  let settings = headers
+    .iter()
+    .find(|(name, _)| name.eq_ignore_ascii_case("HTTP2-Settings"))
+    .map(|(_, value)| *value)
     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP2-Settings header"))?;
   let payload = decode_base64url_unpadded(trim_http_ows(settings))?;
   validate_http2_settings_payload(&payload)?;

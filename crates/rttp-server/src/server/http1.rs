@@ -195,6 +195,14 @@ pub(crate) fn is_authority_form_request_target(target: &str) -> bool {
   !host.is_empty() && !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+pub(crate) struct RequestHead {
+  pub(crate) method: String,
+  pub(crate) target: String,
+  pub(crate) version: String,
+  pub(crate) headers: Vec<(String, String)>,
+}
+
+#[cfg(test)]
 pub(crate) fn checked_request_message_len(
   header_end: usize,
   content_length: usize,
@@ -205,13 +213,6 @@ pub(crate) fn checked_request_message_len(
     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "request body is too large"))
 }
 
-pub(crate) struct RequestHead {
-  pub(crate) method: String,
-  pub(crate) target: String,
-  pub(crate) version: String,
-  pub(crate) headers: Vec<(String, String)>,
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RequestBodyKind {
   ContentLength(usize),
@@ -220,6 +221,7 @@ pub(crate) enum RequestBodyKind {
 
 pub(crate) struct ChunkedRequestBody {
   pub(crate) body: Vec<u8>,
+  #[allow(dead_code)]
   pub(crate) trailers: Vec<(String, String)>,
 }
 
@@ -596,6 +598,33 @@ pub(crate) fn request_body_kind(headers: &[(String, String)]) -> io::Result<Requ
       "unsupported Transfer-Encoding request body",
     ))
   }
+}
+
+pub(crate) fn request_expectation(version: &str, headers: &[(String, String)]) -> io::Result<bool> {
+  let values: Vec<&str> = headers
+    .iter()
+    .filter(|(name, _)| name.eq_ignore_ascii_case("Expect"))
+    .map(|(_, value)| value.as_str())
+    .collect();
+  if values.is_empty() || version != "HTTP/1.1" {
+    return Ok(false);
+  }
+
+  let expectations = HttpExpectations::parse_values(values)
+    .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+  if !expectations.unsupported().is_empty() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      UnsupportedExpectation,
+    ));
+  }
+
+  Ok(expectations.expects_continue())
+}
+
+pub(crate) fn write_continue<S: Write>(stream: &mut S) -> io::Result<()> {
+  stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
+  stream.flush()
 }
 
 pub(crate) fn read_chunked_request_body<R>(
