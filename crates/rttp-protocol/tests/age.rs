@@ -25,9 +25,19 @@ fn age_accepts_http_optional_whitespace_padding() {
 }
 
 #[test]
-fn age_rejects_duplicate_and_invalid_values() {
-  assert!(Age::parse_values(["60", "120"]).is_err());
-  assert!(Age::parse_values([]).is_err());
+fn age_rejects_missing_duplicate_and_invalid_values() {
+  assert!(
+    Age::parse_values([]).is_err(),
+    "missing singleton must be rejected"
+  );
+  assert!(
+    Age::parse_values(["60", "60"]).is_err(),
+    "identical duplicates must be rejected"
+  );
+  assert!(
+    Age::parse_values(["60", "120"]).is_err(),
+    "differing duplicates must be rejected"
+  );
 
   for value in [
     "",
@@ -38,17 +48,34 @@ fn age_rejects_duplicate_and_invalid_values() {
     "60.0",
     "sixy",
     "5 0",
+    "5\t0",
     "18446744073709551616",
     "5\r\nX: y",
+    "5\0",
     "5\u{7f}",
   ] {
     assert!(Age::parse(value).is_err(), "{value:?} must be rejected");
   }
+
+  assert!(Age::parse_values(["not-an-age", "60"]).is_err());
+  assert!(Age::parse_values(["60", "not-an-age"]).is_err());
 }
 
 #[test]
-fn age_enforces_value_bounds() {
-  assert!(Age::parse("0".repeat(MAX_AGE_VALUE_BYTES + 1)).is_err());
+fn age_enforces_inclusive_byte_limit() {
+  let at_limit = format!("{}0", " ".repeat(MAX_AGE_VALUE_BYTES - 1));
+  let over_limit = format!("{}0", " ".repeat(MAX_AGE_VALUE_BYTES));
+
+  assert_eq!(
+    Age::parse(&at_limit)
+      .expect("exact limit should parse")
+      .seconds(),
+    0
+  );
+  assert!(
+    Age::parse(over_limit).is_err(),
+    "limit plus one byte must be rejected"
+  );
 }
 
 #[test]
@@ -59,4 +86,25 @@ fn age_checks_duplicate_values_against_its_bound() {
     Age::parse_values(["60", oversized.as_str()]).is_err(),
     "oversized duplicate fields must not bypass validation"
   );
+  assert!(
+    Age::parse_values([oversized.as_str(), "60"]).is_err(),
+    "oversized first fields must be rejected"
+  );
+}
+
+#[test]
+fn age_round_trips_canonical_decimal_values() {
+  for seconds in [0, 1, 5, 60, 86_400, u64::MAX / 2, u64::MAX] {
+    let age = Age::new(seconds);
+    let serialized = age.header_value();
+    assert_eq!(serialized, seconds.to_string());
+    assert_eq!(
+      Age::parse(&serialized).expect("canonical value should parse"),
+      age
+    );
+    assert_eq!(
+      Age::parse(age.header_value()).expect("re-serialized value should parse"),
+      age
+    );
+  }
 }
