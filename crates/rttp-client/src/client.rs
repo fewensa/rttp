@@ -2317,6 +2317,16 @@ impl HttpClient {
     BlockConnection::new(request).call()
   }
 
+  /// Emit a buffered prior-knowledge h2c request from an async caller.
+  ///
+  /// The response uses the same bounded content decoder as buffered HTTP/1.1
+  /// responses. This includes gzip and zlib/raw deflate stacks while retaining
+  /// the original wire capture.
+  #[cfg(all(feature = "async", feature = "http2"))]
+  pub async fn rasync_http2_prior_knowledge(&mut self) -> error::Result<Response> {
+    self.emit_http2_prior_knowledge()
+  }
+
   #[cfg(feature = "http2")]
   pub fn emit_http2_prior_knowledge(&mut self) -> error::Result<Response> {
     if self.request.closed() {
@@ -2329,6 +2339,15 @@ impl HttpClient {
     }
     let request = RawRequest::block_new(&mut self.request)?;
     crate::http2::PriorKnowledgeClient::new(request).get()
+  }
+
+  /// Emit a buffered h2c upgrade request from an async caller.
+  ///
+  /// Decoding, limits, header cleanup, and raw capture match the other
+  /// buffered response paths.
+  #[cfg(all(feature = "async", feature = "http2"))]
+  pub async fn rasync_http2_upgrade(&mut self) -> error::Result<Response> {
+    self.emit_http2_upgrade()
   }
 
   #[cfg(feature = "http2")]

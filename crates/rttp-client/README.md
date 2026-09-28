@@ -37,12 +37,14 @@ transport surface (a `+` means the listed features are enabled).
 | feature subset(s) | supported operation |
 |---|---|
 | *(none)*; `http2`; `tls-native`; `http2+tls-native`; `tls-rustls`; `http2+tls-rustls`; `tls-native+tls-rustls`; `http2+tls-native+tls-rustls` | Synchronous HTTP/1.1 over plain HTTP; `http2` additionally exposes direct prior-knowledge h2c APIs. HTTPS is available when a TLS feature is present; when both TLS features are enabled, rustls is selected. |
-| `async`; `async+http2` | Synchronous HTTP/1.1 plus asynchronous plain HTTP. `http2` has no asynchronous HTTP/2 API. HTTPS is unavailable without a TLS feature. |
+| `async`; `async+http2` | Synchronous HTTP/1.1 plus asynchronous plain HTTP; with `http2`, buffered h2c responses are also available through `rasync_http2_prior_knowledge` and `rasync_http2_upgrade` and use the bounded gzip/deflate decoder. HTTPS is unavailable without a TLS feature. |
 | `async+tls-native`; `async+http2+tls-native` | Synchronous and asynchronous HTTP/1.1 over native TLS, including buffered requests. Async streaming HTTPS request bodies are rejected because native TLS is not the async streaming backend. |
 | `async+tls-rustls`; `async+http2+tls-rustls`; `async+tls-native+tls-rustls`; `async+http2+tls-native+tls-rustls` | Synchronous and asynchronous HTTP/1.1 over rustls, including buffered and async streaming HTTPS request bodies. With both TLS features, rustls takes precedence for both APIs. |
 
-Thus `async` gates `rasync` and the async streaming APIs; it does not turn
-`emit_http2_prior_knowledge` into an async operation. `tls-native` and
+Thus `async` gates `rasync`, the async streaming APIs, and the buffered h2c
+helpers when combined with `http2`. The h2c helpers retain the synchronous
+transport boundary while exposing an async-call-compatible API; they do not
+add streaming HTTP/2 response decoding. `tls-native` and
 `tls-rustls` provide HTTPS for synchronous requests, while async buffered HTTPS
 requires `async` plus either TLS feature. TLS negotiation does not use ALPN:
 HTTP/2 is the separate, cleartext h2c path only.
