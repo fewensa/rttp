@@ -1,5 +1,15 @@
+#[cfg(feature = "async")]
+use std::collections::HashMap;
+#[cfg(feature = "async")]
+use std::future::Future;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
+#[cfg(feature = "async")]
+use std::pin::Pin;
+#[cfg(feature = "async")]
+use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(feature = "async")]
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use base64::Engine;
@@ -96,35 +106,211 @@ const HPACK_HUFFMAN_CODE_LENGTHS: [u8; 257] = [
 ];
 
 #[cfg(feature = "async")]
-pub(crate) async fn async_h2c_call(
+pub(crate) fn async_h2c_call(
   origin: crate::request::Request,
   url: crate::types::RoUrl,
   header: String,
   body: Option<crate::request::RequestBody>,
   upgrade: bool,
-) -> error::Result<Response> {
+) -> AsyncH2cCall {
   // The HTTP/2 codec is deliberately run on a dedicated thread: unlike an
   // async-named wrapper around `get`, polling this future never performs a
   // blocking socket operation on the executor thread.
   let (sender, receiver) = futures::channel::oneshot::channel();
+  let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+  let worker_cancelled = cancelled.clone();
   std::thread::spawn(move || {
     let mut origin = origin;
+    let use_proxy_session = !upgrade
+      && origin
+        .proxy()
+        .as_ref()
+        .is_some_and(|proxy| proxy.type_() == &ProxyType::HTTP);
     let request = RawRequest {
       origin: &mut origin,
       url,
       header,
       body,
     };
-    let result = if upgrade {
-      UpgradeClient::new(request).get()
+    let (result, session) = if use_proxy_session {
+      async_proxy_h2c_call(request, worker_cancelled.clone())
     } else {
-      PriorKnowledgeClient::new(request).get()
+      let result = if upgrade {
+        UpgradeClient::new(request).get()
+      } else {
+        PriorKnowledgeClient::new(request).get()
+      };
+      (result, None)
     };
-    let _ = sender.send(result);
+    let session = if worker_cancelled.load(std::sync::atomic::Ordering::Acquire) {
+      None
+    } else {
+      session
+    };
+    let _ = sender.send((result, session));
   });
-  receiver
-    .await
-    .map_err(|_| error::request("async HTTP/2 worker terminated"))?
+  AsyncH2cCall {
+    receiver,
+    cancelled,
+  }
+}
+
+#[cfg(feature = "async")]
+type AsyncH2cResult = (
+  error::Result<Response>,
+  Option<(ProxySessionKey, H2cSession)>,
+);
+
+#[cfg(feature = "async")]
+pub(crate) struct AsyncH2cCall {
+  receiver: futures::channel::oneshot::Receiver<AsyncH2cResult>,
+  cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[cfg(feature = "async")]
+impl Future for AsyncH2cCall {
+  type Output = error::Result<Response>;
+
+  fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    let this = self.get_mut();
+    match Pin::new(&mut this.receiver).poll(cx) {
+      Poll::Ready(Ok((result, session))) => {
+        if let Some((key, session)) = session {
+          proxy_sessions()
+            .lock()
+            .expect("h2c proxy session pool mutex poisoned")
+            .insert(key, session);
+        }
+        Poll::Ready(result)
+      }
+      Poll::Ready(Err(_)) => Poll::Ready(Err(error::request("async HTTP/2 worker terminated"))),
+      Poll::Pending => Poll::Pending,
+    }
+  }
+}
+
+#[cfg(feature = "async")]
+impl Drop for AsyncH2cCall {
+  fn drop(&mut self) {
+    self
+      .cancelled
+      .store(true, std::sync::atomic::Ordering::Release);
+  }
+}
+
+#[cfg(feature = "async")]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ProxySessionKey {
+  host: String,
+  port: u32,
+  username: Option<String>,
+  password: Option<String>,
+  max_frame_size: usize,
+  header_table_size: usize,
+  read_timeout: u64,
+  write_timeout: u64,
+}
+
+#[cfg(feature = "async")]
+struct H2cSession {
+  stream: TcpStream,
+  peer_settings: PeerSettings,
+  next_stream_id: u32,
+  request_hpack: RequestHpackEncoder,
+  response_hpack: HpackDecoder,
+}
+
+#[cfg(feature = "async")]
+impl H2cSession {
+  fn connect(
+    url: &Url,
+    proxy: &Proxy,
+    config: &Config,
+    local_settings: LocalSettings,
+  ) -> error::Result<Self> {
+    let mut stream = connect_h2c_stream(url, &Some(proxy.clone()), config)?;
+    write_connection_preface(&mut stream, local_settings)?;
+    let peer_settings = read_settings_and_ack(&mut stream, local_settings)?;
+    Ok(Self {
+      stream,
+      request_hpack: RequestHpackEncoder::new(
+        peer_settings
+          .header_table_size
+          .min(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE),
+      ),
+      response_hpack: HpackDecoder::new(local_settings.header_table_size),
+      peer_settings,
+      next_stream_id: STREAM_ID,
+    })
+  }
+}
+
+#[cfg(feature = "async")]
+fn proxy_sessions() -> &'static Mutex<HashMap<ProxySessionKey, H2cSession>> {
+  static SESSIONS: OnceLock<Mutex<HashMap<ProxySessionKey, H2cSession>>> = OnceLock::new();
+  SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(feature = "async")]
+fn async_proxy_h2c_call<'a>(
+  request: RawRequest<'a>,
+  cancelled: Arc<std::sync::atomic::AtomicBool>,
+) -> (
+  error::Result<Response>,
+  Option<(ProxySessionKey, H2cSession)>,
+) {
+  if let Err(error) = validate_bounded_h2c_request(&request, false) {
+    return (Err(error), None);
+  }
+  let proxy = request
+    .origin()
+    .proxy()
+    .as_ref()
+    .expect("proxy session requires a proxy")
+    .clone();
+  if request.origin().http2_extended_connect_protocol().is_some() {
+    return (
+      Err(error::builder_with_message(
+        "HTTP/2 prior-knowledge client does not support proxies for extended CONNECT",
+      )),
+      None,
+    );
+  }
+  let url = match request.url().to_url().map_err(error::builder) {
+    Ok(url) => url,
+    Err(error) => return (Err(error), None),
+  };
+  let local_settings = match LocalSettings::from_config(request.origin().config(), false) {
+    Ok(settings) => settings,
+    Err(error) => return (Err(error), None),
+  };
+  let key = ProxySessionKey {
+    host: proxy.host().clone(),
+    port: proxy.port(),
+    username: proxy.username().clone(),
+    password: proxy.password().clone(),
+    max_frame_size: local_settings.max_frame_size,
+    header_table_size: local_settings.header_table_size,
+    read_timeout: request.origin().config().read_timeout(),
+    write_timeout: request.origin().config().write_timeout(),
+  };
+  let mut session = proxy_sessions()
+    .lock()
+    .expect("h2c proxy session pool mutex poisoned")
+    .remove(&key);
+  if session.is_none() {
+    session = match H2cSession::connect(&url, &proxy, request.origin().config(), local_settings) {
+      Ok(session) => Some(session),
+      Err(error) => return (Err(error), None),
+    };
+  }
+  let mut session = session.expect("new or pooled h2c proxy session");
+  let result = PriorKnowledgeClient::new(request).get_on_session(&mut session, local_settings);
+  if cancelled.load(std::sync::atomic::Ordering::Acquire) || result.is_err() {
+    (result, None)
+  } else {
+    (result, Some((key, session)))
+  }
 }
 
 pub struct PriorKnowledgeClient<'a> {
@@ -194,6 +380,8 @@ impl<'a> PriorKnowledgeClient<'a> {
       peer_settings,
       local_settings,
       STREAM_ID,
+      None,
+      None,
     )? {
       Some(response) => response,
       None => read_single_stream_response(
@@ -202,8 +390,56 @@ impl<'a> PriorKnowledgeClient<'a> {
         !is_head,
         local_settings,
         STREAM_ID,
+        None,
       )?,
     };
+    self.request.origin_mut().closed_set(true);
+    Ok(response)
+  }
+
+  #[cfg(feature = "async")]
+  fn get_on_session(
+    mut self,
+    session: &mut H2cSession,
+    local_settings: LocalSettings,
+  ) -> error::Result<Response> {
+    let method = self.request.origin().method();
+    let is_head = method.eq_ignore_ascii_case("HEAD");
+    let url = self.request.url().to_url().map_err(error::builder)?;
+    if url.scheme() != "http" {
+      return Err(error::url_bad_scheme(url));
+    }
+    let stream_id = session.next_stream_id;
+    reject_goaway_before_opening_request_stream(
+      &mut session.stream,
+      &mut session.peer_settings,
+      local_settings,
+      stream_id,
+    )?;
+    let response = match write_request(
+      &mut session.stream,
+      &self.request,
+      &url,
+      self.request.url().clone(),
+      session.peer_settings,
+      local_settings,
+      stream_id,
+      Some(&mut session.request_hpack),
+      Some(&mut session.response_hpack),
+    )? {
+      Some(response) => response,
+      None => read_single_stream_response(
+        &mut session.stream,
+        self.request.url().clone(),
+        !is_head,
+        local_settings,
+        stream_id,
+        Some(&mut session.response_hpack),
+      )?,
+    };
+    session.next_stream_id = stream_id
+      .checked_add(2)
+      .ok_or_else(|| error::bad_response("HTTP/2 stream ID exhausted"))?;
     self.request.origin_mut().closed_set(true);
     Ok(response)
   }
@@ -256,6 +492,8 @@ impl<'a> UpgradeClient<'a> {
       peer_settings,
       local_settings,
       UPGRADED_STREAM_ID,
+      None,
+      None,
     )? {
       Some(response) => response,
       None => read_single_stream_response(
@@ -264,6 +502,7 @@ impl<'a> UpgradeClient<'a> {
         !is_head,
         local_settings,
         UPGRADED_STREAM_ID,
+        None,
       )?,
     };
     self.request.origin_mut().closed_set(true);
@@ -880,6 +1119,7 @@ fn validate_settings_frame(frame: &Frame) -> error::Result<()> {
   Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_request(
   stream: &mut TcpStream,
   request: &RawRequest<'_>,
@@ -888,6 +1128,8 @@ fn write_request(
   mut peer_settings: PeerSettings,
   local_settings: LocalSettings,
   stream_id: u32,
+  request_hpack: Option<&mut RequestHpackEncoder>,
+  response_hpack: Option<&mut HpackDecoder>,
 ) -> error::Result<Option<Response>> {
   if peer_settings.max_concurrent_streams == Some(0) {
     return Err(error::bad_response(
@@ -895,11 +1137,18 @@ fn write_request(
     ));
   }
 
-  let mut hpack = RequestHpackEncoder::new(
-    peer_settings
-      .header_table_size
-      .min(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE),
-  );
+  let mut owned_hpack;
+  let hpack = match request_hpack {
+    Some(hpack) => hpack,
+    None => {
+      owned_hpack = Some(RequestHpackEncoder::new(
+        peer_settings
+          .header_table_size
+          .min(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE),
+      ));
+      owned_hpack.as_mut().expect("owned request HPACK encoder")
+    }
+  };
   let mut regular_header_fields = regular_headers(request.header())?;
   if let Some(proxy) = request.origin().proxy() {
     if proxy.type_() != &ProxyType::HTTP {
@@ -928,7 +1177,7 @@ fn write_request(
     &regular_header_fields,
     &dynamic_field_plan,
     &mut dynamic_field_position,
-    &mut hpack,
+    hpack,
   )?;
   let body = request
     .body()
@@ -953,11 +1202,12 @@ fn write_request(
       stream,
       body,
       &mut peer_settings,
-      &mut hpack,
+      hpack,
       has_trailers,
       response_url,
       local_settings,
       stream_id,
+      response_hpack,
     )? {
       return Ok(Some(response));
     }
@@ -968,7 +1218,7 @@ fn write_request(
       &trailer_fields,
       &dynamic_field_plan,
       &mut dynamic_field_position,
-      &mut hpack,
+      hpack,
     )?;
     write_header_block_frames(
       stream,
@@ -1092,7 +1342,9 @@ fn write_data_frames(
   url: RoUrl,
   local_settings: LocalSettings,
   stream_id: u32,
+  response_hpack: Option<&mut HpackDecoder>,
 ) -> error::Result<Option<Response>> {
+  let mut response_hpack = response_hpack;
   let mut connection_send_window = SendWindow::new();
   let mut stream_send_window =
     SendWindow::with_available(i64::from(peer_settings.initial_window_size));
@@ -1116,6 +1368,7 @@ fn write_data_frames(
         url.clone(),
         local_settings,
         stream_id,
+        response_hpack.take(),
       )? {
         return Ok(Some(response));
       }
@@ -1154,7 +1407,9 @@ fn read_until_send_window_available(
   url: RoUrl,
   local_settings: LocalSettings,
   stream_id: u32,
+  response_hpack: Option<&mut HpackDecoder>,
 ) -> error::Result<Option<Response>> {
+  let mut response_hpack = response_hpack;
   loop {
     let frame = read_frame(stream, local_settings)?;
     match (frame.frame_type, frame.stream_id) {
@@ -1215,6 +1470,7 @@ fn read_until_send_window_available(
           frame,
           local_settings,
           stream_id,
+          response_hpack.take(),
         )
         .map(Some);
       }
@@ -1573,7 +1829,13 @@ fn read_single_stream_response(
   include_data_payload: bool,
   local_settings: LocalSettings,
   stream_id: u32,
+  response_hpack: Option<&mut HpackDecoder>,
 ) -> error::Result<Response> {
+  let mut owned_hpack = None;
+  let hpack = response_hpack.unwrap_or_else(|| {
+    owned_hpack = Some(HpackDecoder::new(local_settings.header_table_size));
+    owned_hpack.as_mut().expect("owned response HPACK decoder")
+  });
   read_single_stream_response_with_first_frame(
     stream,
     url,
@@ -1581,6 +1843,7 @@ fn read_single_stream_response(
     include_data_payload,
     local_settings,
     stream_id,
+    hpack,
   )
 }
 
@@ -1590,7 +1853,13 @@ fn read_single_stream_response_from_frame(
   first_frame: Frame,
   local_settings: LocalSettings,
   stream_id: u32,
+  response_hpack: Option<&mut HpackDecoder>,
 ) -> error::Result<Response> {
+  let mut owned_hpack = None;
+  let hpack = response_hpack.unwrap_or_else(|| {
+    owned_hpack = Some(HpackDecoder::new(local_settings.header_table_size));
+    owned_hpack.as_mut().expect("owned response HPACK decoder")
+  });
   read_single_stream_response_with_first_frame(
     stream,
     url,
@@ -1598,6 +1867,7 @@ fn read_single_stream_response_from_frame(
     true,
     local_settings,
     stream_id,
+    hpack,
   )
 }
 
@@ -1608,6 +1878,7 @@ fn read_single_stream_response_with_first_frame(
   include_data_payload: bool,
   local_settings: LocalSettings,
   stream_id: u32,
+  hpack: &mut HpackDecoder,
 ) -> error::Result<Response> {
   let mut header_block = Vec::new();
   let mut headers = Vec::new();
@@ -1618,7 +1889,6 @@ fn read_single_stream_response_with_first_frame(
   let mut final_response_started = false;
   let mut response_body_started = false;
   let mut goaway = None;
-  let mut hpack = HpackDecoder::new(local_settings.header_table_size);
   let mut connection_receive_window = ReceiveWindow::new();
   let mut stream_receive_window = ReceiveWindow::new();
   let mut connection_send_window = SendWindow::new();
@@ -1671,7 +1941,7 @@ fn read_single_stream_response_with_first_frame(
             &mut status,
             &mut headers,
             &mut trailers,
-            &mut hpack,
+            hpack,
           )? {
             final_response_started = true;
           }
@@ -1696,7 +1966,7 @@ fn read_single_stream_response_with_first_frame(
             &mut status,
             &mut headers,
             &mut trailers,
-            &mut hpack,
+            hpack,
           )? {
             final_response_started = true;
           }

@@ -2,6 +2,8 @@
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener};
+#[cfg(feature = "async")]
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -3054,6 +3056,209 @@ fn prior_knowledge_routes_through_configured_http_proxy() {
     .expect_err("the configured proxy should be contacted");
 
   assert!(!err.is_builder());
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn prior_knowledge_async_proxy_reuses_a_healthy_session() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy peer");
+  let proxy_addr = listener.local_addr().expect("proxy peer addr");
+  let (accepts_sender, accepts_receiver) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept proxy client");
+    accepts_sender.send(()).expect("record proxy accept");
+    complete_h2_handshake_without_request(&mut stream);
+
+    for (stream_id, path, authority) in [
+      (
+        1,
+        b"http://127.0.0.1:8081/first".as_slice(),
+        b"127.0.0.1:8081".as_slice(),
+      ),
+      (
+        3,
+        b"http://[::1]:8081/second".as_slice(),
+        b"[::1]:8081".as_slice(),
+      ),
+    ] {
+      let request = read_frame(&mut stream);
+      assert_eq!(FRAME_HEADERS, request.frame_type);
+      assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request.flags);
+      assert_eq!(stream_id, request.stream_id);
+      assert_eq!(
+        path,
+        find_header_value(&request.payload, b":path")
+          .expect("request path")
+          .value
+          .as_slice()
+      );
+      assert_eq!(
+        authority,
+        find_header_value(&request.payload, b":authority")
+          .expect("request authority")
+          .value
+          .as_slice()
+      );
+
+      write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        FLAG_END_HEADERS,
+        stream_id,
+        &[0x88],
+      );
+      write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, stream_id, b"ok");
+    }
+  });
+
+  let first = futures::executor::block_on(async {
+    HttpClient::new()
+      .get()
+      .url("http://127.0.0.1:8081/first")
+      .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+      .rasync_http2_prior_knowledge()
+      .await
+  })
+  .expect("first proxied async h2c request");
+  let second = futures::executor::block_on(async {
+    HttpClient::new()
+      .get()
+      .url("http://[::1]:8081/second#ignored")
+      .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+      .rasync_http2_prior_knowledge()
+      .await
+  })
+  .expect("second proxied async h2c request");
+
+  assert_eq!("ok", first.body().string().unwrap());
+  assert_eq!("ok", second.body().string().unwrap());
+  accepts_receiver
+    .recv_timeout(Duration::from_secs(1))
+    .expect("proxy accept");
+  handle.join().expect("proxy peer thread");
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn prior_knowledge_async_proxy_timeout_drops_session_before_retry() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy peer");
+  let proxy_addr = listener.local_addr().expect("proxy peer addr");
+  let (accepts_sender, accepts_receiver) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    let (mut stalled_stream, _) = listener.accept().expect("accept stalled proxy client");
+    accepts_sender
+      .send(())
+      .expect("record stalled proxy accept");
+    complete_h2_handshake_without_request(&mut stalled_stream);
+    let request = read_frame(&mut stalled_stream);
+    assert_eq!(FRAME_HEADERS, request.frame_type);
+
+    let (mut fresh_stream, _) = listener.accept().expect("accept retry proxy client");
+    accepts_sender.send(()).expect("record retry proxy accept");
+    complete_h2_handshake_without_request(&mut fresh_stream);
+    let request = read_frame(&mut fresh_stream);
+    assert_eq!(FRAME_HEADERS, request.frame_type);
+    assert_eq!(1, request.stream_id);
+    write_frame(
+      &mut fresh_stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &[0x88],
+    );
+    write_frame(
+      &mut fresh_stream,
+      FRAME_DATA,
+      FLAG_END_STREAM,
+      1,
+      b"retried",
+    );
+    drop(stalled_stream);
+  });
+
+  let config = Config::builder()
+    .connect_timeout(500)
+    .read_timeout(500)
+    .write_timeout(500)
+    .build();
+  let first = futures::executor::block_on(async {
+    HttpClient::new()
+      .get()
+      .url("http://127.0.0.1:8082/stalled")
+      .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+      .config(config.clone())
+      .rasync_http2_prior_knowledge()
+      .await
+  });
+  assert!(first.is_err(), "stalled proxy response must time out");
+
+  let second = futures::executor::block_on(async {
+    HttpClient::new()
+      .get()
+      .url("http://127.0.0.1:8082/retried")
+      .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+      .config(config)
+      .rasync_http2_prior_knowledge()
+      .await
+  })
+  .expect("retry should use a fresh proxy connection");
+
+  assert_eq!("retried", second.body().string().unwrap());
+  accepts_receiver
+    .recv_timeout(Duration::from_secs(1))
+    .expect("stalled proxy accept");
+  accepts_receiver
+    .recv_timeout(Duration::from_secs(1))
+    .expect("retry proxy accept");
+  handle.join().expect("proxy retry peer thread");
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn prior_knowledge_async_proxy_failed_setup_uses_a_fresh_connection() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy peer");
+  let proxy_addr = listener.local_addr().expect("proxy peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut failed_stream, _) = listener.accept().expect("accept failed proxy client");
+    let mut preface = [0; 24];
+    failed_stream
+      .read_exact(&mut preface)
+      .expect("read failed client preface");
+    let _client_settings = read_frame(&mut failed_stream);
+    write_frame(&mut failed_stream, FRAME_SETTINGS, 0, 0, &[1]);
+    drop(failed_stream);
+
+    let (mut fresh_stream, _) = listener.accept().expect("accept fresh proxy client");
+    complete_h2_handshake_without_request(&mut fresh_stream);
+    let request = read_frame(&mut fresh_stream);
+    assert_eq!(1, request.stream_id);
+    write_frame(
+      &mut fresh_stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &[0x88],
+    );
+    write_frame(&mut fresh_stream, FRAME_DATA, FLAG_END_STREAM, 1, b"fresh");
+  });
+
+  let request = || {
+    futures::executor::block_on(async {
+      HttpClient::new()
+        .get()
+        .url("http://127.0.0.1:8083/retry")
+        .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+        .rasync_http2_prior_knowledge()
+        .await
+    })
+  };
+  assert!(request().is_err(), "invalid proxy setup must fail");
+  let response = request().expect("failed setup must not poison proxy reuse");
+  assert_eq!("fresh", response.body().string().unwrap());
+  handle.join().expect("proxy setup retry peer thread");
 }
 
 #[test]
