@@ -1,8 +1,10 @@
+use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
 use rttp_protocol::sec_websocket_key::{
   SecWebSocketKey, MAX_SEC_WEBSOCKET_KEY_VALUE_BYTES, SEC_WEBSOCKET_KEY_NONCE_LEN,
 };
 
 const RFC_6455_EXAMPLE: &str = "dGhlIHNhbXBsZSBub25jZQ==";
+const RFC_6455_ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 
 #[test]
 fn sec_websocket_key_accepts_rfc_6455_non_ces_and_normalizes_ows() {
@@ -19,6 +21,34 @@ fn sec_websocket_key_accepts_rfc_6455_non_ces_and_normalizes_ows() {
   let constructed = SecWebSocketKey::new(RFC_6455_EXAMPLE).expect("new should behave like parse");
   assert_eq!(constructed.as_str(), RFC_6455_EXAMPLE);
   assert_eq!(constructed.header_value(), RFC_6455_EXAMPLE);
+}
+
+#[test]
+fn sec_websocket_key_round_trips_header_value_and_handshake_accept() {
+  for value in [
+    RFC_6455_EXAMPLE,
+    "AAAAAAAAAAAAAAAAAAAAAA==",
+    "+/z9/v8AAQIDBAUGBwgJCg==",
+    "AQIDBAUGBwgJCgsMDQ4PEA==",
+  ] {
+    let key = SecWebSocketKey::parse(value).expect("canonical key should parse");
+    let reparsed =
+      SecWebSocketKey::parse(key.header_value()).expect("header_value must round-trip");
+    assert_eq!(reparsed.as_str(), value);
+    assert_eq!(reparsed.header_value(), value);
+    assert_eq!(reparsed, key);
+
+    let accept = SecWebSocketAccept::derive_from_key(&key);
+    let accept_reparsed = SecWebSocketAccept::parse(accept.header_value())
+      .expect("derived accept header_value must reparse");
+    assert!(accept_reparsed.verify_key(&key));
+    assert!(accept_reparsed.verify_key(&reparsed));
+  }
+
+  let key = SecWebSocketKey::parse(RFC_6455_EXAMPLE).expect("RFC key should parse");
+  let accept = SecWebSocketAccept::derive_from_key(&key);
+  assert_eq!(accept.as_str(), RFC_6455_ACCEPT);
+  assert!(accept.verify_key(&key));
 }
 
 #[test]

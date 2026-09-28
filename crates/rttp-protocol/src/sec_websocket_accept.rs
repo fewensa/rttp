@@ -125,7 +125,7 @@ where
     return Err(invalid_value());
   }
   let decoded = STANDARD.decode(value).map_err(|_| invalid_value())?;
-  if decoded.len() != SEC_WEBSOCKET_ACCEPT_SHA1_LEN {
+  if decoded.len() != SEC_WEBSOCKET_ACCEPT_SHA1_LEN || STANDARD.encode(&decoded) != value {
     return Err(invalid_value());
   }
   Ok(value.to_string())
