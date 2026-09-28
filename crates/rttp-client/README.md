@@ -77,8 +77,8 @@ through `Response::trailers`, `Response::trailer`, and
 `Response::trailer_value` for both blocking and async request APIs.
 
 Buffered responses automatically decode a fully supported `Content-Encoding`
-stack of `gzip` and zlib-wrapped `deflate`, including mixed and repeated
-layers, in reverse header order. Successful decoding removes stale
+stack of `gzip` and `deflate` (zlib-wrapped or raw DEFLATE), including mixed
+and repeated layers, in reverse header order. Successful decoding removes stale
 `Content-Encoding` and `Content-Length` from the parsed header view and
 from `Response::content_encoding()` / `Response::content_length()`;
 `Response::binary()` still retains the original capture. Unknown, mixed
@@ -87,10 +87,10 @@ and body unchanged. Decoding is atomic: a malformed layer fails the
 response without exposing partial plaintext. Empty bodies are not decoded.
 `max_buffered_response_body_bytes` applies independently to each body layer
 materialized by buffered response handling: the raw framed body and every
-decoded `gzip` or zlib-wrapped `deflate` layer. A layer whose materialized
-body is exactly the configured limit succeeds; if any layer exceeds it, the
-buffered read fails deterministically with a body-too-large error. For
-example:
+decoded `gzip` or `deflate` layer (zlib-wrapped or raw DEFLATE). A layer whose
+materialized body is exactly the configured limit succeeds; if any layer
+exceeds it, the buffered read fails deterministically with a body-too-large
+error. For example:
 
 ```rust,no_run
 use rttp_client::{Config, HttpClient};
@@ -110,8 +110,7 @@ Successful buffered reads preserve the response status, headers, cookies, and
 trailers for access through the normal `Response` APIs. Successful content
 decoding still removes stale `Content-Encoding` and `Content-Length` from the
 parsed header view, while `Response::binary()` retains the original capture.
-Raw non-zlib `deflate` is not supported. Streaming bodies and async HTTP/2
-stay out of this buffered path.
+Streaming bodies and async HTTP/2 stay out of this buffered path.
 
 ## Bounded Max-Forwards diagnostics
 
@@ -2236,7 +2235,7 @@ header-block model.
 | area | tested coverage | limits |
 |------|-----------------|--------|
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, up to 16 retained informational responses, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | A seventeenth skippable informational response is rejected; not a complete RFC conformance suite |
-| Buffered content decoding | Automatic gzip and zlib-wrapped deflate stacks in reverse header order on buffered HTTP/1.1 and supported h2c paths; successful decoding drops stale `Content-Encoding`/`Content-Length`; unsupported or invalid stacks preserve headers and body; malformed layers fail atomically; size bounds apply per decoded layer; `Response::binary()` retains the original capture | No extra compression formats, raw deflate, streaming decode, or async HTTP/2 |
+| Buffered content decoding | Automatic gzip and deflate stacks (zlib-wrapped and raw DEFLATE) in reverse header order on buffered HTTP/1.1 and supported h2c paths; successful decoding drops stale `Content-Encoding`/`Content-Length`; unsupported or invalid stacks preserve headers and body; malformed layers fail atomically; size bounds apply per decoded layer; `Response::binary()` retains the original capture | No extra compression formats, streaming decode, or async HTTP/2 |
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata through the shared protocol type | Expect metadata does not gate body transmission; raw `header(("Expect", value))` remains an escape hatch; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, request blocking, prefetch execution, or cache behavior |
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |

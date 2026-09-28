@@ -5894,14 +5894,18 @@ fn test_content_encoding_runtime_rejects_truncated_deflate_body() {
 }
 
 #[test]
-fn test_content_encoding_runtime_rejects_raw_deflate_body() {
-  let error = Response::new(
+fn test_content_encoding_runtime_decodes_raw_deflate_body() {
+  let response = Response::new(
     RoUrl::with("https://example.test"),
     encoded_response("deflate", &raw_deflate_bytes(b"OK")),
   )
-  .expect_err("raw deflate response should fail");
+  .expect("raw deflate response should decode");
 
-  assert_decode_error(error);
+  assert_decoded_plaintext(&response, b"OK");
+  assert!(response
+    .binary()
+    .windows(b"Content-Encoding: deflate".len())
+    .any(|window| window == b"Content-Encoding: deflate"));
 }
 
 #[test]

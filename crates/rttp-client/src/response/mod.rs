@@ -6,8 +6,9 @@
 //!   response wire bytes into the status line, headers, and body, and holds
 //!   trailers parsed upstream by the connection layer. Compatibility cookie
 //!   views are derived from protocol `Set-Cookie` metadata, not a separate
-//!   parser. It applies bounded body handling (stacked gzip or zlib-wrapped
-//!   deflate decoding and the configured body-size limit) and rejects
+//!   parser. It applies bounded body handling (stacked gzip or deflate
+//!   decoding for zlib-wrapped and raw DEFLATE streams, and the configured
+//!   body-size limit) and rejects
 //!   malformed responses. It retains the original binary for
 //!   `binary_get()` and `Response::binary()`; `string()` re-renders from
 //!   the parsed fields.
