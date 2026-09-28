@@ -6,6 +6,8 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::http1::is_token;
+
 pub const MAX_REFERRER_POLICY_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_REFERRER_POLICY_TOKENS: usize = 256;
 
@@ -41,6 +43,9 @@ impl ReferrerPolicy {
           return Err(invalid_value());
         }
         if token.bytes().any(|byte| byte.is_ascii_control()) {
+          return Err(invalid_value());
+        }
+        if !is_token(token) {
           return Err(invalid_value());
         }
         if token_count >= MAX_REFERRER_POLICY_TOKENS {

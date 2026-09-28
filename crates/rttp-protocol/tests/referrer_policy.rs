@@ -42,8 +42,43 @@ fn referrer_policy_ignores_unknown_tokens_accepts_repeated_tokens_and_normalizes
 }
 
 #[test]
+fn referrer_policy_parses_all_tokens_and_round_trips_canonically() {
+  let policy = ReferrerPolicy::parse(
+    "NO-REFERRER, no-referrer-when-downgrade, ORIGIN, origin-when-cross-origin, same-origin, strict-origin, strict-origin-when-cross-origin, unsafe-url",
+  )
+  .expect("all recognized Referrer-Policy tokens should parse");
+
+  assert_eq!(
+    policy.policies(),
+    &[
+      ReferrerPolicyToken::NoReferrer,
+      ReferrerPolicyToken::NoReferrerWhenDowngrade,
+      ReferrerPolicyToken::Origin,
+      ReferrerPolicyToken::OriginWhenCrossOrigin,
+      ReferrerPolicyToken::SameOrigin,
+      ReferrerPolicyToken::StrictOrigin,
+      ReferrerPolicyToken::StrictOriginWhenCrossOrigin,
+      ReferrerPolicyToken::UnsafeUrl,
+    ]
+  );
+  let canonical = policy.header_value();
+  assert_eq!(
+    canonical,
+    "no-referrer, no-referrer-when-downgrade, origin, origin-when-cross-origin, same-origin, strict-origin, strict-origin-when-cross-origin, unsafe-url"
+  );
+  assert_eq!(ReferrerPolicy::parse(&canonical), Ok(policy));
+}
+
+#[test]
 fn referrer_policy_rejects_invalid_empty_duplicate_and_oversized_fields() {
-  for value in ["", "origin,", "origin\r\nX: y"] {
+  for value in [
+    "",
+    ",origin",
+    "origin,",
+    "origin,,future-policy",
+    "origin, ",
+    "origin\r\nX: y",
+  ] {
     assert!(
       ReferrerPolicy::parse(value).is_err(),
       "{value:?} must be rejected"
@@ -52,6 +87,20 @@ fn referrer_policy_rejects_invalid_empty_duplicate_and_oversized_fields() {
 
   let oversized = "x".repeat(MAX_REFERRER_POLICY_VALUE_BYTES + 1);
   assert!(ReferrerPolicy::parse(&oversized).is_err());
+}
+
+#[test]
+fn referrer_policy_rejects_non_token_unknown_members() {
+  for value in [
+    "origin, future policy",
+    "origin, future/policy",
+    "origin, future=policy",
+  ] {
+    assert!(
+      ReferrerPolicy::parse(value).is_err(),
+      "{value:?} must reject unknown non-token members"
+    );
+  }
 }
 
 #[test]
@@ -89,6 +138,22 @@ fn referrer_policy_accepts_exact_token_boundary_with_recognized_and_unknown_toke
   let policy = ReferrerPolicy::parse(&value).expect("exact token boundary should parse");
 
   assert_eq!(policy.policies(), &[ReferrerPolicyToken::Origin]);
+}
+
+#[test]
+fn referrer_policy_accepts_exact_value_boundary_and_rejects_one_byte_over() {
+  let mut exact = String::from("origin,");
+  exact.push_str(&"x".repeat(MAX_REFERRER_POLICY_VALUE_BYTES - exact.len()));
+  assert_eq!(exact.len(), MAX_REFERRER_POLICY_VALUE_BYTES);
+  assert_eq!(
+    ReferrerPolicy::parse(&exact)
+      .expect("exact value boundary should parse")
+      .policies(),
+    &[ReferrerPolicyToken::Origin]
+  );
+
+  exact.push('x');
+  assert!(ReferrerPolicy::parse(&exact).is_err());
 }
 
 #[test]
