@@ -6965,6 +6965,13 @@ fn assert_response_cache_control(
   response: rttp_client::response::Response,
   expected: &fixtures::cache_control::ResponseCase,
 ) {
+  let raw_values: Vec<&str> = response
+    .header_values("cAcHe-CoNtRoL")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected.values, raw_values.as_slice(), "{name}");
+
   let cache_control = response
     .cache_control()
     .unwrap_or_else(|err| panic!("{name} cache-control should parse: {err}"))
@@ -9591,8 +9598,14 @@ fn sync_client_cdn_cache_control_helper_rejects_invalid_and_bounded_metadata() {
 #[test]
 fn sync_client_parses_surrogate_control_response_metadata_without_policy() {
   const HEADERS: &[(&str, &str)] = &[
-    ("Surrogate-Control", "max-age=600, content=\"ESI/1.0\""),
-    ("surrogate-control", "surrogate-key=\"article 42\""),
+    (
+      "Surrogate-Control",
+      "max-age=600, content=\"ESI/1.0\", surrogate-key=\"article 42\"",
+    ),
+    (
+      "surrogate-control",
+      r#"surrogate-extension="quoted, value\"", immutable"#,
+    ),
     ("Cache-Control", "max-age=1"),
   ];
   let (addr, handle) = spawn_metadata_response_server(HEADERS);
@@ -9608,12 +9621,38 @@ fn sync_client_parses_surrogate_control_response_metadata_without_policy() {
     .expect("Surrogate-Control metadata should parse")
     .expect("Surrogate-Control should be present");
 
-  assert_eq!(metadata.len(), 3);
+  assert_eq!(
+    HEADERS
+      .iter()
+      .filter(|(name, _)| name.eq_ignore_ascii_case("Surrogate-Control"))
+      .map(|(_, value)| *value)
+      .collect::<Vec<_>>(),
+    response
+      .header_values("sUrRoGaTe-CoNtRoL")
+      .into_iter()
+      .map(String::as_str)
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(metadata.len(), 5);
   assert_eq!(metadata.directives()[0].name(), "max-age");
   assert_eq!(metadata.directives()[0].value(), Some("600"));
   assert_eq!(metadata.directives()[1].name(), "content");
   assert_eq!(metadata.directives()[1].value(), Some("ESI/1.0"));
+  assert_eq!(metadata.directives()[2].name(), "surrogate-key");
   assert_eq!(metadata.directives()[2].value(), Some("article 42"));
+  assert_eq!(metadata.directives()[3].name(), "surrogate-extension");
+  assert_eq!(metadata.directives()[3].value(), Some("quoted, value\""));
+  assert_eq!(metadata.directives()[4].name(), "immutable");
+  assert_eq!(metadata.directives()[4].value(), None);
+  assert_eq!(
+    metadata.header_value(),
+    r#"max-age=600, content="ESI/1.0", surrogate-key="article 42", surrogate-extension="quoted, value\"", immutable"#
+  );
+  assert_eq!(
+    metadata,
+    rttp_client::response::SurrogateControl::parse(metadata.header_value())
+      .expect("canonical Surrogate-Control should parse")
+  );
   assert_eq!(
     response
       .cache_control()
