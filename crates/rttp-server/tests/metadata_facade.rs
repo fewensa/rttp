@@ -4270,6 +4270,19 @@ fn response_via_helper_validates_replaces_and_preserves_raw_headers() {
   assert_eq!("edge-a", via.members()[0].received_by());
   assert_eq!("upstream", via.members()[1].received_by());
 
+  let boundary = "1.1 [2001:db8::1]:443 (comma, (nested) obs-é)";
+  let boundary_response = HttpResponse::ok("body")
+    .with_via(boundary)
+    .expect("boundary Via should be accepted");
+  let boundary_via: HttpVia = boundary_response
+    .via()
+    .expect("boundary Via should parse")
+    .expect("boundary Via should be present");
+  assert_eq!(
+    boundary_via,
+    HttpVia::parse(boundary_via.header_value()).expect("serialized Via should parse")
+  );
+
   assert!(HttpResponse::ok("body").with_via("1.1").is_err());
   let raw = HttpResponse::ok("body").header("Via", "1.1 hop extra");
   assert!(raw.via().is_err());
