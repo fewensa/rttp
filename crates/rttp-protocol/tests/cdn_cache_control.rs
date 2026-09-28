@@ -47,6 +47,26 @@ fn rejects_case_insensitive_duplicate_directives() {
 }
 
 #[test]
+fn ignores_empty_members_and_rejects_invalid_delta_seconds() {
+  let metadata = CdnCacheControl::parse_values([",", "max-age=60, ,", "cdn-extension=enabled"])
+    .expect("empty list members should be ignored");
+  assert_eq!(2, metadata.len());
+  assert_eq!("max-age", metadata.directives()[0].name());
+  assert_eq!("cdn-extension", metadata.directives()[1].name());
+
+  for value in [
+    "max-age=18446744073709551616",
+    "stale-while-revalidate=not-a-number",
+    "stale-if-error=\"60\"",
+  ] {
+    assert!(
+      CdnCacheControl::parse(value).is_err(),
+      "{value:?} should fail"
+    );
+  }
+}
+
+#[test]
 fn enforces_cdn_cache_control_bounds() {
   assert!(CdnCacheControl::parse("x".repeat(MAX_CDN_CACHE_CONTROL_VALUE_BYTES + 1)).is_err());
   assert!(CdnCacheControl::parse(format!(

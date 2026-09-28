@@ -39,6 +39,16 @@ mod tests {
   }
 
   #[test]
+  fn ignores_empty_members_across_repeated_fields() {
+    let cache_control = CacheControl::parse_values([",", " max-age=60, ,", "community=enabled"])
+      .expect("empty list members should be ignored");
+
+    assert_eq!(cache_control.len(), 2);
+    assert_eq!(cache_control.directives()[0].name(), "max-age");
+    assert_eq!(cache_control.directives()[1].name(), "community");
+  }
+
+  #[test]
   fn ignores_empty_list_members() {
     let cache_control = CacheControl::parse("public,, max-age=60,")
       .expect("Cache-Control should ignore empty list members");
@@ -101,6 +111,31 @@ mod tests {
       vec!["community=one", "COMMUNITY=two"],
     ] {
       assert!(CacheControl::parse_values(values).is_err());
+    }
+  }
+
+  #[test]
+  fn validates_defined_delta_seconds_directives() {
+    for value in [
+      "max-age=18446744073709551616",
+      "s-maxage=not-a-number",
+      "min-fresh=\"60\"",
+      "stale-while-revalidate=",
+      "stale-if-error=1.5",
+    ] {
+      assert!(CacheControl::parse(value).is_err(), "{value:?} should fail");
+    }
+
+    for value in [
+      "max-age=0",
+      "s-maxage=18446744073709551615",
+      "min-fresh=60",
+      "stale-while-revalidate=30",
+      "stale-if-error=90",
+      "max-stale",
+      "max-stale=60",
+    ] {
+      assert!(CacheControl::parse(value).is_ok(), "{value:?} should parse");
     }
   }
 
@@ -248,9 +283,7 @@ fn parse_field(
   let mut position = 0usize;
   skip_ows(bytes, &mut position);
   if position == bytes.len() {
-    return Err(CacheControlParseError::new(
-      "invalid Cache-Control directive",
-    ));
+    return Ok(());
   }
 
   loop {
@@ -295,11 +328,48 @@ fn parse_directive(
   let value = if value.as_bytes().get(*position) == Some(&b'=') {
     *position += 1;
     skip_ows(value.as_bytes(), position);
-    Some(parse_directive_value(value, position)?)
+    let quoted = value.as_bytes().get(*position) == Some(&b'\"');
+    let parsed = parse_directive_value(value, position)?;
+    if is_delta_seconds_directive(&name) {
+      if quoted || parsed.parse::<u64>().is_err() {
+        return Err(CacheControlParseError::new(
+          "invalid Cache-Control delta-seconds",
+        ));
+      }
+    }
+    Some(parsed)
   } else {
+    if is_delta_seconds_directive(&name) && name.eq_ignore_ascii_case("max-age") {
+      return Err(CacheControlParseError::new(
+        "invalid Cache-Control delta-seconds",
+      ));
+    }
     None
   };
+  if is_delta_seconds_directive(&name)
+    && (name.eq_ignore_ascii_case("s-maxage")
+      || name.eq_ignore_ascii_case("min-fresh")
+      || name.eq_ignore_ascii_case("stale-while-revalidate")
+      || name.eq_ignore_ascii_case("stale-if-error"))
+    && value.is_none()
+  {
+    return Err(CacheControlParseError::new(
+      "invalid Cache-Control delta-seconds",
+    ));
+  }
   Ok(CacheControlDirective { name, value })
+}
+
+fn is_delta_seconds_directive(name: &str) -> bool {
+  matches!(
+    name.to_ascii_lowercase().as_str(),
+    "max-age"
+      | "s-maxage"
+      | "max-stale"
+      | "min-fresh"
+      | "stale-while-revalidate"
+      | "stale-if-error"
+  )
 }
 
 fn parse_directive_value(

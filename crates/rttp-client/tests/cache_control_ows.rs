@@ -121,6 +121,19 @@ fn cache_control_rejects_case_insensitive_duplicates_without_dropping_headers() 
 }
 
 #[test]
+fn cache_control_rejects_delta_seconds_overflow_without_dropping_header() {
+  let value = "max-age=18446744073709551616";
+  let response = response_with_cache_control(value);
+
+  assert!(response.cache_control().is_err());
+  assert_eq!(
+    Some(&value.to_string()),
+    response.header_value("Cache-Control")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
 fn cache_control_parse_rejects_vt_ff_cr_lf_and_unicode_padding() {
   let invalid_values = [
     "\u{000b}no-store",
