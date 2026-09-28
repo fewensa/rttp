@@ -53,16 +53,22 @@ proxy receives absolute-form HTTP/1.1 requests; an HTTPS origin is reached
 through an HTTP `CONNECT` tunnel and then the selected TLS backend. SOCKS4 and
 SOCKS5 handshakes are delegated to the `socks` crate. Buffered proxy requests
 are available in synchronous and, with `async`, asynchronous operation. The
-streaming request APIs reject configured proxies before connecting. The
-bounded `http2` APIs expose direct prior-knowledge h2c via
-`emit_http2_prior_knowledge` and HTTP/1.1 `Upgrade: h2c` via
-`emit_http2_upgrade`. With `async`, `rasync_http2_prior_knowledge` and
-`rasync_http2_upgrade` provide buffered, non-blocking wrappers over the same
-`h2c` decoder by moving the blocking exchange to a worker thread. All four
-APIs reject proxies (and TLS/ALPN) rather than
-tunneling HTTP/2 through one. This also means `http2` is not an HTTPS or
-proxy feature, and an `http2` subset still retains the ordinary HTTP/1.1
-APIs.
+streaming request APIs reject configured proxies before connecting.
+
+The bounded prior-knowledge h2c APIs support direct TCP connections and HTTP
+proxies. Through a proxy, the client dials only the proxy, sends the HTTP/2
+preface on that connection, uses the origin's normalized host-and-port as
+`:authority`, and uses the origin's absolute URI (without a fragment) as
+`:path`; direct requests use origin-form paths. Proxy credentials, when
+configured, are emitted only as `proxy-authorization` on the proxy hop and
+never become origin `authorization` metadata. Only `ProxyType::HTTP` is
+supported for this route: HTTPS proxy CONNECT tunnels, SOCKS tunnels, and
+extended CONNECT are rejected before dialing. Proxy response framing is the
+HTTP/2 peer's responsibility, and the existing read/write timeout and worker
+cancellation behavior applies to the proxy connection. The synchronous
+`emit_http2_prior_knowledge` and async `rasync_http2_prior_knowledge` APIs
+share these rules. HTTP/1.1 `Upgrade: h2c` remains direct-only, and h2c does
+not provide HTTPS or ALPN negotiation.
 
 The matrix describes feature availability, not protocol negotiation: a
 request to an unsupported `https` combination fails before a TLS request can
