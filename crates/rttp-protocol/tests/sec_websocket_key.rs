@@ -24,6 +24,7 @@ fn sec_websocket_key_accepts_rfc_6455_non_ces_and_normalizes_ows() {
 #[test]
 fn sec_websocket_key_rejects_non_base64_and_malformed_values() {
   for value in [
+    "/z9/v8AAQIDBAUGBwgJCh==", // non-canonical trailing base64 bits
     "",
     " ",
     "\t",
@@ -81,12 +82,19 @@ fn sec_websocket_key_rejects_duplicate_fields() {
 
 #[test]
 fn sec_websocket_key_enforces_value_bounds() {
-  let padded = "A".repeat((MAX_SEC_WEBSOCKET_KEY_VALUE_BYTES / 3) * 4);
-  assert!(
-    SecWebSocketKey::parse(padded).is_err(),
-    "a value at the 64 KiB bound must still decode to 16 bytes"
+  let key = RFC_6455_EXAMPLE;
+  let exact = format!(
+    "{}{}{}",
+    " ".repeat(MAX_SEC_WEBSOCKET_KEY_VALUE_BYTES - key.len()),
+    key,
+    ""
   );
-  let oversized = "A".repeat(MAX_SEC_WEBSOCKET_KEY_VALUE_BYTES + 1);
+  let parsed = SecWebSocketKey::parse(&exact).expect("OWS-padded value at the bound should parse");
+  assert_eq!(parsed.as_str(), key);
+  assert_eq!(parsed.header_value(), key);
+
+  let oversized = format!(" {}", exact);
+  assert_eq!(oversized.len(), MAX_SEC_WEBSOCKET_KEY_VALUE_BYTES + 1);
   assert!(
     SecWebSocketKey::parse(oversized).is_err(),
     "a value over the 64 KiB bound should be rejected"
