@@ -3558,7 +3558,7 @@ fn forwarded_helper_emits_bounded_forwarding_metadata() {
 
   assert_eq!(
     Some(
-      r#"for=192.0.2.60; by=203.0.113.43; host=example.test; proto=https, for="[2001:db8:cafe::17]""#
+      r#"for=192.0.2.60;by=203.0.113.43;host=example.test;proto=https, for="[2001:db8:cafe::17]""#
     ),
     header_value(&request_text(&request), "Forwarded")
   );
