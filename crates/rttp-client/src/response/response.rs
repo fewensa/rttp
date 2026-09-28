@@ -52,6 +52,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
 use rttp_protocol::age::Age;
 use rttp_protocol::allow as protocol_allow;
+use rttp_protocol::cache_control::CacheControl as ProtocolCacheControl;
 use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::clear_site_data::ClearSiteData;
@@ -103,8 +104,6 @@ use rttp_protocol::vary::Vary;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
 use rttp_protocol::x_frame_options::XFrameOptions;
 
-const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
-const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
 const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
@@ -2052,67 +2051,30 @@ impl CacheControl {
   where
     I: IntoIterator<Item = &'a str>,
   {
+    let parsed = ProtocolCacheControl::parse_values(values)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))?;
     let mut cache_control = Self::default();
-    let mut names = HashSet::new();
-    let mut directive_count = 0usize;
-    for value in values {
-      for directive in split_cache_control_directives(value)? {
-        directive_count += 1;
-        if directive_count > MAX_CACHE_CONTROL_DIRECTIVES {
-          return Err(error::bad_response("Too many Cache-Control directives"));
-        }
-        let name = cache_control_directive_name(&directive)?;
-        if !names.insert(name.to_ascii_lowercase()) {
-          return Err(error::bad_response("Duplicate Cache-Control directive"));
-        }
-        cache_control.apply_directive(&directive)?;
-      }
+    for directive in parsed.directives() {
+      cache_control.apply_directive(directive.name(), directive.value());
     }
     Ok(cache_control)
   }
 
-  fn apply_directive(&mut self, directive: &str) -> error::Result<()> {
-    let (name, value, value_was_quoted) = match directive.split_once('=') {
-      Some((name, value)) => {
-        let value = trim_ows(value);
-        (
-          trim_ows(name),
-          Some(parse_directive_value(value)?),
-          value.starts_with('"'),
-        )
-      }
-      None => (trim_ows(directive), None, false),
-    };
-    if !is_token(name) {
-      return Err(error::bad_response("Invalid Cache-Control directive"));
-    }
-
+  fn apply_directive(&mut self, name: &str, value: Option<&str>) {
     match name.to_ascii_lowercase().as_str() {
       "no-cache" => {
         self.no_cache = true;
         if let Some(value) = value {
-          self.no_cache_fields = split_field_names(&value);
+          self.no_cache_fields = split_field_names(value);
         }
       }
       "no-store" => self.no_store = true,
-      "max-age" => {
-        self.max_age = Some(parse_delta_seconds(
-          name,
-          value.as_deref(),
-          value_was_quoted,
-        )?)
-      }
-      "s-maxage" => {
-        self.s_maxage = Some(parse_delta_seconds(
-          name,
-          value.as_deref(),
-          value_was_quoted,
-        )?)
-      }
+      "max-age" => self.max_age = value.and_then(|value| value.parse().ok()),
+      "s-maxage" => self.s_maxage = value.and_then(|value| value.parse().ok()),
       "private" => {
         self.private = true;
         if let Some(value) = value {
-          self.private_fields = split_field_names(&value);
+          self.private_fields = split_field_names(value);
         }
       }
       "public" => self.public = true,
@@ -2120,24 +2082,13 @@ impl CacheControl {
       "proxy-revalidate" => self.proxy_revalidate = true,
       "immutable" => self.immutable = true,
       "stale-while-revalidate" => {
-        self.stale_while_revalidate = Some(parse_delta_seconds(
-          name,
-          value.as_deref(),
-          value_was_quoted,
-        )?)
+        self.stale_while_revalidate = value.and_then(|value| value.parse().ok())
       }
-      "stale-if-error" => {
-        self.stale_if_error = Some(parse_delta_seconds(
-          name,
-          value.as_deref(),
-          value_was_quoted,
-        )?)
-      }
+      "stale-if-error" => self.stale_if_error = value.and_then(|value| value.parse().ok()),
       _ => self
         .extensions
-        .push(CacheControlExtension::new(name, value.as_deref())),
+        .push(CacheControlExtension::new(name, value)),
     }
-    Ok(())
   }
 
   pub fn no_cache(&self) -> bool {
@@ -2218,133 +2169,6 @@ impl CacheControlExtension {
   pub fn value(&self) -> Option<&str> {
     self.value.as_deref()
   }
-}
-
-fn split_cache_control_directives(value: &str) -> error::Result<Vec<String>> {
-  if value.len() > MAX_CACHE_CONTROL_VALUE_BYTES {
-    return Err(error::bad_response(
-      "Cache-Control header value is too large",
-    ));
-  }
-
-  let mut directives = Vec::new();
-  let mut current = String::new();
-  let mut in_quote = false;
-  let mut escaped = false;
-
-  for ch in value.chars() {
-    if escaped {
-      current.push(ch);
-      escaped = false;
-      continue;
-    }
-
-    match ch {
-      '\\' if in_quote => {
-        current.push(ch);
-        escaped = true;
-      }
-      '"' => {
-        current.push(ch);
-        in_quote = !in_quote;
-      }
-      ',' if !in_quote => {
-        push_directive(&mut directives, &current)?;
-        current.clear();
-      }
-      _ => current.push(ch),
-    }
-  }
-
-  if in_quote || escaped {
-    return Err(error::bad_response("Malformed Cache-Control quoted-string"));
-  }
-  push_directive(&mut directives, &current)?;
-  Ok(directives)
-}
-
-fn push_directive(directives: &mut Vec<String>, directive: &str) -> error::Result<()> {
-  let directive = trim_ows(directive);
-  if directive.is_empty() {
-    return Err(error::bad_response("Invalid Cache-Control directive"));
-  }
-  if directives.len() >= MAX_CACHE_CONTROL_DIRECTIVES {
-    return Err(error::bad_response("Too many Cache-Control directives"));
-  }
-  directives.push(directive.to_string());
-  Ok(())
-}
-
-fn cache_control_directive_name(directive: &str) -> error::Result<&str> {
-  let name = directive
-    .split_once('=')
-    .map_or(directive, |(name, _)| name)
-    .trim_matches([' ', '\t']);
-  if !is_token(name) {
-    return Err(error::bad_response("Invalid Cache-Control directive"));
-  }
-  Ok(name)
-}
-
-fn parse_directive_value(value: &str) -> error::Result<String> {
-  if let Some(value) = value.strip_prefix('"') {
-    return parse_quoted_string(value);
-  }
-  if value.contains('"') || value.is_empty() || !is_token(value) {
-    return Err(error::bad_response("Invalid Cache-Control directive value"));
-  }
-  Ok(value.to_string())
-}
-
-fn parse_quoted_string(value: &str) -> error::Result<String> {
-  let mut chars = value.chars();
-  let mut parsed = String::new();
-  let mut closed = false;
-
-  while let Some(ch) = chars.next() {
-    match ch {
-      '"' => {
-        closed = true;
-        break;
-      }
-      '\\' => {
-        let Some(escaped) = chars.next() else {
-          return Err(error::bad_response("Malformed Cache-Control quoted-string"));
-        };
-        if !is_quoted_pair_char(escaped) {
-          return Err(error::bad_response("Malformed Cache-Control quoted-string"));
-        }
-        parsed.push(escaped);
-      }
-      _ if is_qdtext(ch) => parsed.push(ch),
-      _ => return Err(error::bad_response("Malformed Cache-Control quoted-string")),
-    }
-  }
-
-  if !closed || chars.any(|ch| !is_ows(ch)) {
-    return Err(error::bad_response("Malformed Cache-Control quoted-string"));
-  }
-  Ok(parsed)
-}
-
-fn parse_delta_seconds(
-  name: &str,
-  value: Option<&str>,
-  value_was_quoted: bool,
-) -> error::Result<u64> {
-  let Some(value) = value else {
-    return Err(error::bad_response(format!(
-      "Missing Cache-Control {name} delta-seconds"
-    )));
-  };
-  if value_was_quoted || value.is_empty() || !value.chars().all(|ch| ch.is_ascii_digit()) {
-    return Err(error::bad_response(format!(
-      "Invalid Cache-Control {name} delta-seconds"
-    )));
-  }
-  value
-    .parse::<u64>()
-    .map_err(|_| error::bad_response(format!("Invalid Cache-Control {name} delta-seconds")))
 }
 
 fn split_field_names(value: &str) -> Vec<String> {

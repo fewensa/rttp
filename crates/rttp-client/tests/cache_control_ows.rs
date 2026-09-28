@@ -134,6 +134,24 @@ fn cache_control_rejects_delta_seconds_overflow_without_dropping_header() {
 }
 
 #[test]
+fn response_cache_control_uses_hardened_list_and_delta_seconds_grammar() {
+  let response = response_with_cache_control(",, min-fresh=60, , max-stale");
+  let parsed = response
+    .cache_control()
+    .expect("empty Cache-Control members should be ignored")
+    .expect("cache-control header should be present");
+  assert_eq!(Some("60"), parsed.extensions()[0].value());
+  assert_eq!("max-stale", parsed.extensions()[1].name());
+
+  for value in ["min-fresh=abc", "max-stale=abc", "min-fresh=\"60\""] {
+    assert!(
+      response_with_cache_control(value).cache_control().is_err(),
+      "invalid delta-seconds should be rejected: {value}"
+    );
+  }
+}
+
+#[test]
 fn cache_control_parse_rejects_vt_ff_cr_lf_and_unicode_padding() {
   let invalid_values = [
     "\u{000b}no-store",

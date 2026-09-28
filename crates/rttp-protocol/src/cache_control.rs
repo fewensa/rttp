@@ -95,13 +95,28 @@ mod tests {
       "x".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2),
       "y".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2),
     ];
-    assert!(CacheControl::parse_values(exact.iter().map(String::as_str)).is_ok());
+    assert!(CacheControl::parse_values(exact.iter().map(String::as_str)).is_err());
+
+    let exact_canonical = [
+      "x".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2 - 1),
+      "y".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2 - 1),
+    ];
+    let parsed = CacheControl::parse_values(exact_canonical.iter().map(String::as_str))
+      .expect("canonical output at the limit should parse");
+    assert_eq!(CacheControl::parse(parsed.header_value()).unwrap(), parsed);
 
     let over = [
       "x".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2),
       "y".repeat(MAX_CACHE_CONTROL_VALUE_BYTES / 2 + 1),
     ];
     assert!(CacheControl::parse_values(over.iter().map(String::as_str)).is_err());
+  }
+
+  #[test]
+  fn rejects_canonical_expansion_from_escaped_values() {
+    let escaped = format!("{}a", "\\\\".repeat(32_762));
+    let value = format!("custom=\"{escaped}\",x=y");
+    assert!(CacheControl::parse(value).is_err());
   }
 
   #[test]
@@ -231,7 +246,13 @@ impl CacheControl {
         "invalid Cache-Control directive",
       ));
     }
-    Ok(Self { directives })
+    let cache_control = Self { directives };
+    if cache_control.header_value().len() > MAX_CACHE_CONTROL_VALUE_BYTES {
+      return Err(CacheControlParseError::new(
+        "Cache-Control canonical value is too large",
+      ));
+    }
+    Ok(cache_control)
   }
 
   pub fn directives(&self) -> &[CacheControlDirective] {
