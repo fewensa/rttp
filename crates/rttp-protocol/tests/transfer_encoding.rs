@@ -94,9 +94,11 @@ fn transfer_encoding_enforces_value_and_coding_bounds() {
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
 
   let large_field = "x".repeat(MAX_TRANSFER_ENCODING_VALUE_BYTES - 7);
-  assert!(
-    TransferEncoding::parse_values([large_field.as_str(), "chunked"]).is_err(),
-    "combined field values must account for separator overhead"
+  let error = TransferEncoding::parse_values([large_field.as_str(), "chunked"])
+    .expect_err("combined field values must account for separator overhead");
+  assert_eq!(
+    error.to_string(),
+    "Transfer-Encoding header value is too large"
   );
 
   let at_value_limit = "x".repeat(MAX_TRANSFER_ENCODING_VALUE_BYTES);
