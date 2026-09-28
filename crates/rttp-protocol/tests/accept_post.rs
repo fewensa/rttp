@@ -1,4 +1,6 @@
-use rttp_protocol::accept_post::{AcceptPost, MAX_ACCEPT_POST_MEDIA_TYPES, MAX_ACCEPT_POST_VALUE_BYTES};
+use rttp_protocol::accept_post::{
+  AcceptPost, MAX_ACCEPT_POST_MEDIA_TYPES, MAX_ACCEPT_POST_VALUE_BYTES,
+};
 
 #[test]
 fn parses_repeated_fields_and_quoted_separators_in_order() {
@@ -54,9 +56,12 @@ fn rejects_controls_but_allows_tab_ows() {
 
 #[test]
 fn enforces_media_type_count_and_value_byte_limits() {
-  let members = std::iter::repeat_n("application/json", MAX_ACCEPT_POST_MEDIA_TYPES)
-    .collect::<Vec<_>>();
-  assert_eq!(AcceptPost::parse(members.join(",")).unwrap().len(), MAX_ACCEPT_POST_MEDIA_TYPES);
+  let members =
+    std::iter::repeat_n("application/json", MAX_ACCEPT_POST_MEDIA_TYPES).collect::<Vec<_>>();
+  assert_eq!(
+    AcceptPost::parse(members.join(",")).unwrap().len(),
+    MAX_ACCEPT_POST_MEDIA_TYPES
+  );
   assert!(AcceptPost::parse(
     std::iter::repeat_n("application/json", MAX_ACCEPT_POST_MEDIA_TYPES + 1)
       .collect::<Vec<_>>()
