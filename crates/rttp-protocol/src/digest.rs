@@ -1,8 +1,16 @@
 use std::error::Error;
 use std::fmt;
 
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD};
+use base64::engine::DecodePaddingMode;
 use base64::Engine;
+
+const SFV_BASE64: GeneralPurpose = GeneralPurpose::new(
+  &base64::alphabet::STANDARD,
+  GeneralPurposeConfig::new()
+    .with_decode_allow_trailing_bits(true)
+    .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+);
 
 pub const MAX_DIGEST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DIGEST_ENTRIES: usize = 256;
@@ -209,7 +217,7 @@ fn parse_byte_sequence(value: &str, position: &mut usize) -> Result<Vec<u8>, Dig
   }
   let encoded = &value[start..*position];
   *position += 1;
-  STANDARD
+  SFV_BASE64
     .decode(encoded)
     .map_err(|_| DigestParseError::new("invalid Digest byte sequence"))
 }
@@ -217,6 +225,7 @@ fn parse_byte_sequence(value: &str, position: &mut usize) -> Result<Vec<u8>, Dig
 fn parse_parameters(value: &str, position: &mut usize) -> Result<(), DigestParseError> {
   let bytes = value.as_bytes();
   let mut parameter_count = 0usize;
+  let mut seen_names = Vec::new();
   while bytes.get(*position) == Some(&b';') {
     parameter_count += 1;
     if parameter_count > MAX_DIGEST_ENTRY_PARAMETERS {
@@ -224,7 +233,11 @@ fn parse_parameters(value: &str, position: &mut usize) -> Result<(), DigestParse
     }
     *position += 1;
     skip_sp(bytes, position);
-    parse_key(value, position)?;
+    let name = parse_key(value, position)?;
+    if seen_names.contains(&name) {
+      return Err(DigestParseError::new("duplicate Digest entry parameter"));
+    }
+    seen_names.push(name);
     if bytes.get(*position) == Some(&b'=') {
       *position += 1;
       parse_bare_item(value, position)?;
@@ -238,10 +251,31 @@ fn parse_bare_item(value: &str, position: &mut usize) -> Result<(), DigestParseE
     Some(b'?') => parse_boolean(value, position),
     Some(b':') => parse_byte_sequence(value, position).map(|_| ()),
     Some(b'"') => parse_string(value, position),
+    Some(b'@') => parse_date(value, position),
     Some(b'-' | b'0'..=b'9') => parse_number(value, position),
     Some(b'*' | b'a'..=b'z' | b'A'..=b'Z') => parse_token(value, position),
     _ => Err(DigestParseError::new("invalid Digest parameter value")),
   }
+}
+
+fn parse_date(value: &str, position: &mut usize) -> Result<(), DigestParseError> {
+  let bytes = value.as_bytes();
+  if bytes.get(*position) != Some(&b'@') {
+    return Err(DigestParseError::new("invalid Digest parameter value"));
+  }
+  *position += 1;
+  if bytes.get(*position) == Some(&b'-') {
+    *position += 1;
+  }
+  let start = *position;
+  while matches!(bytes.get(*position), Some(b'0'..=b'9')) {
+    *position += 1;
+  }
+  let digit_len = *position - start;
+  if digit_len == 0 || digit_len > 15 {
+    return Err(DigestParseError::new("invalid Digest parameter value"));
+  }
+  Ok(())
 }
 
 fn parse_boolean(value: &str, position: &mut usize) -> Result<(), DigestParseError> {
@@ -393,8 +427,52 @@ mod tests {
       "sha-256=:YWJj:;foo=1.",
       "sha-256=:YWJj:;Foo=bar",
       "sha-256=:YWJj:;\tfoo=bar",
+      "sha-256=:YWJj:;foo=1;foo=2",
+      "sha-256=:YWJj:;created=@",
+      "sha-256=:YWJj:;created=@1.0",
+      "sha-256=:YWJj:;created=@1234567890123456",
     ] {
       assert!(Digest::parse(value).is_err(), "should reject {value:?}");
     }
+  }
+
+  #[test]
+  fn digest_accepts_date_valued_item_parameters() {
+    let digest = Digest::parse("sha-256=:YWJj:;created=@0")
+      .expect("Structured Fields date parameters should parse and be discarded");
+    assert_eq!(
+      Some(&b"abc"[..]),
+      digest.entry("sha-256").map(|entry| entry.value())
+    );
+    assert_eq!("sha-256=:YWJj:", digest.header_value());
+  }
+
+  #[test]
+  fn digest_accepts_non_zero_base64_trailing_bits() {
+    for value in ["sha-256=:YR==:", "sha-256=:YR:"] {
+      let digest = Digest::parse(value)
+        .expect("Structured Fields byte sequences may have non-zero unused trailing bits");
+      assert_eq!(
+        Some(&b"a"[..]),
+        digest.entry("sha-256").map(|entry| entry.value()),
+        "{value:?}"
+      );
+    }
+  }
+
+  #[test]
+  fn digest_decodes_unpadded_byte_sequences_and_serializes_padded() {
+    let digest = Digest::parse("sha-256=:YQ:, sha-512=:YWI:")
+      .expect("unpadded Structured Fields byte sequences should parse");
+
+    assert_eq!(
+      Some(&b"a"[..]),
+      digest.entry("sha-256").map(|entry| entry.value())
+    );
+    assert_eq!(
+      Some(&b"ab"[..]),
+      digest.entry("sha-512").map(|entry| entry.value())
+    );
+    assert_eq!("sha-256=:YQ==:, sha-512=:YWI=:", digest.header_value());
   }
 }
