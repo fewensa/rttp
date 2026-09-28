@@ -78,17 +78,10 @@ pub fn is_reason_phrase_byte(byte: u8) -> bool {
 
 /// Split an HTTP/1 status-line on literal ASCII SP separators only.
 ///
-/// Returns `(HTTP-version, status-code, reason-phrase)`. HTAB, vertical tab,
-/// form feed, Unicode whitespace, and other non-SP whitespace anywhere in the
-/// line are rejected. A missing reason-phrase is returned as `""`.
+/// Returns `(HTTP-version, status-code, reason-phrase)`. HTAB is permitted in
+/// the reason-phrase, but not as a separator. A missing reason-phrase is
+/// returned as `""`.
 pub fn split_status_line(status_line: &str) -> Option<(&str, &str, &str)> {
-  if status_line
-    .chars()
-    .any(|character| character != ' ' && character.is_whitespace())
-  {
-    return None;
-  }
-
   let (version, rest) = status_line.split_once(' ')?;
   if version != "HTTP/1.0" && version != "HTTP/1.1" {
     return None;
@@ -99,6 +92,9 @@ pub fn split_status_line(status_line: &str) -> Option<(&str, &str, &str)> {
     None => (rest, ""),
   };
   if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+    return None;
+  }
+  if !reason.bytes().all(is_reason_phrase_byte) {
     return None;
   }
 
@@ -310,7 +306,7 @@ mod tests {
   }
 
   #[test]
-  fn split_status_line_rejects_non_sp_whitespace() {
+  fn split_status_line_rejects_non_sp_whitespace_outside_reason() {
     for status_line in [
       "HTTP/1.1\t200 OK",
       "HTTP/1.1\u{000b}200 OK",
@@ -320,14 +316,32 @@ mod tests {
       "HTTP/1.1200 OK",
       "HTTP/1.1-200 OK",
       "HTTP/1.1/200 OK",
-      "HTTP/1.1 200 Connection\tEstablished",
-      "HTTP/1.1 200 Connection\u{00a0}Established",
-      "HTTP/1.1 200 Connection\u{2003}Established",
     ] {
       assert_eq!(
         split_status_line(status_line),
         None,
         "expected rejection for {status_line:?}"
+      );
+    }
+  }
+
+  #[test]
+  fn split_status_line_validates_reason_phrase_bytes() {
+    assert_eq!(
+      split_status_line("HTTP/1.1 200 \tOK  \u{0080}\u{00ff}"),
+      Some(("HTTP/1.1", "200", "\tOK  \u{0080}\u{00ff}"))
+    );
+    assert_eq!(
+      split_status_line("HTTP/1.1 204"),
+      Some(("HTTP/1.1", "204", ""))
+    );
+
+    for control in ['\0', '\r', '\n', '\u{0001}', '\u{001f}', '\u{007f}'] {
+      let status_line = format!("HTTP/1.1 200 ok{control}");
+      assert_eq!(
+        split_status_line(&status_line),
+        None,
+        "expected rejection for reason control byte {control:?}"
       );
     }
   }

@@ -1486,9 +1486,6 @@ mod tests {
       "HTTP/1.1200 OK\r\n\r\n",
       "HTTP/1.1-200 OK\r\n\r\n",
       "HTTP/1.1/200 OK\r\n\r\n",
-      "HTTP/1.1 200 Connection\tEstablished\r\n\r\n",
-      "HTTP/1.1 200 Connection\u{00a0}Established\r\n\r\n",
-      "HTTP/1.1 200 Connection\u{2003}Established\r\n\r\n",
     ] {
       let error = response_status_code(header.as_bytes())
         .expect_err("non-SP origin status-line separator should be rejected");
@@ -1713,7 +1710,6 @@ mod tests {
       "HTTP/1.1\u{000c}103 Early Hints",
       "HTTP/1.1\u{00a0}103 Early Hints",
       "HTTP/1.1\u{2003}103 Early Hints",
-      "HTTP/1.1 103 Early\tHints",
     ] {
       let raw = format!(
         "{status_line}\r\nX-Interim: ignored\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
