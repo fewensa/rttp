@@ -4214,6 +4214,20 @@ fn request_via_parses_ordered_hops_without_policy() {
   assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
   assert_eq!("upstream", via.members()[1].received_by());
 
+  let boundary = "1.1 [2001:db8::1]:443 (comma, (nested) obs-\u{00e9})";
+  let boundary_request = HttpRequest::parse(
+    format!("GET / HTTP/1.1\r\nHost: example.test\r\nVia: {boundary}\r\n\r\n").as_bytes(),
+  )
+  .expect("boundary Via request should parse");
+  let boundary_via = boundary_request
+    .via()
+    .expect("boundary Via should parse")
+    .expect("boundary Via should be present");
+  assert_eq!(
+    boundary_via,
+    HttpVia::parse(boundary_via.header_value()).unwrap()
+  );
+
   let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");
   assert_eq!(None, absent.via().expect("missing Via"));
