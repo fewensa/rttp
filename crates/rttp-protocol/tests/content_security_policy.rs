@@ -15,6 +15,19 @@ fn content_security_policy_preserves_opaque_policy_values() {
 }
 
 #[test]
+fn content_security_policy_accepts_htab_and_exact_value_limit() {
+  let value = format!(
+    "default-src\t'self';{}",
+    "x".repeat(MAX_CONTENT_SECURITY_POLICY_VALUE_BYTES - "default-src\t'self';".len())
+  );
+  let policy = ContentSecurityPolicy::parse(&value).expect("HTAB and exact limit should parse");
+
+  assert_eq!(policy.as_str(), value);
+  assert_eq!(policy.header_value(), value);
+  assert_eq!(policy.header_values(), [value]);
+}
+
+#[test]
 fn content_security_policy_preserves_multiple_policy_fields() {
   let policy = ContentSecurityPolicy::parse_values(["default-src 'self'", "object-src 'none'"])
     .expect("multiple CSP fields should parse");
@@ -45,6 +58,12 @@ fn content_security_policy_rejects_absent_empty_malformed_and_oversized_values()
     ContentSecurityPolicy::parse("default-src 'self'\u{7f}").is_err(),
     "DEL controls must be rejected"
   );
+  for control in ['\0', '\u{1f}'] {
+    assert!(
+      ContentSecurityPolicy::parse(format!("default-src 'self'{control}")).is_err(),
+      "C0 control {control:?} must be rejected"
+    );
+  }
   assert!(
     ContentSecurityPolicy::parse("x".repeat(MAX_CONTENT_SECURITY_POLICY_VALUE_BYTES + 1)).is_err(),
     "oversized values must be rejected"
@@ -58,6 +77,10 @@ fn content_security_policy_checks_duplicate_values_against_its_bound() {
   assert!(
     ContentSecurityPolicy::parse_values(["default-src 'self'", oversized.as_str()]).is_err(),
     "oversized duplicate fields must not bypass validation"
+  );
+  assert!(
+    ContentSecurityPolicy::parse_values(["default-src 'self'", ""]).is_err(),
+    "empty repeated fields must be rejected"
   );
 }
 

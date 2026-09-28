@@ -15,6 +15,20 @@ fn content_security_policy_report_only_preserves_opaque_policy_values() {
 }
 
 #[test]
+fn content_security_policy_report_only_accepts_htab_and_exact_value_limit() {
+  let value = format!(
+    "default-src\t'self';{}",
+    "x".repeat(MAX_CONTENT_SECURITY_POLICY_REPORT_ONLY_VALUE_BYTES - "default-src\t'self';".len())
+  );
+  let policy =
+    ContentSecurityPolicyReportOnly::parse(&value).expect("HTAB and exact limit should parse");
+
+  assert_eq!(policy.as_str(), value);
+  assert_eq!(policy.header_value(), value);
+  assert_eq!(policy.header_values(), [value]);
+}
+
+#[test]
 fn content_security_policy_report_only_preserves_multiple_policy_fields() {
   let policy =
     ContentSecurityPolicyReportOnly::parse_values(["default-src 'self'", "object-src 'none'"])
@@ -46,6 +60,12 @@ fn content_security_policy_report_only_rejects_absent_empty_malformed_and_oversi
     ContentSecurityPolicyReportOnly::parse("default-src 'self'\u{7f}").is_err(),
     "DEL controls must be rejected"
   );
+  for control in ['\0', '\u{1f}'] {
+    assert!(
+      ContentSecurityPolicyReportOnly::parse(format!("default-src 'self'{control}")).is_err(),
+      "C0 control {control:?} must be rejected"
+    );
+  }
   assert!(
     ContentSecurityPolicyReportOnly::parse(
       "x".repeat(MAX_CONTENT_SECURITY_POLICY_REPORT_ONLY_VALUE_BYTES + 1),
@@ -63,6 +83,10 @@ fn content_security_policy_report_only_checks_duplicate_values_against_its_bound
     ContentSecurityPolicyReportOnly::parse_values(["default-src 'self'", oversized.as_str()])
       .is_err(),
     "oversized duplicate fields must not bypass validation"
+  );
+  assert!(
+    ContentSecurityPolicyReportOnly::parse_values(["default-src 'self'", ""]).is_err(),
+    "empty repeated fields must be rejected"
   );
 }
 
