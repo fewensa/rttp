@@ -1,8 +1,16 @@
 use std::error::Error;
 use std::fmt;
 
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD};
+use base64::engine::DecodePaddingMode;
 use base64::Engine;
+
+const SFV_BASE64: GeneralPurpose = GeneralPurpose::new(
+  &base64::alphabet::STANDARD,
+  GeneralPurposeConfig::new()
+    .with_decode_allow_trailing_bits(true)
+    .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+);
 
 pub const MAX_DIGEST_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_DIGEST_ENTRIES: usize = 256;
@@ -209,7 +217,7 @@ fn parse_byte_sequence(value: &str, position: &mut usize) -> Result<Vec<u8>, Dig
   }
   let encoded = &value[start..*position];
   *position += 1;
-  STANDARD
+  SFV_BASE64
     .decode(encoded)
     .map_err(|_| DigestParseError::new("invalid Digest byte sequence"))
 }
@@ -396,5 +404,21 @@ mod tests {
     ] {
       assert!(Digest::parse(value).is_err(), "should reject {value:?}");
     }
+  }
+
+  #[test]
+  fn digest_decodes_unpadded_byte_sequences_and_serializes_padded() {
+    let digest = Digest::parse("sha-256=:YQ:, sha-512=:YWI:")
+      .expect("unpadded Structured Fields byte sequences should parse");
+
+    assert_eq!(
+      Some(&b"a"[..]),
+      digest.entry("sha-256").map(|entry| entry.value())
+    );
+    assert_eq!(
+      Some(&b"ab"[..]),
+      digest.entry("sha-512").map(|entry| entry.value())
+    );
+    assert_eq!("sha-256=:YQ==:, sha-512=:YWI=:", digest.header_value());
   }
 }
