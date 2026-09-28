@@ -2169,7 +2169,7 @@ fn response_error_status_boundaries() {
 #[rustfmt::skip]
 fn response_status_family_boundaries() {
   for (code, expected_informational, expected_redirection, expected_error) in [(99, false, false, false), (100, true, false, false), (199, true, false, false), (200, false, false, false), (299, false, false, false), (300, false, true, false), (304, false, true, false), (399, false, true, false), (400, false, false, true), (499, false, false, true), (500, false, false, true), (599, false, false, true), (600, false, false, false)] {
-    let raw = format!("HTTP/1.1 {code} Test\r\nContent-Length: 0\r\n\r\n");
+    let raw = format!("HTTP/1.1 {code:03} Test\r\nContent-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes()).expect("response should parse");
     assert_eq!((expected_informational, expected_redirection, expected_error), (response.is_informational(), response.is_redirection(), response.is_error()), "status {code}");
   }
@@ -2178,7 +2178,7 @@ fn response_status_family_boundaries() {
 #[test]
 fn response_existing_status_helpers_reject_out_of_range_codes() {
   for code in [99, 600] {
-    let raw = format!("HTTP/1.1 {code} Test\r\nContent-Length: 0\r\n\r\n");
+    let raw = format!("HTTP/1.1 {code:03} Test\r\nContent-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
       .expect("response framing should remain inspectable");
 
