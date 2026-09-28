@@ -46,8 +46,47 @@ fn idempotency_key_rejects_empty_invisible_injected_and_obs_text_values() {
 }
 
 #[test]
+fn idempotency_key_accepts_visible_ascii_edges_and_rejects_space_and_del() {
+  for value in ["!", "~", "!~", r#"key\"with\\punct"#] {
+    let key = IdempotencyKey::parse(value).expect("visible ASCII edge should parse");
+    assert_eq!(key.as_str(), value);
+    assert_eq!(key.header_value(), value);
+  }
+
+  for value in [
+    " ",
+    "\t",
+    "key value",
+    "key\tvalue",
+    "!\u{7f}",
+    "~\u{7f}",
+    "\u{7f}key",
+    "key\u{7f}",
+    "\u{7f}",
+  ] {
+    assert!(
+      IdempotencyKey::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let space_padded =
+    IdempotencyKey::parse(" !~\t ").expect("OWS around visible edges should parse");
+  assert_eq!(space_padded.as_str(), "!~");
+  assert_eq!(space_padded.header_value(), "!~");
+}
+
+#[test]
 fn idempotency_key_rejects_duplicate_fields() {
   assert!(IdempotencyKey::parse_values(["charge-1", "charge-2"]).is_err());
+  assert!(
+    IdempotencyKey::parse_values(["charge-1", "charge-1"]).is_err(),
+    "identical duplicate fields must be rejected"
+  );
+  assert!(
+    IdempotencyKey::parse_values([" charge-1 ", "charge-1"]).is_err(),
+    "OWS-normalized identical duplicate fields must be rejected"
+  );
   assert!(IdempotencyKey::parse_values([]).is_err());
 }
 
@@ -61,6 +100,47 @@ fn idempotency_key_enforces_value_bounds() {
     IdempotencyKey::parse("x".repeat(MAX_IDEMPOTENCY_KEY_VALUE_BYTES + 1)).is_err(),
     "a value over the 64 KiB bound should be rejected"
   );
+
+  let exact_padded = format!(" {}", "x".repeat(MAX_IDEMPOTENCY_KEY_VALUE_BYTES - 1));
+  assert_eq!(exact_padded.len(), MAX_IDEMPOTENCY_KEY_VALUE_BYTES);
+  let parsed = IdempotencyKey::parse(&exact_padded)
+    .expect("OWS-padded value at the exact 64 KiB wire bound should parse");
+  assert_eq!(parsed.as_str().len(), MAX_IDEMPOTENCY_KEY_VALUE_BYTES - 1);
+  assert_eq!(
+    parsed.header_value().len(),
+    MAX_IDEMPOTENCY_KEY_VALUE_BYTES - 1
+  );
+
+  let oversized_padded = format!(" {}", "x".repeat(MAX_IDEMPOTENCY_KEY_VALUE_BYTES));
+  assert_eq!(oversized_padded.len(), MAX_IDEMPOTENCY_KEY_VALUE_BYTES + 1);
+  assert!(
+    IdempotencyKey::parse(&oversized_padded).is_err(),
+    "OWS-padded values over the 64 KiB wire bound must be rejected"
+  );
+}
+
+#[test]
+fn idempotency_key_round_trips_header_value() {
+  let visible_range: String = (0x21u8..=0x7e).map(char::from).collect();
+  for value in [
+    "charge-2026-08-19-9f3c",
+    "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+    "A",
+    "!",
+    "~",
+    "\"quoted\"",
+    r#"key\"with\\punct"#,
+    " \tcharge-2026-08-19-9f3c\t ",
+    visible_range.as_str(),
+  ] {
+    let key = IdempotencyKey::parse(value).expect("visible key should parse");
+    let header_value = key.header_value();
+    let round_trip = IdempotencyKey::parse(&header_value).expect("header_value should reparse");
+    assert_eq!(round_trip, key);
+    assert_eq!(round_trip.as_str(), key.as_str());
+    assert_eq!(round_trip.header_value(), header_value);
+    assert_eq!(round_trip.as_str(), value.trim_matches([' ', '\t']));
+  }
 }
 
 #[test]
