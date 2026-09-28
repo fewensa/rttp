@@ -146,7 +146,7 @@ impl ContentDisposition {
     candidate.push_str("; ");
     candidate.push_str(&name);
     candidate.push('=');
-    candidate.push_str(&crate::media_type::serialize_parameter_value(value));
+    candidate.push_str(&serialize_content_disposition_parameter_value(&name, value));
     if candidate.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
       return Err(ContentDispositionParseError::new(
         "Content-Disposition header value is too large",
@@ -193,7 +193,8 @@ impl ContentDisposition {
       value.push_str("; ");
       value.push_str(parameter.name());
       value.push('=');
-      value.push_str(&crate::media_type::serialize_parameter_value(
+      value.push_str(&serialize_content_disposition_parameter_value(
+        parameter.name(),
         parameter.value(),
       ));
     }
@@ -279,10 +280,16 @@ fn parse_field_value(value: &str) -> Result<ContentDisposition, ContentDispositi
     parameters.push(parameter);
   }
 
-  Ok(ContentDisposition {
+  let parsed = ContentDisposition {
     disposition_type,
     parameters,
-  })
+  };
+  if parsed.header_value().len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
+    return Err(ContentDispositionParseError::new(
+      "Content-Disposition header value is too large",
+    ));
+  }
+  Ok(parsed)
 }
 
 fn split_members(value: &str) -> Result<Vec<&str>, ContentDispositionParseError> {
@@ -340,13 +347,13 @@ fn parse_parameter(
       "invalid Content-Disposition parameter name",
     ));
   }
-  if raw_value.len() > MAX_CONTENT_DISPOSITION_PARAMETER_VALUE_BYTES {
+
+  let (parsed_value, value_was_quoted) = parse_parameter_value(raw_value)?;
+  if parsed_value.len() > MAX_CONTENT_DISPOSITION_PARAMETER_VALUE_BYTES {
     return Err(ContentDispositionParseError::new(
       "Content-Disposition parameter value is too large",
     ));
   }
-
-  let (parsed_value, value_was_quoted) = parse_parameter_value(raw_value)?;
   if name == "filename*" && (value_was_quoted || !is_content_disposition_ext_value(&parsed_value)) {
     return Err(ContentDispositionParseError::new(
       "invalid Content-Disposition filename* parameter",
@@ -410,6 +417,15 @@ fn parse_quoted_string(value: &str) -> Result<String, ContentDispositionParseErr
   Ok(parsed)
 }
 
+fn serialize_content_disposition_parameter_value(name: &str, value: &str) -> String {
+  // RFC 6266 ext-parameter values are ext-value, not quoted-string.
+  if name.eq_ignore_ascii_case("filename*") {
+    value.to_string()
+  } else {
+    crate::media_type::serialize_parameter_value(value)
+  }
+}
+
 fn is_content_disposition_ext_value(value: &str) -> bool {
   let mut parts = value.splitn(3, '\'');
   let Some(charset) = parts.next() else {
@@ -422,9 +438,8 @@ fn is_content_disposition_ext_value(value: &str) -> bool {
     return false;
   };
 
-  !charset.is_empty()
-    && crate::media_type::is_token(charset)
-    && language.bytes().all(is_content_disposition_language_byte)
+  is_content_disposition_mime_charset(charset)
+    && is_content_disposition_language(language)
     && !encoded_value.is_empty()
     && is_content_disposition_ext_value_chars(encoded_value)
 }
@@ -457,8 +472,38 @@ fn is_content_disposition_attr_char(byte: u8) -> bool {
     )
 }
 
-fn is_content_disposition_language_byte(byte: u8) -> bool {
-  byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.')
+/// RFC 5987 `mime-charset` narrowed to characters that keep an ext-value a
+/// token, so `filename*` can stay an unquoted ext-parameter on the wire.
+fn is_content_disposition_mime_charset(value: &str) -> bool {
+  !value.is_empty() && value.bytes().all(is_content_disposition_mime_charsetc)
+}
+
+fn is_content_disposition_mime_charsetc(byte: u8) -> bool {
+  byte.is_ascii_alphanumeric()
+    || matches!(
+      byte,
+      b'!' | b'#' | b'$' | b'%' | b'&' | b'+' | b'-' | b'^' | b'_' | b'`' | b'~'
+    )
+}
+
+/// RFC 5987 optional `language` as an RFC 5646 Language-Tag, or empty.
+///
+/// Rejects HTTP OWS and list separators so Content-Language trimming cannot
+/// accept padded or multi-tag ext-value languages.
+fn is_content_disposition_language(language: &str) -> bool {
+  if language.is_empty() {
+    return true;
+  }
+  if language
+    .bytes()
+    .any(|byte| byte == b' ' || byte == b'\t' || byte == b',')
+  {
+    return false;
+  }
+  match crate::content_language::ContentLanguage::parse(language) {
+    Ok(parsed) => parsed.tags() == [language],
+    Err(_) => false,
+  }
 }
 
 fn is_qdtext(ch: char) -> bool {

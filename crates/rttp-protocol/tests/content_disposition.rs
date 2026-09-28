@@ -97,15 +97,54 @@ fn content_disposition_rejects_invalid_syntax() {
     "attachment; filename=\"bad\\\"",
     "attachment; filename=\"bad\r\nX-Evil: yes\"",
     "attachment; filename=\"bad\u{7f}\"",
+    "attachment; filename=\"bad\\\r\"",
+    "attachment; filename=\"bad\\\n\"",
+    "attachment; filename=\"bad\\\u{7f}\"",
     "attachment; filename=one; FILENAME=two",
     "attachment; filename*=UTF-8''bad%ZZname",
+    "attachment; filename*=UTF-8''bad%A",
+    "attachment; filename*=UTF-8''%",
+    "attachment; filename*=UTF-8''",
     "attachment; filename*=\"UTF-8''report.txt\"",
     "attachment; filename*=not-an-ext-value",
+    "attachment; filename*=UTF.8''report.txt",
+    "attachment; filename*=UTF*8''report.txt",
+    "attachment; filename*=UTF|8''report.txt",
+    "attachment; filename*=UTF'8''report.txt",
+    "attachment; filename*=x{y}''report.txt",
+    "attachment; filename*=UTF-8'en.US'report.txt",
+    "attachment; filename*=UTF-8'e'report.txt",
+    "attachment; filename*=UTF-8'en_US'report.txt",
+    "attachment; filename*=UTF-8' en'report.txt",
+    "attachment; filename*=UTF-8'en,'report.txt",
+    "attachment; filename*=UTF-8'*'report.txt",
   ] {
     assert!(
       ContentDisposition::parse(value).is_err(),
       "{value:?} must be rejected"
     );
+  }
+}
+
+#[test]
+fn content_disposition_accepts_rfc5987_ext_value_charsets_and_languages() {
+  for value in [
+    "attachment; filename*=UTF-8''report.txt",
+    "attachment; filename*=ISO-8859-1''report.txt",
+    "attachment; filename*=utf-8''report.txt",
+    "attachment; filename*=UTF-8'en'report.txt",
+    "attachment; filename*=UTF-8'en-US'report.txt",
+    "attachment; filename*=UTF-8'x-private'report.txt",
+    "attachment; filename*=UTF-8'i-klingon'report.txt",
+    "attachment; filename*=UTF-8''%20report%2Etxt",
+    "attachment; filename*=UTF-8''a!#$&+.^_`|~-",
+  ] {
+    let parsed =
+      ContentDisposition::parse(value).unwrap_or_else(|_| panic!("{value:?} must parse"));
+    let round_trip = ContentDisposition::parse(parsed.header_value())
+      .expect("canonical Content-Disposition should parse");
+    assert_eq!(round_trip, parsed);
+    assert_eq!(round_trip.header_value(), parsed.header_value());
   }
 }
 
@@ -131,6 +170,61 @@ fn content_disposition_enforces_value_and_parameter_bounds() {
     "oversized parameter values must be rejected"
   );
 
+  let quoted_content_len = MAX_CONTENT_DISPOSITION_VALUE_BYTES - "attachment; filename=\"\"".len();
+  let quoted_at_header_limit = format!(
+    "attachment; filename=\"{}\"",
+    "a".repeat(quoted_content_len)
+  );
+  assert_eq!(
+    quoted_at_header_limit.len(),
+    MAX_CONTENT_DISPOSITION_VALUE_BYTES
+  );
+  let parsed_quoted = ContentDisposition::parse(&quoted_at_header_limit)
+    .expect("quoted parameter at the header bound should parse");
+  assert_eq!(
+    parsed_quoted.filename().map(str::len),
+    Some(quoted_content_len)
+  );
+
+  let escaped_filename = format!("attachment; filename=\"{}\"", "\\a".repeat(32));
+  let parsed_escaped = ContentDisposition::parse(&escaped_filename)
+    .expect("escaped quoted-pairs should parse against the unescaped value bound");
+  let unescaped_filename = "a".repeat(32);
+  assert_eq!(parsed_escaped.filename(), Some(unescaped_filename.as_str()));
+  assert_eq!(
+    parsed_escaped.header_value(),
+    format!("attachment; filename={unescaped_filename}")
+  );
+
+  let compact_prefix = "attachment;filename=";
+  let compact_over_canonical = format!(
+    "{compact_prefix}{}",
+    "a".repeat(MAX_CONTENT_DISPOSITION_VALUE_BYTES - compact_prefix.len())
+  );
+  assert_eq!(
+    compact_over_canonical.len(),
+    MAX_CONTENT_DISPOSITION_VALUE_BYTES
+  );
+  assert!(
+    ContentDisposition::parse(&compact_over_canonical).is_err(),
+    "wire values whose canonical form exceeds the header bound must be rejected"
+  );
+
+  let canonical_at_limit = format!(
+    "attachment; filename={}",
+    "a".repeat(MAX_CONTENT_DISPOSITION_VALUE_BYTES - "attachment; filename=".len())
+  );
+  assert_eq!(
+    canonical_at_limit.len(),
+    MAX_CONTENT_DISPOSITION_VALUE_BYTES
+  );
+  let parsed_at_limit = ContentDisposition::parse(&canonical_at_limit)
+    .expect("canonical values at the header bound should parse");
+  assert_eq!(
+    parsed_at_limit.header_value().len(),
+    MAX_CONTENT_DISPOSITION_VALUE_BYTES
+  );
+
   let at_limit = format!(
     "attachment{}",
     (0..MAX_CONTENT_DISPOSITION_PARAMETERS)
@@ -153,6 +247,26 @@ fn content_disposition_enforces_value_and_parameter_bounds() {
     ContentDisposition::parse(&too_many).is_err(),
     "more than 256 parameters must be rejected"
   );
+}
+
+#[test]
+fn content_disposition_round_trips_canonical_serialization() {
+  for value in [
+    "inline",
+    "attachment; filename=report.txt",
+    "attachment; filename=\"read me.txt\"; preview=yes",
+    "attachment; filename=\"report \\\"Q1\\\".txt\"; filename*=UTF-8''report-Q1.txt",
+    "attachment; filename=\"é\"",
+    r#"attachment; filename="a\"b\\c""#,
+  ] {
+    let parsed =
+      ContentDisposition::parse(value).unwrap_or_else(|_| panic!("{value:?} must parse"));
+    let serialized = parsed.header_value();
+    let round_trip =
+      ContentDisposition::parse(&serialized).expect("canonical serialization should parse");
+    assert_eq!(round_trip, parsed);
+    assert_eq!(round_trip.header_value(), serialized);
+  }
 }
 
 #[test]
@@ -268,6 +382,27 @@ fn content_disposition_builder_rejects_invalid_types_and_parameters() {
       .with_parameter("filename*", "UTF-8''bad%ZZname")
       .is_err(),
     "invalid filename* ext-values must be rejected"
+  );
+  assert!(
+    content_disposition
+      .clone()
+      .with_parameter("filename*", "UTF.8''report.txt")
+      .is_err(),
+    "filename* charsets outside mime-charset must be rejected"
+  );
+  assert!(
+    content_disposition
+      .clone()
+      .with_parameter("filename*", "UTF-8'en.US'report.txt")
+      .is_err(),
+    "filename* languages outside Language-Tag must be rejected"
+  );
+  assert!(
+    content_disposition
+      .clone()
+      .with_parameter("filename*", "x{y}''report.txt")
+      .is_err(),
+    "filename* charsets that cannot stay unquoted tokens must be rejected"
   );
   assert!(
     content_disposition
