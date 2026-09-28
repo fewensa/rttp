@@ -3,6 +3,7 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use base64::Engine;
+use rttp_protocol::authorization::ProxyAuthorization;
 use rttp_protocol::connection::Connection;
 use rttp_protocol::http1::split_status_line;
 use rttp_protocol::te::Te;
@@ -12,6 +13,7 @@ use crate::connection::connect_tcp_stream_with_io_timeouts;
 use crate::request::RawRequest;
 use crate::response::Response;
 use crate::types::{Header, RoUrl, ToUrl};
+use crate::types::{Proxy, ProxyType};
 use crate::{error, Config};
 
 const CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -136,6 +138,24 @@ impl<'a> PriorKnowledgeClient<'a> {
 
   pub fn get(mut self) -> error::Result<Response> {
     validate_bounded_h2c_request(&self.request, false)?;
+    if let Some(proxy) = self.request.origin().proxy() {
+      if self
+        .request
+        .origin()
+        .http2_extended_connect_protocol()
+        .is_some()
+        && proxy.type_() == &ProxyType::HTTP
+      {
+        return Err(error::builder_with_message(
+          "HTTP/2 prior-knowledge client does not support proxies for extended CONNECT",
+        ));
+      }
+      if proxy.type_() != &ProxyType::HTTP {
+        return Err(error::builder_with_message(
+          "HTTP/2 prior-knowledge supports only HTTP proxies; CONNECT and SOCKS tunnels are unsupported",
+        ));
+      }
+    }
     let method = self.request.origin().method();
     let extended_connect_protocol = self
       .request
@@ -153,7 +173,11 @@ impl<'a> PriorKnowledgeClient<'a> {
       self.request.origin().config(),
       extended_connect_protocol.is_some(),
     )?;
-    let mut stream = connect_tcp_stream(addr(&url)?, self.request.origin().config())?;
+    let mut stream = connect_h2c_stream(
+      &url,
+      self.request.origin().proxy(),
+      self.request.origin().config(),
+    )?;
     write_connection_preface(&mut stream, local_settings)?;
     let mut peer_settings = read_settings_and_ack(&mut stream, local_settings)?;
     reject_goaway_before_opening_request_stream(
@@ -344,12 +368,36 @@ fn is_supported_request_method(method: &str) -> bool {
     || method.eq_ignore_ascii_case("PATCH")
 }
 
+fn socket_addr(host: &str, port: u32) -> String {
+  if host.contains(':') && !host.starts_with('[') {
+    format!("[{}]:{}", host, port)
+  } else {
+    format!("{}:{}", host, port)
+  }
+}
+
 fn addr(url: &Url) -> error::Result<String> {
   let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
   let port = url
     .port_or_known_default()
     .ok_or(error::url_bad_host(url.clone()))?;
-  Ok(format!("{}:{}", host, port))
+  Ok(socket_addr(host, port.into()))
+}
+
+fn connect_h2c_stream(
+  url: &Url,
+  proxy: &Option<Proxy>,
+  config: &Config,
+) -> error::Result<TcpStream> {
+  if let Some(proxy) = proxy {
+    if proxy.type_() != &ProxyType::HTTP {
+      return Err(error::builder_with_message(
+        "HTTP/2 prior-knowledge supports only HTTP proxies; CONNECT and SOCKS tunnels are unsupported",
+      ));
+    }
+    return connect_tcp_stream(socket_addr(proxy.host(), proxy.port()), config);
+  }
+  connect_tcp_stream(addr(url)?, config)
 }
 
 fn connect_tcp_stream(
@@ -852,7 +900,17 @@ fn write_request(
       .header_table_size
       .min(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE),
   );
-  let regular_header_fields = regular_headers(request.header())?;
+  let mut regular_header_fields = regular_headers(request.header())?;
+  if let Some(proxy) = request.origin().proxy() {
+    if proxy.type_() != &ProxyType::HTTP {
+      return Err(error::builder_with_message(
+        "HTTP/2 prior-knowledge supports only HTTP proxies; CONNECT and SOCKS tunnels are unsupported",
+      ));
+    }
+    if let Some(value) = proxy_authorization(proxy)? {
+      regular_header_fields.push(("proxy-authorization".to_string(), value));
+    }
+  }
   let trailer_fields = request_trailer_fields(request);
   enforce_peer_request_header_list_size(request, url, &regular_header_fields, peer_settings)?;
   let mut dynamic_field_plan = Vec::new();
@@ -948,7 +1006,8 @@ fn enforce_peer_request_header_list_size(
     size = add_header_list_field_size(size, ":protocol", protocol)?;
   }
   size = add_header_list_field_size(size, ":scheme", url.scheme())?;
-  size = add_header_list_field_size(size, ":path", &request_target(url))?;
+  let target = h2_request_target(request, url);
+  size = add_header_list_field_size(size, ":path", &target)?;
   size = add_header_list_field_size(size, ":authority", &authority(url)?)?;
   for (name, value) in regular_header_fields {
     size = add_header_list_field_size(size, name, value)?;
@@ -1237,7 +1296,7 @@ fn encode_request_headers(
     return Err(error::url_bad_scheme(url.clone()));
   }
 
-  let path = request_target(url);
+  let path = h2_request_target(request, url);
   if path == "/" {
     block.push(0x84);
   } else {
@@ -1370,6 +1429,27 @@ fn request_target(url: &Url) -> String {
     target.push_str(query);
   }
   target
+}
+
+fn h2_request_target(request: &RawRequest<'_>, url: &Url) -> String {
+  if request.origin().proxy().is_some() {
+    let mut absolute = url.clone();
+    absolute.set_fragment(None);
+    absolute.to_string()
+  } else {
+    request_target(url)
+  }
+}
+
+fn proxy_authorization(proxy: &Proxy) -> error::Result<Option<String>> {
+  let Some(username) = proxy.username().as_ref() else {
+    return Ok(None);
+  };
+  let credentials = format!("{}:{}", username, proxy.password().as_deref().unwrap_or(""));
+  let encoded = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
+  ProxyAuthorization::new("Basic", encoded)
+    .map(|value| Some(value.header_value()))
+    .map_err(|error| error::builder_with_message(error.to_string()))
 }
 
 fn authority(url: &Url) -> error::Result<String> {
