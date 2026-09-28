@@ -5,6 +5,7 @@ use crate::host::{is_valid_ip_literal, is_valid_reg_name_or_ipv4};
 use crate::http1::{is_qdtext, is_quoted_pair_char};
 
 pub const MAX_ALT_SVC_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_ALT_SVC_AGGREGATE_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_ALT_SVC_ALTERNATIVES: usize = 256;
 pub const MAX_ALT_SVC_PARAMETERS: usize = 256;
 pub const MAX_ALT_SVC_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
@@ -65,9 +66,21 @@ impl AltSvc {
     let mut alternatives = Vec::new();
     let mut clear = false;
     let mut seen_field = false;
+    let mut aggregate_len = 0usize;
     for value in values {
       if value.len() > MAX_ALT_SVC_VALUE_BYTES {
         return Err(AltSvcParseError::new("Alt-Svc header value is too large"));
+      }
+      aggregate_len = aggregate_len
+        .checked_add(value.len())
+        .ok_or_else(|| AltSvcParseError::new("Alt-Svc header aggregate value is too large"))?;
+      if aggregate_len > MAX_ALT_SVC_AGGREGATE_VALUE_BYTES {
+        return Err(AltSvcParseError::new(
+          "Alt-Svc header aggregate value is too large",
+        ));
+      }
+      if value.bytes().any(is_invalid_control_byte) {
+        return Err(AltSvcParseError::new("invalid Alt-Svc control byte"));
       }
       if value.trim().is_empty() {
         return Err(AltSvcParseError::new("invalid Alt-Svc entry"));
@@ -245,6 +258,11 @@ fn parse_alternative(
     }
     parse_parameter(value, position, &mut alternative)?;
   }
+  if alternatives.iter().any(|known| {
+    known.protocol_id == alternative.protocol_id && known.authority == alternative.authority
+  }) {
+    return Err(AltSvcParseError::new("duplicate Alt-Svc alternative"));
+  }
   alternatives.push(alternative);
   Ok(())
 }
@@ -389,6 +407,9 @@ fn skip_ows(bytes: &[u8], position: &mut usize) {
   while matches!(bytes.get(*position), Some(b' ' | b'\t')) {
     *position += 1;
   }
+}
+fn is_invalid_control_byte(byte: u8) -> bool {
+  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }
 fn is_token(value: &str) -> bool {
   !value.is_empty() && value.bytes().all(is_token_byte)
