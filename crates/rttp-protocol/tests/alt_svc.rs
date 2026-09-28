@@ -1,6 +1,6 @@
 use rttp_protocol::alt_svc::{
-  AltSvc, MAX_ALT_SVC_ALTERNATIVES, MAX_ALT_SVC_PARAMETERS, MAX_ALT_SVC_PARAMETER_VALUE_BYTES,
-  MAX_ALT_SVC_VALUE_BYTES,
+  AltSvc, MAX_ALT_SVC_AGGREGATE_VALUE_BYTES, MAX_ALT_SVC_ALTERNATIVES, MAX_ALT_SVC_PARAMETERS,
+  MAX_ALT_SVC_PARAMETER_VALUE_BYTES, MAX_ALT_SVC_VALUE_BYTES,
 };
 
 #[test]
@@ -88,6 +88,64 @@ fn unescapes_quoted_authorities_and_round_trips_ipv6_forms() {
 }
 
 #[test]
+fn accepts_ows_around_protocol_equals_and_parameters() {
+  let alt_svc = AltSvc::parse(" \th3 \t= \t\":443\" \t; \tma \t= \t60 \t, \th2 \t= \t\":8443\" \t")
+    .expect("OWS around Alt-Svc tokens should parse");
+
+  assert_eq!(2, alt_svc.len());
+  assert_eq!("h3", alt_svc.alternatives()[0].protocol_id());
+  assert_eq!(":443", alt_svc.alternatives()[0].authority());
+  assert_eq!(Some(60), alt_svc.alternatives()[0].max_age());
+  assert_eq!("h2", alt_svc.alternatives()[1].protocol_id());
+  assert_eq!("h3=\":443\"; ma=60, h2=\":8443\"", alt_svc.header_value());
+  assert_eq!(
+    alt_svc,
+    AltSvc::parse(alt_svc.header_value()).expect("canonical OWS Alt-Svc should round-trip")
+  );
+
+  let quoted_ows = AltSvc::parse("h3=\":443\"; note=\"one\ttwo words\"")
+    .expect("HTAB and SP in quoted values should parse");
+  assert_eq!(
+    Some("one\ttwo words"),
+    quoted_ows.alternatives()[0].parameters()[0].value()
+  );
+}
+
+#[test]
+fn rejects_duplicate_protocol_authority_alternatives() {
+  for value in [
+    r#"h3=":443", h3=":443""#,
+    r#"h3=":443"; ma=60, h3=":443"; persist=1"#,
+  ] {
+    assert!(
+      AltSvc::parse(value).is_err(),
+      "{value:?} must reject duplicate alternatives"
+    );
+  }
+
+  assert!(
+    AltSvc::parse_values([r#"h3=":443""#, r#"h3=":443"; ma=1"#]).is_err(),
+    "duplicate alternatives across fields must be rejected"
+  );
+  assert!(
+    AltSvc::parse(r#"h3=":443", h3="\:443""#).is_err(),
+    "escaped and unescaped forms of the same authority must be duplicates"
+  );
+
+  let distinct = AltSvc::parse(r#"h3=":443", h3=":8443", h2=":443""#)
+    .expect("distinct protocol/authority pairs should parse");
+  assert_eq!(3, distinct.len());
+  assert_eq!(
+    r#"h3=":443", h3=":8443", h2=":443""#,
+    distinct.header_value()
+  );
+  assert_eq!(
+    distinct,
+    AltSvc::parse(distinct.header_value()).expect("distinct alternatives should round-trip")
+  );
+}
+
+#[test]
 fn validates_ma_persist_and_duplicate_parameters() {
   let valid = AltSvc::parse(format!("h3=\":443\"; ma={}; persist=0", u64::MAX))
     .expect("maximum ma and persist=0 should parse");
@@ -155,7 +213,13 @@ fn accepts_obs_text_in_quoted_pair_escapes() {
 
 #[test]
 fn accepts_uri_host_authority_forms() {
-  for authority in ["foo_bar:443", "foo%2Dbar:443", "[v1.fe80::a]:443"] {
+  for authority in [
+    "foo_bar:443",
+    "foo%2Dbar:443",
+    "[v1.fe80::a]:443",
+    "127.0.0.1:443",
+    ":0",
+  ] {
     let alt_svc = AltSvc::parse(format!(r#"h3="{authority}""#))
       .unwrap_or_else(|_| panic!("{authority} should parse as an Alt-Svc authority"));
     assert_eq!(authority, alt_svc.alternatives()[0].authority());
@@ -199,9 +263,42 @@ fn rejects_malformed_separators_protocol_ids_and_authorities() {
     "h3=\"[2001:db8:::1]:443\"",
     "h3=\"foo/bar:443\"",
     "h3=\"foo%GG:443\"",
+    "h3=\":65536\"",
+    "h3=\":\"",
+    "h3=\"[:443\"",
+    "h3=\"]2001:db8::1[:443\"",
+    "h3=\"[2001:db8::1]:\"",
+    "h3=\"[2001:db8::1]\"",
+    "h3=\"example.com:443:8443\"",
+    "h3=\"example.com:@443\"",
+    "h3=\"user@example.com:443\"",
+    "h3=\":443\"; note=\"unterminated",
+    "h3=\":443\"; note=\"\\",
+    "h3=\":443\"; note=\"\\\x1f\"",
+    "h3=\":443\"\r\nX-Injected: 1",
+    "h3=\":443\"\n",
+    "clear\u{007f}",
   ] {
     assert!(AltSvc::parse(value).is_err(), "{value:?} must be rejected");
   }
+}
+
+#[test]
+fn rejects_control_bytes_outside_quoted_strings() {
+  assert!(
+    AltSvc::parse("h3=\":443\"; note=token\u{0007}").is_err(),
+    "BEL in an unquoted token must be rejected"
+  );
+  assert!(
+    AltSvc::parse("h3=\":443\"\u{007f}").is_err(),
+    "DEL after an alternative must be rejected"
+  );
+  assert_eq!(
+    "invalid Alt-Svc control byte",
+    AltSvc::parse("h3=\":443\"\r\n")
+      .expect_err("CRLF must be rejected")
+      .to_string()
+  );
 }
 
 #[test]
@@ -279,4 +376,23 @@ fn enforces_exact_and_over_field_alternative_and_parameter_bounds() {
     "a parameter value over the equal public bound is field-oversized"
   );
   assert!(AltSvc::parse(&over_parameter_value).is_err());
+
+  let first = format!(
+    r#"h3=":443"; note={}"#,
+    "a".repeat(MAX_ALT_SVC_AGGREGATE_VALUE_BYTES / 2)
+  );
+  let second = format!(
+    r#"h2=":8443"; note={}"#,
+    "b".repeat(MAX_ALT_SVC_AGGREGATE_VALUE_BYTES / 2)
+  );
+  assert!(
+    first.len() + second.len() > MAX_ALT_SVC_AGGREGATE_VALUE_BYTES,
+    "combined fields must exceed the aggregate bound"
+  );
+  assert_eq!(
+    "Alt-Svc header aggregate value is too large",
+    AltSvc::parse_values([first.as_str(), second.as_str()])
+      .expect_err("an aggregate over 64 KiB should be rejected")
+      .to_string()
+  );
 }
