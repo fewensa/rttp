@@ -39,6 +39,11 @@ impl AcceptLanguage {
           "Accept-Language header value is too large",
         ));
       }
+      if value.bytes().any(is_invalid_control_byte) {
+        return Err(AcceptLanguageParseError::new(
+          "invalid Accept-Language control byte",
+        ));
+      }
       for item in value.split(',') {
         let (range, quality) = parse_accept_language_item(item.trim_matches([' ', '\t']))?;
         if ranges.len() >= MAX_ACCEPT_LANGUAGE_RANGES {
@@ -75,11 +80,32 @@ impl AcceptLanguage {
     I: IntoIterator<Item = L>,
     L: AsRef<str>,
   {
-    let values: Vec<String> = ranges
-      .into_iter()
-      .map(|range| range.as_ref().to_owned())
-      .collect();
-    Self::parse_values(values.iter().map(String::as_str))
+    let mut value = String::new();
+
+    for (index, range) in ranges.into_iter().enumerate() {
+      if index >= MAX_ACCEPT_LANGUAGE_RANGES {
+        return Err(AcceptLanguageParseError::new(
+          "too many Accept-Language ranges",
+        ));
+      }
+      let range = range.as_ref();
+      let separator_len = if index > 0 { 2 } else { 0 };
+      let combined_len = value
+        .len()
+        .checked_add(separator_len)
+        .and_then(|length| length.checked_add(range.len()));
+      if combined_len.is_none_or(|length| length > MAX_ACCEPT_LANGUAGE_VALUE_BYTES) {
+        return Err(AcceptLanguageParseError::new(
+          "Accept-Language header value is too large",
+        ));
+      }
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(range);
+    }
+
+    Self::parse(value)
   }
 
   pub fn ranges(&self) -> Vec<&str> {
@@ -187,4 +213,8 @@ fn is_valid_qvalue(value: &str) -> bool {
     }
     None => value == "0" || value == "1",
   }
+}
+
+fn is_invalid_control_byte(byte: u8) -> bool {
+  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }
