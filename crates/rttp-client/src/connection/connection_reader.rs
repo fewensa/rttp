@@ -168,9 +168,33 @@ impl<'a, R: Read + ?Sized> ResponseBodyReader<'a, R> {
       Vec::new()
     };
     let decode = self.decode.take();
-    let read = read_response_body_to_end(self, &mut wire, max_body_bytes);
+    let start = wire.len();
+    let mut buffer = [0u8; 8 * 1024];
+    let result = (|| {
+      if wire.len() > max_body_bytes {
+        return Err(error::body_too_large(max_body_bytes));
+      }
+      loop {
+        let body_len = wire.len();
+        let remaining = max_body_bytes.saturating_sub(body_len);
+        let read_limit = buffer.len().min(remaining.saturating_add(1));
+        let read = self
+          .read(&mut buffer[..read_limit])
+          .map_err(response_body_read_error)?;
+        if read == 0 {
+          return Ok(wire.len() - start);
+        }
+        if read > remaining {
+          return Err(error::body_too_large(max_body_bytes));
+        }
+        wire.extend_from_slice(&buffer[..read]);
+      }
+    })();
     self.decode = decode;
-    let read = read?;
+    let read = result?;
+    if wire.len() > max_body_bytes {
+      return Err(error::body_too_large(max_body_bytes));
+    }
     binary.extend_from_slice(&wire);
     Ok(read)
   }
@@ -2293,6 +2317,47 @@ mod tests {
     let mapped = crate::response::content_decode::map_streaming_body_io_error(error);
     assert!(mapped.is_body_too_large());
     assert_eq!(Some(64), mapped.body_limit());
+  }
+
+  #[test]
+  fn streaming_decode_limits_gzip_outer_intermediate_stacked_layer() {
+    let intermediate = vec![b'a'; 65];
+    let body = gzip_bytes(&intermediate);
+    assert!(body.len() <= 64);
+    let raw = encoded_streaming_raw("deflate, gzip", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw);
+    let mut reader = ConnectionReader::new_with_limit(&url, &mut cursor, false, 64);
+    let mut response = reader.streaming_response().unwrap();
+    let mut out = Vec::new();
+    let error = response.body_mut().read_to_end(&mut out).unwrap_err();
+    let mapped = crate::response::content_decode::map_streaming_body_io_error(error);
+    assert!(mapped.is_body_too_large(), "unexpected error: {mapped}");
+    assert_eq!(Some(64), mapped.body_limit());
+  }
+
+  #[test]
+  fn streaming_decode_partial_read_then_materialize_enforces_wire_limit() {
+    let decoded = b"abcdefghij";
+    let body = gzip_bytes(decoded);
+    assert!(body.len() > 4, "wire must exceed the configured limit");
+    assert!(body.len() <= 64);
+    let raw = encoded_streaming_raw("gzip", &body);
+    let url = url::Url::parse("http://localhost/stream").unwrap();
+    let mut cursor = Cursor::new(raw);
+    let limit = body.len() - 1;
+    let mut reader = ConnectionReader::new_with_limit(&url, &mut cursor, false, limit);
+    let mut response = reader.streaming_response().unwrap();
+    let mut prefix = [0u8; 4];
+    let read = response.body_mut().read(&mut prefix).unwrap();
+    assert_eq!(4, read);
+    assert_eq!(&decoded[..4], &prefix);
+
+    let error = response
+      .read_to_response()
+      .expect_err("materialize after partial decode should enforce total wire limit");
+    assert!(error.is_body_too_large(), "unexpected error: {error}");
+    assert_eq!(Some(limit), error.body_limit());
   }
 
   #[test]

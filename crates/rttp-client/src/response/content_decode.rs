@@ -249,6 +249,8 @@ impl StreamingDecodeStack {
       current = self.feed_layer(index, &current)?;
       if index == last {
         self.push_decoded(&current)?;
+      } else {
+        self.ensure_intermediate_within_limit(current.len())?;
       }
     }
     Ok(())
@@ -261,6 +263,14 @@ impl StreamingDecodeStack {
         Ok(std::mem::take(decoder.get_mut()))
       }
       DecoderLayer::Deflate { compressed } => {
+        if index > 0
+          && compressed
+            .len()
+            .checked_add(input.len())
+            .is_none_or(|len| len > self.max_decoded)
+        {
+          return Err(error::body_too_large(self.max_decoded));
+        }
         compressed.extend_from_slice(input);
         Ok(Vec::new())
       }
@@ -274,6 +284,8 @@ impl StreamingDecodeStack {
       current = self.finish_layer(index, &current)?;
       if index == last {
         self.push_decoded(&current)?;
+      } else {
+        self.ensure_intermediate_within_limit(current.len())?;
       }
     }
     Ok(())
@@ -290,12 +302,27 @@ impl StreamingDecodeStack {
       }
       DecoderLayer::Deflate { compressed } => {
         if !carried.is_empty() {
+          if index > 0
+            && compressed
+              .len()
+              .checked_add(carried.len())
+              .is_none_or(|len| len > self.max_decoded)
+          {
+            return Err(error::body_too_large(self.max_decoded));
+          }
           compressed.extend_from_slice(carried);
         }
         let compressed = std::mem::take(compressed);
         decode_deflate_buffer(&compressed, self.max_decoded)
       }
     }
+  }
+
+  fn ensure_intermediate_within_limit(&self, len: usize) -> error::Result<()> {
+    if len > self.max_decoded {
+      return Err(error::body_too_large(self.max_decoded));
+    }
+    Ok(())
   }
 
   fn push_decoded(&mut self, data: &[u8]) -> error::Result<()> {
