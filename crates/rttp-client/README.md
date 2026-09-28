@@ -37,7 +37,7 @@ transport surface (a `+` means the listed features are enabled).
 | feature subset(s) | supported operation |
 |---|---|
 | *(none)*; `http2`; `tls-native`; `http2+tls-native`; `tls-rustls`; `http2+tls-rustls`; `tls-native+tls-rustls`; `http2+tls-native+tls-rustls` | Synchronous HTTP/1.1 over plain HTTP; `http2` additionally exposes direct prior-knowledge h2c APIs. HTTPS is available when a TLS feature is present; when both TLS features are enabled, rustls is selected. |
-| `async`; `async+http2` | Synchronous HTTP/1.1 plus asynchronous plain HTTP; with `http2`, buffered h2c responses use the bounded gzip/deflate decoder through the synchronous h2c APIs. HTTPS is unavailable without a TLS feature. |
+| `async`; `async+http2` | Synchronous HTTP/1.1 plus asynchronous plain HTTP; with `http2`, buffered h2c responses use the bounded gzip/deflate decoder through both non-blocking async h2c APIs and synchronous h2c APIs. HTTPS is unavailable without a TLS feature. |
 | `async+tls-native`; `async+http2+tls-native` | Synchronous and asynchronous HTTP/1.1 over native TLS, including buffered requests. Async streaming HTTPS request bodies are rejected because native TLS is not the async streaming backend. |
 | `async+tls-rustls`; `async+http2+tls-rustls`; `async+tls-native+tls-rustls`; `async+http2+tls-native+tls-rustls` | Synchronous and asynchronous HTTP/1.1 over rustls, including buffered and async streaming HTTPS request bodies. With both TLS features, rustls takes precedence for both APIs. |
 
@@ -56,7 +56,10 @@ are available in synchronous and, with `async`, asynchronous operation. The
 streaming request APIs reject configured proxies before connecting. The
 bounded `http2` APIs expose direct prior-knowledge h2c via
 `emit_http2_prior_knowledge` and HTTP/1.1 `Upgrade: h2c` via
-`emit_http2_upgrade`; both reject proxies (and TLS/ALPN) rather than
+`emit_http2_upgrade`. With `async`, `rasync_http2_prior_knowledge` and
+`rasync_http2_upgrade` provide buffered, non-blocking wrappers over the same
+`h2c` decoder by moving the blocking exchange to a worker thread. All four
+APIs reject proxies (and TLS/ALPN) rather than
 tunneling HTTP/2 through one. This also means `http2` is not an HTTPS or
 proxy feature, and an `http2` subset still retains the ordinary HTTP/1.1
 APIs.
@@ -111,7 +114,7 @@ Successful buffered reads preserve the response status, headers, cookies, and
 trailers for access through the normal `Response` APIs. Successful content
 decoding still removes stale `Content-Encoding` and `Content-Length` from the
 parsed header view, while `Response::binary()` retains the original capture.
-Streaming bodies and async HTTP/2 stay out of this buffered path.
+Streaming bodies stay out of this buffered path; the async HTTP/2 APIs are buffered and apply the same decoder and limits as synchronous h2c responses.
 
 ## Bounded Max-Forwards diagnostics
 

@@ -14,6 +14,10 @@ enum Transport {
   Http11Sync,
   #[cfg(feature = "async")]
   Http11Async,
+  #[cfg(feature = "async")]
+  H2cPriorKnowledgeAsync,
+  #[cfg(feature = "async")]
+  H2cUpgradeAsync,
   H2cPriorKnowledge,
   H2cUpgrade,
 }
@@ -24,6 +28,10 @@ impl Transport {
       Self::Http11Sync => "http11-sync",
       #[cfg(feature = "async")]
       Self::Http11Async => "http11-async",
+      #[cfg(feature = "async")]
+      Self::H2cPriorKnowledgeAsync => "h2c-prior-knowledge-async",
+      #[cfg(feature = "async")]
+      Self::H2cUpgradeAsync => "h2c-upgrade-async",
       Self::H2cPriorKnowledge => "h2c-prior-knowledge",
       Self::H2cUpgrade => "h2c-upgrade",
     }
@@ -37,6 +45,10 @@ impl Transport {
       Self::Http11Sync => client.emit(),
       #[cfg(feature = "async")]
       Self::Http11Async => block_on(client.rasync()),
+      #[cfg(feature = "async")]
+      Self::H2cPriorKnowledgeAsync => block_on(client.rasync_http2_prior_knowledge()),
+      #[cfg(feature = "async")]
+      Self::H2cUpgradeAsync => block_on(client.rasync_http2_upgrade()),
       Self::H2cPriorKnowledge => client.emit_http2_prior_knowledge(),
       Self::H2cUpgrade => client.emit_http2_upgrade(),
     }
@@ -48,6 +60,10 @@ fn transports() -> Vec<Transport> {
     Transport::Http11Sync,
     #[cfg(feature = "async")]
     Transport::Http11Async,
+    #[cfg(feature = "async")]
+    Transport::H2cPriorKnowledgeAsync,
+    #[cfg(feature = "async")]
+    Transport::H2cUpgradeAsync,
     Transport::H2cPriorKnowledge,
     Transport::H2cUpgrade,
   ]
