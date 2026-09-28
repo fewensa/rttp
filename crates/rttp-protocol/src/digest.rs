@@ -234,7 +234,7 @@ fn parse_parameters(value: &str, position: &mut usize) -> Result<(), DigestParse
     *position += 1;
     skip_sp(bytes, position);
     let name = parse_key(value, position)?;
-    if seen_names.iter().any(|seen| *seen == name) {
+    if seen_names.contains(&name) {
       return Err(DigestParseError::new("duplicate Digest entry parameter"));
     }
     seen_names.push(name);
