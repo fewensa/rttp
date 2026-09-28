@@ -26,6 +26,28 @@ fn service_worker_allowed_accepts_origin_relative_and_absolute_paths() {
 }
 
 #[test]
+fn service_worker_allowed_accepts_uri_reference_percent_encoding_and_empty_components() {
+  for value in [
+    "/scope%20with%20spaces/",
+    "/scope%2Fchild?feature=%26%3F#section%23two",
+    "/scope?",
+    "/scope#",
+    "./nested:scope",
+    "../scope;v=1",
+  ] {
+    let allowed = ServiceWorkerAllowed::parse(value).expect("valid URI reference should parse");
+    assert_eq!(value, allowed.as_str());
+    assert_eq!(value, allowed.header_value());
+    assert_eq!(
+      value,
+      ServiceWorkerAllowed::parse(allowed.header_value())
+        .unwrap()
+        .as_str()
+    );
+  }
+}
+
+#[test]
 fn service_worker_allowed_parse_values_enforces_singleton_fields() {
   let allowed = ServiceWorkerAllowed::parse_values([" / "]).expect("single field should parse");
 
@@ -38,6 +60,25 @@ fn service_worker_allowed_parse_values_enforces_singleton_fields() {
     ServiceWorkerAllowed::parse_values([]).is_err(),
     "empty field sets must be rejected"
   );
+}
+
+#[test]
+fn service_worker_allowed_rejects_invalid_percent_encoding_fragments_and_controls() {
+  for value in [
+    "/bad%",
+    "/bad%0",
+    "/bad%gg",
+    "/bad#one#two",
+    "/bad\r\nInjected: yes",
+    "/bad\tpath",
+    "/bad\u{000b}path",
+    "/bad\u{007f}path",
+  ] {
+    assert!(
+      ServiceWorkerAllowed::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
 }
 
 #[test]
