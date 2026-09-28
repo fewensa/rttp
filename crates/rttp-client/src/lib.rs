@@ -12,6 +12,11 @@
 //! to the `socks` crate.
 //! With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a
 //! bounded prior-knowledge h2c request over a direct socket2 TCP connection.
+//! Buffered h2c responses apply bounded gzip and zlib/raw deflate decoding in
+//! reverse Content-Encoding order, preserve the original binary capture, and
+//! remove stale Content-Encoding and Content-Length headers only after
+//! successful decoding. Streaming and unsupported content codings remain
+//! outside this decoding path.
 //! It opens at most one stream and validates `SETTINGS_MAX_FRAME_SIZE` on both
 //! sides of the handshake. A configured local `H2cClientPolicy::max_frame_size`
 //! is advertised only when set, must be in the legal HTTP/2 range of 16,384

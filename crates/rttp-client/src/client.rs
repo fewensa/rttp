@@ -2317,6 +2317,25 @@ impl HttpClient {
     BlockConnection::new(request).call()
   }
 
+  /// Perform a buffered prior-knowledge h2c exchange without blocking the
+  /// async executor thread.
+  #[cfg(all(feature = "async", feature = "http2"))]
+  pub async fn rasync_http2_prior_knowledge(&mut self) -> error::Result<Response> {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    if self.request.proxy().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 prior-knowledge client does not support proxies",
+      ));
+    }
+    let request = RawRequest::async_new(&mut self.request).await?;
+    let (origin, url, header, body) = request.async_h2c_parts();
+    let response = crate::http2::async_h2c_call(origin, url, header, body, false).await?;
+    self.request.closed_set(true);
+    Ok(response)
+  }
+
   #[cfg(feature = "http2")]
   pub fn emit_http2_prior_knowledge(&mut self) -> error::Result<Response> {
     if self.request.closed() {
@@ -2329,6 +2348,30 @@ impl HttpClient {
     }
     let request = RawRequest::block_new(&mut self.request)?;
     crate::http2::PriorKnowledgeClient::new(request).get()
+  }
+
+  /// Perform a buffered h2c upgrade exchange without blocking the async
+  /// executor thread.
+  #[cfg(all(feature = "async", feature = "http2"))]
+  pub async fn rasync_http2_upgrade(&mut self) -> error::Result<Response> {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    if self.request.http2_extended_connect_protocol().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 extended CONNECT is only supported by the prior-knowledge h2c client",
+      ));
+    }
+    if self.request.proxy().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 h2c upgrade client does not support proxies",
+      ));
+    }
+    let request = RawRequest::async_new(&mut self.request).await?;
+    let (origin, url, header, body) = request.async_h2c_parts();
+    let response = crate::http2::async_h2c_call(origin, url, header, body, true).await?;
+    self.request.closed_set(true);
+    Ok(response)
   }
 
   #[cfg(feature = "http2")]
