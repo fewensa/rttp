@@ -1339,9 +1339,13 @@ handler policy. Malformed, duplicate, oversized, or excessive values return
 `HttpExpectParseError` while `Request::header()` and `HttpRequest::header()`
 continue to expose the original raw field.
 
-These helpers parse request metadata only. They do not send `100 Continue`,
-wait for an interim response, reject unsupported extensions, or change body
-framing.
+The HTTP/1.1 server validates the request head, framing, `Host`, and configured
+limits before consuming a body. For a non-empty fixed-length or chunked body
+with exactly the supported `100-continue` expectation, it writes and flushes
+one `HTTP/1.1 100 Continue` response before body consumption. Malformed or
+unsupported expectations, invalid framing, missing or invalid `Host`, and
+over-limit bodies receive a final error response without an interim response.
+The retained header and `expectations()` metadata remain available to handlers.
 
 ## Sec-GPC request metadata
 

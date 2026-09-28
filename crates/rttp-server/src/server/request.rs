@@ -1612,98 +1612,22 @@ impl Request {
   where
     S: Read + Write,
   {
-    let mut raw = Vec::new();
-    let mut body_kind: Option<RequestBodyKind> = None;
+    let Some((head, body_kind)) = Self::read_next_head_and_body_kind_from_with_continue(
+      reader,
+      max_request_body_bytes,
+      max_request_head_bytes,
+    )?
+    else {
+      return Ok(None);
+    };
 
-    loop {
-      if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
-        (find_header_end(&raw), body_kind)
-      {
-        let message_len = checked_request_message_len(header_end, content_length)?;
-        if raw.len() == message_len {
-          return Ok(Some(Self::from_raw_frame_with_body_kind(
-            &raw,
-            RequestBodyKind::ContentLength(content_length),
-            max_request_head_bytes,
-          )?));
-        }
-      }
-
-      let available = reader.fill_buf()?;
-      if available.is_empty() {
-        if raw.is_empty() {
-          return Ok(None);
-        }
-        if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
-          (find_header_end(&raw), body_kind)
-        {
-          let body_start = header_end + 4;
-          let body_end = checked_request_message_len(header_end, content_length)?;
-          if raw.len() < body_end || body_end < body_start {
-            return Err(io::Error::new(
-              io::ErrorKind::UnexpectedEof,
-              "incomplete HTTP request body",
-            ));
-          }
-        }
-        return Err(io::Error::new(
-          io::ErrorKind::InvalidData,
-          "incomplete HTTP request",
-        ));
-      }
-
-      if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
-        (find_header_end(&raw), body_kind)
-      {
-        let message_len = checked_request_message_len(header_end, content_length)?;
-        let take = (message_len - raw.len()).min(available.len());
-        raw.extend_from_slice(&available[..take]);
-        reader.consume(take);
-        continue;
-      }
-
-      let mut combined = raw.clone();
-      combined.extend_from_slice(available);
-      match find_header_end(&combined) {
-        Some(header_end) => {
-          let take = header_end + 4 - raw.len();
-          reject_oversized_request_head(header_end + 4, max_request_head_bytes)?;
-          raw.extend_from_slice(&available[..take]);
-          reader.consume(take);
-          let head = parse_request_head(&raw[..header_end])?;
-          let parsed_body_kind = request_body_kind(&head.headers)?;
-          match parsed_body_kind {
-            RequestBodyKind::ContentLength(0) => {
-              return Ok(Some(Self::from_head_body_kind_and_trailers(
-                head,
-                Vec::new(),
-                parsed_body_kind,
-                Vec::new(),
-              )));
-            }
-            RequestBodyKind::ContentLength(content_length) => {
-              reject_oversized_request_body(content_length, max_request_body_bytes)?;
-              body_kind = Some(RequestBodyKind::ContentLength(content_length));
-            }
-            RequestBodyKind::Chunked => {
-              let chunked = read_chunked_request_body(reader, max_request_body_bytes)?;
-              return Ok(Some(Self::from_head_body_kind_and_trailers(
-                head,
-                chunked.body,
-                parsed_body_kind,
-                chunked.trailers,
-              )));
-            }
-          }
-        }
-        None => {
-          let take = available.len();
-          reject_oversized_request_head(raw.len().saturating_add(take), max_request_head_bytes)?;
-          raw.extend_from_slice(available);
-          reader.consume(take);
-        }
-      }
-    }
+    let mut body_reader = RequestBodyReader::new(reader, body_kind, max_request_body_bytes, false);
+    let mut body = Vec::new();
+    body_reader.read_to_end(&mut body)?;
+    let trailers = body_reader.trailers().to_vec();
+    Ok(Some(Self::from_head_body_kind_and_trailers(
+      head, body, body_kind, trailers,
+    )))
   }
 
   pub(crate) fn read_next_head_from_with_continue<S>(
@@ -1764,6 +1688,12 @@ impl Request {
               reject_oversized_request_body(content_length, max_request_body_bytes)?;
             }
             RequestBodyKind::Chunked => {}
+          }
+          validate_h2c_upgrade_head(&head, body_kind)?;
+          if request_expectation(&head.version, &head.headers)?
+            && !matches!(body_kind, RequestBodyKind::ContentLength(0))
+          {
+            write_continue(reader.get_mut())?;
           }
           return Ok(Some((head, body_kind)));
         }
@@ -1877,15 +1807,6 @@ impl Request {
   }
 
   #[cfg(test)]
-  pub(crate) fn from_raw_frame(raw: &[u8]) -> io::Result<Self> {
-    let header_end = find_header_end(raw)
-      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
-    reject_oversized_request_head(header_end + 4, MAX_REQUEST_HEAD_BYTES)?;
-    let head = parse_request_head(&raw[..header_end])?;
-    let body_kind = request_body_kind(&head.headers)?;
-    Self::from_raw_frame_with_head_and_body_kind(raw, header_end, head, body_kind)
-  }
-
   fn from_raw_frame_with_body_kind(
     raw: &[u8],
     body_kind: RequestBodyKind,
@@ -1898,6 +1819,7 @@ impl Request {
     Self::from_raw_frame_with_head_and_body_kind(raw, header_end, head, body_kind)
   }
 
+  #[cfg(test)]
   fn from_raw_frame_with_head_and_body_kind(
     raw: &[u8],
     header_end: usize,
@@ -1909,14 +1831,12 @@ impl Request {
       RequestBodyKind::ContentLength(content_length) => {
         reject_oversized_request_body(content_length, MAX_REQUEST_BODY_BYTES)?;
         let body_end = checked_request_message_len(header_end, content_length)?;
-
         if raw.len() < body_end {
           return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             "incomplete HTTP request body",
           ));
         }
-
         raw[body_start..body_end].to_vec()
       }
       RequestBodyKind::Chunked => {
@@ -1926,20 +1846,22 @@ impl Request {
         ));
       }
     };
-
-    let content_length =
-      content_length_from_request_body_kind_and_headers(body_kind, &head.headers);
-
-    Ok(Self {
-      method: head.method,
-      target: head.target,
-      version: head.version,
-      headers: head.headers,
-      trailers: Vec::new(),
+    Ok(Self::from_head_body_kind_and_trailers(
+      head,
       body,
-      content_length,
-      extended_connect_protocol: None,
-    })
+      body_kind,
+      Vec::new(),
+    ))
+  }
+
+  #[cfg(test)]
+  pub(crate) fn from_raw_frame(raw: &[u8]) -> io::Result<Self> {
+    let header_end = find_header_end(raw)
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
+    reject_oversized_request_head(header_end + 4, MAX_REQUEST_HEAD_BYTES)?;
+    let head = parse_request_head(&raw[..header_end])?;
+    let body_kind = request_body_kind(&head.headers)?;
+    Self::from_raw_frame_with_head_and_body_kind(raw, header_end, head, body_kind)
   }
 
   pub(crate) fn from_head_body_kind_and_trailers(
