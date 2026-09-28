@@ -219,6 +219,22 @@ impl fmt::Display for TraceStateParseError {
 impl Error for TraceStateParseError {}
 
 fn parse_traceparent_value(value: &str) -> Result<TraceParent, TraceParentParseError> {
+  // Classify the version before enforcing the version-00 fixed layout so
+  // unsupported versions (including values with extra suffix fields) reject
+  // deterministically as unsupported rather than as a length mismatch.
+  if value.len() < 2 {
+    return Err(invalid_traceparent());
+  }
+  let version = &value[0..2];
+  if !is_lower_hex(version) {
+    return Err(invalid_traceparent());
+  }
+  if version == "ff" || version != "00" {
+    return Err(TraceParentParseError::new(
+      "unsupported traceparent version",
+    ));
+  }
+
   if value.len() != TRACEPARENT_VALUE_BYTES {
     return Err(invalid_traceparent());
   }
@@ -229,20 +245,10 @@ fn parse_traceparent_value(value: &str) -> Result<TraceParent, TraceParentParseE
     return Err(invalid_traceparent());
   }
 
-  let version = &value[0..2];
   let trace_id = &value[3..35];
   let parent_id = &value[36..52];
   let flags = &value[53..55];
-  if version == "ff" || version != "00" {
-    return Err(TraceParentParseError::new(
-      "unsupported traceparent version",
-    ));
-  }
-  if !is_lower_hex(version)
-    || !is_lower_hex(trace_id)
-    || !is_lower_hex(parent_id)
-    || !is_lower_hex(flags)
-  {
+  if !is_lower_hex(trace_id) || !is_lower_hex(parent_id) || !is_lower_hex(flags) {
     return Err(invalid_traceparent());
   }
   if all_zero_hex(trace_id) {
