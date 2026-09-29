@@ -385,6 +385,7 @@ impl<'a> PriorKnowledgeClient<'a> {
       STREAM_ID,
       None,
       None,
+      None,
     )? {
       Some(response) => response,
       None => read_single_stream_response(
@@ -433,6 +434,7 @@ impl<'a> PriorKnowledgeClient<'a> {
       stream_id,
       Some(&mut session.request_hpack),
       Some(&mut session.response_hpack),
+      Some(&mut session.retired),
     )? {
       Some(response) => response,
       None => read_single_stream_response(
@@ -503,6 +505,7 @@ impl<'a> UpgradeClient<'a> {
       &mut peer_settings,
       local_settings,
       UPGRADED_STREAM_ID,
+      None,
       None,
       None,
     )? {
@@ -1158,6 +1161,7 @@ fn write_request(
   stream_id: u32,
   request_hpack: Option<&mut RequestHpackEncoder>,
   response_hpack: Option<&mut HpackDecoder>,
+  retired: Option<&mut bool>,
 ) -> error::Result<Option<Response>> {
   if peer_settings.max_concurrent_streams == Some(0) {
     return Err(error::bad_response(
@@ -1236,6 +1240,7 @@ fn write_request(
       local_settings,
       stream_id,
       response_hpack,
+      retired,
     )? {
       return Ok(Some(response));
     }
@@ -1371,8 +1376,10 @@ fn write_data_frames(
   local_settings: LocalSettings,
   stream_id: u32,
   response_hpack: Option<&mut HpackDecoder>,
+  retired: Option<&mut bool>,
 ) -> error::Result<Option<Response>> {
   let mut response_hpack = response_hpack;
+  let mut retired = retired;
   let mut connection_send_window = SendWindow::new();
   let mut stream_send_window =
     SendWindow::with_available(i64::from(peer_settings.initial_window_size));
@@ -1397,6 +1404,7 @@ fn write_data_frames(
         local_settings,
         stream_id,
         response_hpack.take(),
+        retired.as_deref_mut(),
       )? {
         return Ok(Some(response));
       }
@@ -1436,8 +1444,10 @@ fn read_until_send_window_available(
   local_settings: LocalSettings,
   stream_id: u32,
   response_hpack: Option<&mut HpackDecoder>,
+  retired: Option<&mut bool>,
 ) -> error::Result<Option<Response>> {
   let mut response_hpack = response_hpack;
+  let mut retired = retired;
   loop {
     let frame = read_frame(stream, local_settings)?;
     match (frame.frame_type, frame.stream_id) {
@@ -1490,6 +1500,9 @@ fn read_until_send_window_available(
             http2_error_code_name(goaway.error_code),
           )));
         }
+        if let Some(retired) = retired.as_deref_mut() {
+          *retired = true;
+        }
       }
       (FRAME_HEADERS, id) | (FRAME_DATA, id) | (FRAME_CONTINUATION, id) if id == stream_id => {
         return read_single_stream_response_from_frame(
@@ -1501,7 +1514,7 @@ fn read_until_send_window_available(
           response_hpack.take(),
           Some(peer_settings),
           Some(hpack),
-          None,
+          retired.take(),
         )
         .map(Some);
       }
