@@ -3405,6 +3405,90 @@ fn prior_knowledge_async_direct_route_remains_direct_with_proxy_pool_enabled() {
 
 #[cfg(feature = "async")]
 #[test]
+fn prior_knowledge_async_proxy_malformed_response_retires_session() {
+  for (name, frame_type, payload, expected_error) in [
+    (
+      "rst-stream",
+      FRAME_RST_STREAM,
+      &[0, 0, 0][..],
+      "invalid HTTP/2 RST_STREAM frame",
+    ),
+    (
+      "goaway",
+      FRAME_GOAWAY,
+      &[0, 0, 0, 1, 0, 0, 0][..],
+      "invalid HTTP/2 GOAWAY frame",
+    ),
+  ] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy peer");
+    let proxy_addr = listener.local_addr().expect("proxy peer addr");
+    let (accepts_sender, accepts_receiver) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      let (mut failed_stream, _) = listener.accept().expect("accept failed proxy client");
+      accepts_sender.send(()).expect("record failed proxy accept");
+      complete_h2_handshake_without_request(&mut failed_stream);
+      let failed_request = read_frame(&mut failed_stream);
+      assert_eq!(FRAME_HEADERS, failed_request.frame_type);
+      assert_eq!(1, failed_request.stream_id);
+      write_frame(&mut failed_stream, frame_type, 0, 1, payload);
+
+      let (mut fresh_stream, _) = listener.accept().expect("accept fresh proxy client");
+      accepts_sender.send(()).expect("record fresh proxy accept");
+      complete_h2_handshake_without_request(&mut fresh_stream);
+      let fresh_request = read_frame(&mut fresh_stream);
+      assert_eq!(FRAME_HEADERS, fresh_request.frame_type);
+      assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, fresh_request.flags);
+      assert_eq!(1, fresh_request.stream_id);
+      write_frame(
+        &mut fresh_stream,
+        FRAME_HEADERS,
+        FLAG_END_HEADERS,
+        1,
+        &[0x88],
+      );
+      write_frame(&mut fresh_stream, FRAME_DATA, FLAG_END_STREAM, 1, b"fresh");
+    });
+
+    let config = Config::builder()
+      .connect_timeout(500)
+      .read_timeout(500)
+      .write_timeout(500)
+      .build();
+    let request = |path| {
+      futures::executor::block_on(async {
+        HttpClient::new()
+          .get()
+          .url(path)
+          .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+          .config(config.clone())
+          .rasync_http2_prior_knowledge()
+          .await
+      })
+    };
+
+    let error = request(format!("http://127.0.0.1:8086/{name}"))
+      .expect_err("malformed proxy response frame must fail");
+    assert!(
+      error.to_string().contains(expected_error),
+      "unexpected {name} error: {error}"
+    );
+    let response = request(format!("http://127.0.0.1:8086/{name}/fresh"))
+      .expect("malformed response must not poison proxy reuse");
+    assert_eq!("fresh", response.body().string().unwrap());
+
+    accepts_receiver
+      .recv_timeout(Duration::from_secs(1))
+      .expect("failed proxy accept");
+    accepts_receiver
+      .recv_timeout(Duration::from_secs(1))
+      .expect("fresh proxy accept");
+    handle.join().expect("malformed proxy peer thread");
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
 fn prior_knowledge_async_proxy_goaway_finishes_in_flight_and_reuses_fresh_connection() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy peer");
   let proxy_addr = listener.local_addr().expect("proxy peer addr");
