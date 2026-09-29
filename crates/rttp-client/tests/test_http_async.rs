@@ -10,6 +10,7 @@ use async_io::Timer;
 use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
 #[cfg(feature = "async")]
 use flate2::Compression;
+#[cfg(feature = "async")]
 use futures::channel::oneshot;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
