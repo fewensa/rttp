@@ -5,7 +5,7 @@ use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -1291,8 +1291,11 @@ pub fn spawn_connect_proxy_server(
         let mut target_writer = target.try_clone().expect("clone CONNECT proxy target");
         let relay = thread::spawn(move || {
           let _ = io::copy(&mut client_reader, &mut target_writer);
+          let _ = target_writer.shutdown(Shutdown::Write);
         });
         let _ = io::copy(&mut target, &mut client);
+        let _ = client.shutdown(Shutdown::Both);
+        let _ = target.shutdown(Shutdown::Both);
         let _ = relay.join();
         report.closed_connections.push(true);
       } else {
@@ -1308,18 +1311,29 @@ pub fn spawn_connect_proxy_server(
 
 fn wait_for_client_close(client: &mut TcpStream) -> bool {
   let mut byte = [0u8; 1];
-  match client.read(&mut byte) {
-    Ok(0) => true,
-    Err(error) => matches!(
-      error.kind(),
-      io::ErrorKind::ConnectionReset
-        | io::ErrorKind::BrokenPipe
-        | io::ErrorKind::TimedOut
-        | io::ErrorKind::UnexpectedEof
-    ),
-    Ok(_) => {
-      let _ = client.shutdown(Shutdown::Both);
-      false
+  let deadline = Instant::now() + Duration::from_secs(2);
+  loop {
+    match client.read(&mut byte) {
+      Ok(0) => return true,
+      Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+        if Instant::now() >= deadline {
+          return false;
+        }
+        thread::sleep(Duration::from_millis(1));
+      }
+      Err(error) => {
+        return matches!(
+          error.kind(),
+          io::ErrorKind::ConnectionReset
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::UnexpectedEof
+        );
+      }
+      Ok(_) => {
+        let _ = client.shutdown(Shutdown::Both);
+        return false;
+      }
     }
   }
 }
@@ -1429,6 +1443,124 @@ pub fn spawn_tls_response_server(
     }
   });
   (addr, handle)
+}
+
+#[cfg(feature = "tls-rustls")]
+pub struct GatedTlsResponse {
+  addr: SocketAddr,
+  partial_body_sent: Receiver<()>,
+  release: Sender<()>,
+  shutdown_observed: Receiver<()>,
+  handle: JoinHandle<()>,
+}
+
+#[cfg(feature = "tls-rustls")]
+impl GatedTlsResponse {
+  pub fn addr(&self) -> SocketAddr {
+    self.addr
+  }
+
+  pub fn wait_for_partial_body(&self, timeout: Duration) -> Result<(), RecvTimeoutError> {
+    self.partial_body_sent.recv_timeout(timeout)
+  }
+
+  #[allow(clippy::result_unit_err)]
+  pub fn release_body(&self) -> Result<(), ()> {
+    self.release.send(()).map_err(|_| ())
+  }
+
+  pub fn wait_for_shutdown(&self, timeout: Duration) -> Result<(), RecvTimeoutError> {
+    self.shutdown_observed.recv_timeout(timeout)
+  }
+
+  pub fn join(self) -> thread::Result<()> {
+    self.handle.join()
+  }
+}
+
+#[cfg(feature = "tls-rustls")]
+pub fn spawn_gated_tls_response_server(
+  partial_body: impl Into<Vec<u8>>,
+  remaining_body: impl Into<Vec<u8>>,
+) -> GatedTlsResponse {
+  use rcgen::generate_simple_self_signed;
+  use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+  use rustls::{ServerConfig, ServerConnection, StreamOwned};
+  use std::sync::Arc;
+
+  let rcgen::CertifiedKey { cert, key_pair } =
+    generate_simple_self_signed(vec!["localhost".to_string()]).expect("generate cert");
+  let config = Arc::new(
+    ServerConfig::builder()
+      .with_no_client_auth()
+      .with_single_cert(
+        vec![cert.der().clone()],
+        PrivateKeyDer::from(PrivatePkcs8KeyDer::from(key_pair.serialize_der())),
+      )
+      .expect("set cert"),
+  );
+
+  let (listener, addr) = bind_local_http_listener("gated tls response server");
+  let (partial_body_sent_tx, partial_body_sent) = mpsc::channel();
+  let (release, release_rx) = mpsc::channel();
+  let (shutdown_observed_tx, shutdown_observed) = mpsc::channel();
+  let partial_body = partial_body.into();
+  let remaining_body = remaining_body.into();
+  let handle = thread::spawn(move || {
+    let Ok((stream, _)) = listener.accept() else {
+      return;
+    };
+    let session = ServerConnection::new(config).expect("server connection");
+    let mut tls = StreamOwned::new(session, stream);
+    let _ = read_http_request(&mut tls);
+    let response_head = format!(
+      "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+      partial_body.len() + remaining_body.len()
+    );
+    if tls.write_all(response_head.as_bytes()).is_err()
+      || tls.write_all(&partial_body).is_err()
+      || tls.flush().is_err()
+    {
+      return;
+    }
+    if partial_body_sent_tx.send(()).is_err() {
+      return;
+    }
+
+    let _ = tls.get_mut().set_nonblocking(true);
+    let mut byte = [0u8; 1];
+    loop {
+      if release_rx.try_recv().is_ok() {
+        let _ = tls.get_mut().set_nonblocking(false);
+        let _ = tls.write_all(&remaining_body);
+        let _ = tls.flush();
+        tls.conn.send_close_notify();
+        let _ = tls.flush();
+        return;
+      }
+      match tls.read(&mut byte) {
+        Ok(0) => {
+          let _ = shutdown_observed_tx.send(());
+          return;
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+        Err(_) => {
+          let _ = shutdown_observed_tx.send(());
+          return;
+        }
+      }
+      thread::sleep(Duration::from_millis(1));
+    }
+  });
+
+  GatedTlsResponse {
+    addr,
+    partial_body_sent,
+    release,
+    shutdown_observed,
+    handle,
+  }
 }
 
 #[cfg(feature = "tls-rustls")]
