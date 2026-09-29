@@ -74,6 +74,12 @@ impl AsyncTcpStream {
   }
 }
 
+impl Drop for AsyncTcpStream {
+  fn drop(&mut self) {
+    let _ = self.inner.get_ref().shutdown(Shutdown::Both);
+  }
+}
+
 impl AsyncRead for AsyncTcpStream {
   fn poll_read(
     self: Pin<&mut Self>,
