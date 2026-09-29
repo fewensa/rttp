@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -1179,6 +1179,149 @@ pub fn spawn_proxy_connect_response_server(
     }
   });
   (addr, handle)
+}
+
+/// One deterministic response served for one accepted HTTP CONNECT socket.
+#[derive(Clone, Debug)]
+pub struct ConnectProxyStage {
+  pub response: Vec<u8>,
+  pub target: Option<SocketAddr>,
+  pub truncate_after: Option<usize>,
+  pub stall: Option<Duration>,
+}
+
+impl ConnectProxyStage {
+  pub fn response(response: impl Into<Vec<u8>>) -> Self {
+    Self {
+      response: response.into(),
+      target: None,
+      truncate_after: None,
+      stall: None,
+    }
+  }
+
+  pub fn success(target: SocketAddr) -> Self {
+    Self {
+      response: b"HTTP/1.1 200 Connection Established\r\n\r\n".to_vec(),
+      target: Some(target),
+      truncate_after: None,
+      stall: None,
+    }
+  }
+
+  pub fn truncated(response: impl Into<Vec<u8>>, truncate_after: usize) -> Self {
+    Self {
+      response: response.into(),
+      target: None,
+      truncate_after: Some(truncate_after),
+      stall: None,
+    }
+  }
+
+  pub fn stalled(duration: Duration) -> Self {
+    Self {
+      response: Vec::new(),
+      target: None,
+      truncate_after: None,
+      stall: Some(duration),
+    }
+  }
+}
+
+#[derive(Debug, Default)]
+pub struct ConnectProxyReport {
+  pub accept_count: usize,
+  pub request_count: usize,
+  pub requests: Vec<Vec<u8>>,
+  pub closed_connections: Vec<bool>,
+}
+
+/// Run a bounded HTTP CONNECT proxy with one [`ConnectProxyStage`] per accept.
+///
+/// A successful stage with a target relays bytes to that target after sending the
+/// 200 response, allowing tests to verify that the CONNECT socket is reused for
+/// the tunneled TLS request. Failed stages wait for the client to close the
+/// socket, making cleanup assertions deterministic.
+pub fn spawn_connect_proxy_server(
+  stages: Vec<ConnectProxyStage>,
+) -> (SocketAddr, JoinHandle<ConnectProxyReport>) {
+  let (listener, addr) = bind_local_http_listener("scripted CONNECT proxy");
+  let handle = thread::spawn(move || {
+    let mut report = ConnectProxyReport::default();
+    for stage in stages {
+      let Ok((mut client, _)) = listener.accept() else {
+        break;
+      };
+      report.accept_count += 1;
+      let _ = client.set_read_timeout(Some(Duration::from_secs(2)));
+      let _ = client.set_write_timeout(Some(Duration::from_secs(2)));
+
+      let request = read_http_request(&mut client);
+      if request.is_empty() {
+        report.closed_connections.push(true);
+        continue;
+      }
+      report.request_count += 1;
+      report.requests.push(request);
+
+      if let Some(duration) = stage.stall {
+        thread::sleep(duration);
+        report
+          .closed_connections
+          .push(wait_for_client_close(&mut client));
+        continue;
+      }
+
+      let write_len = stage
+        .truncate_after
+        .unwrap_or(stage.response.len())
+        .min(stage.response.len());
+      if client.write_all(&stage.response[..write_len]).is_err() {
+        report.closed_connections.push(true);
+        continue;
+      }
+      let _ = client.flush();
+      if stage.truncate_after.is_some() {
+        let _ = client.shutdown(Shutdown::Write);
+      }
+
+      if let Some(target_addr) = stage.target {
+        let mut target = TcpStream::connect(target_addr).expect("connect CONNECT proxy target");
+        let mut client_reader = client.try_clone().expect("clone CONNECT proxy client");
+        let mut target_writer = target.try_clone().expect("clone CONNECT proxy target");
+        let relay = thread::spawn(move || {
+          let _ = io::copy(&mut client_reader, &mut target_writer);
+        });
+        let _ = io::copy(&mut target, &mut client);
+        let _ = relay.join();
+        report.closed_connections.push(true);
+      } else {
+        report
+          .closed_connections
+          .push(wait_for_client_close(&mut client));
+      }
+    }
+    report
+  });
+  (addr, handle)
+}
+
+fn wait_for_client_close(client: &mut TcpStream) -> bool {
+  let mut byte = [0u8; 1];
+  match client.read(&mut byte) {
+    Ok(0) => true,
+    Err(error) => matches!(
+      error.kind(),
+      io::ErrorKind::ConnectionReset
+        | io::ErrorKind::BrokenPipe
+        | io::ErrorKind::TimedOut
+        | io::ErrorKind::UnexpectedEof
+    ),
+    Ok(_) => {
+      let _ = client.shutdown(Shutdown::Both);
+      false
+    }
+  }
 }
 
 #[cfg(feature = "tls-rustls")]

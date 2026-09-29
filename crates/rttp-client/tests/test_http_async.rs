@@ -3849,3 +3849,158 @@ fn test_async_https_proxy_rejects_excessive_informational_connect_responses() {
     "async client should close the rejected proxy connection"
   );
 }
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_proxy_rejects_truncated_connect_response_and_closes_connection() {
+  let response = b"HTTP/1.1 200 Connection Established\r\n";
+  let (proxy_addr, proxy_handle) =
+    support::spawn_connect_proxy_server(vec![support::ConnectProxyStage::truncated(
+      response,
+      response.len(),
+    )]);
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url("https://localhost/")
+      .proxy(Proxy::http("127.0.0.1", u32::from(proxy_addr.port())))
+      .rasync()
+      .await
+      .expect_err("truncated CONNECT response should fail");
+    assert!(error
+      .to_string()
+      .contains("Incomplete proxy response headers"));
+  });
+
+  let report = proxy_handle.join().expect("truncated CONNECT proxy");
+  assert_eq!(1, report.accept_count);
+  assert_eq!(1, report.request_count);
+  assert!(report.closed_connections[0]);
+}
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_proxy_stalled_connect_response_times_out_and_closes_connection() {
+  let (proxy_addr, proxy_handle) =
+    support::spawn_connect_proxy_server(vec![support::ConnectProxyStage::stalled(
+      Duration::from_millis(250),
+    )]);
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url("https://localhost/")
+      .proxy(Proxy::http("127.0.0.1", u32::from(proxy_addr.port())))
+      .config(Config::builder().read_timeout(50).write_timeout(50))
+      .rasync()
+      .await
+      .expect_err("stalled CONNECT response should time out");
+    assert!(
+      error.is_timeout(),
+      "unexpected stalled CONNECT error: {error}"
+    );
+  });
+
+  let report = proxy_handle.join().expect("stalled CONNECT proxy");
+  assert_eq!(1, report.accept_count);
+  assert_eq!(1, report.request_count);
+  assert!(report.closed_connections[0]);
+}
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_proxy_failed_connect_recovers_on_fresh_connection() {
+  let (target_addr, _target_handle) = support::spawn_tls_server();
+  let (proxy_addr, proxy_handle) = support::spawn_connect_proxy_server(vec![
+    support::ConnectProxyStage::truncated(
+      b"HTTP/1.1 200 Connection Established\r\n",
+      b"HTTP/1.1 200 Connection Established\r\n".len(),
+    ),
+    support::ConnectProxyStage::success(target_addr),
+  ]);
+  let proxy = Proxy::http("127.0.0.1", u32::from(proxy_addr.port()));
+  let first = block_on(async {
+    client()
+      .get()
+      .url(format!("https://localhost:{}/first", target_addr.port()))
+      .proxy(proxy.clone())
+      .rasync()
+      .await
+  });
+  assert!(first.is_err(), "malformed CONNECT should fail");
+
+  let second = block_on(async {
+    client()
+      .get()
+      .url(format!("https://localhost:{}/second", target_addr.port()))
+      .proxy(proxy)
+      .config(
+        Config::builder()
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
+      .rasync()
+      .await
+  })
+  .expect("fresh CONNECT should recover");
+  assert_eq!("OK", second.body().string().unwrap());
+
+  let report = proxy_handle.join().expect("recovery CONNECT proxy");
+  assert_eq!(2, report.accept_count);
+  assert_eq!(2, report.request_count);
+  assert_eq!(2, report.requests.len());
+}
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_proxy_success_and_direct_routing_accept_counts() {
+  let (target_addr, _target_handle) = support::spawn_tls_server();
+  let (proxy_addr, proxy_handle) =
+    support::spawn_connect_proxy_server(vec![support::ConnectProxyStage::success(target_addr)]);
+
+  let response = block_on(async {
+    client()
+      .get()
+      .url(format!("https://localhost:{}/", target_addr.port()))
+      .proxy(Proxy::http("127.0.0.1", u32::from(proxy_addr.port())))
+      .config(
+        Config::builder()
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
+      .rasync()
+      .await
+  })
+  .expect("CONNECT proxy request");
+  assert_eq!("OK", response.body().string().unwrap());
+
+  let report = proxy_handle.join().expect("successful CONNECT proxy");
+  assert_eq!(1, report.accept_count);
+  assert_eq!(1, report.request_count);
+  assert!(String::from_utf8_lossy(&report.requests[0]).starts_with("CONNECT "));
+
+  let (direct_target, _direct_target_handle) = support::spawn_tls_server();
+  let (_unused_proxy_addr, unused_proxy_handle) = support::spawn_connect_proxy_server(Vec::new());
+  let direct_response = block_on(async {
+    client()
+      .get()
+      .url(format!("https://localhost:{}/", direct_target.port()))
+      .config(
+        Config::builder()
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
+      .rasync()
+      .await
+  })
+  .expect("direct HTTPS request");
+  assert_eq!("OK", direct_response.body().string().unwrap());
+  assert_eq!(
+    0,
+    unused_proxy_handle
+      .join()
+      .expect("unused proxy")
+      .accept_count
+  );
+}
