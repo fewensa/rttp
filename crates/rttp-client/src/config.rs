@@ -1,6 +1,9 @@
 /// Default maximum number of bytes buffered for a client response body.
 pub const DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES: usize = 16 * 1024 * 1024;
 
+/// Default maximum idle lifetime for an asynchronous HTTP proxy h2c session.
+pub const DEFAULT_PROXY_POOL_IDLE_TIMEOUT: u64 = 30_000;
+
 /// Local settings for the bounded prior-knowledge h2c client path.
 ///
 /// The default policy leaves both settings unadvertised, retaining the HTTP/2
@@ -52,6 +55,7 @@ pub struct Config {
   max_buffered_response_body_bytes: usize,
   http2_max_frame_size: Option<usize>,
   http2_header_table_size: Option<usize>,
+  proxy_pool_idle_timeout: u64,
 }
 
 impl Default for Config {
@@ -111,6 +115,11 @@ impl Config {
   pub fn http2_header_table_size(&self) -> Option<usize> {
     self.http2_header_table_size
   }
+  /// Return the maximum idle lifetime of a pooled asynchronous HTTP proxy
+  /// h2c session in milliseconds.
+  pub fn proxy_pool_idle_timeout(&self) -> u64 {
+    self.proxy_pool_idle_timeout
+  }
   /// Return the bounded prior-knowledge h2c settings configured for this request.
   pub fn h2c_policy(&self) -> H2cClientPolicy {
     H2cClientPolicy {
@@ -151,6 +160,7 @@ impl ConfigBuilder {
         max_buffered_response_body_bytes: DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
         http2_max_frame_size: None,
         http2_header_table_size: None,
+        proxy_pool_idle_timeout: DEFAULT_PROXY_POOL_IDLE_TIMEOUT,
       },
     }
   }
@@ -223,6 +233,12 @@ impl ConfigBuilder {
     self.config.h2c_policy_set(policy);
     self
   }
+  /// Set the maximum idle lifetime of a pooled asynchronous HTTP proxy h2c
+  /// session in milliseconds. A zero value disables reuse after a request.
+  pub fn proxy_pool_idle_timeout(&mut self, proxy_pool_idle_timeout: u64) -> &mut Self {
+    self.config.proxy_pool_idle_timeout = proxy_pool_idle_timeout;
+    self
+  }
   /// Configure the local h2c `SETTINGS_MAX_FRAME_SIZE` value.
   ///
   /// This applies only to the bounded prior-knowledge h2c client path. Values
@@ -277,6 +293,7 @@ mod tests {
       .max_buffered_response_body_bytes(123)
       .http2_max_frame_size(16_384)
       .http2_header_table_size(64)
+      .proxy_pool_idle_timeout(2468)
       .build();
 
     assert_eq!(config.connect_timeout(), 2468);
@@ -290,6 +307,7 @@ mod tests {
     assert_eq!(123, config.max_buffered_response_body_bytes());
     assert_eq!(Some(16_384), config.http2_max_frame_size());
     assert_eq!(Some(64), config.http2_header_table_size());
+    assert_eq!(2468, config.proxy_pool_idle_timeout());
   }
 
   #[test]
@@ -340,6 +358,14 @@ mod tests {
     assert_eq!(
       default_config.http2_header_table_size(),
       builder_config.http2_header_table_size()
+    );
+    assert_eq!(
+      DEFAULT_PROXY_POOL_IDLE_TIMEOUT,
+      default_config.proxy_pool_idle_timeout()
+    );
+    assert_eq!(
+      default_config.proxy_pool_idle_timeout(),
+      builder_config.proxy_pool_idle_timeout()
     );
   }
 
