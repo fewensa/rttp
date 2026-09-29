@@ -4,7 +4,7 @@ use rttp_test_support as support;
 #[cfg(feature = "async")]
 use std::collections::HashMap;
 
-#[cfg(feature = "async")]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
 use async_io::Timer;
 #[cfg(feature = "async")]
 use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
@@ -13,11 +13,11 @@ use flate2::Compression;
 use futures::channel::oneshot;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
-#[cfg(feature = "async")]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
 use futures::future::{select, Either};
 #[cfg(feature = "async")]
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, Cursor as AsyncCursor};
-#[cfg(feature = "async")]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
 use futures::pin_mut;
 #[cfg(feature = "async")]
 use rttp_client::types::{Header, Proxy, StatusCode};
