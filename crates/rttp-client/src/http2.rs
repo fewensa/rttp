@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(feature = "async")]
 use std::task::{Context, Poll};
 use std::time::Duration;
+#[cfg(feature = "async")]
+use std::time::Instant;
 
 use base64::Engine;
 use rttp_protocol::authorization::ProxyAuthorization;
@@ -219,6 +221,7 @@ struct H2cSession {
   request_hpack: RequestHpackEncoder,
   response_hpack: HpackDecoder,
   retired: bool,
+  last_used: Instant,
 }
 
 #[cfg(feature = "async")]
@@ -243,6 +246,7 @@ impl H2cSession {
       peer_settings,
       next_stream_id: STREAM_ID,
       retired: false,
+      last_used: Instant::now(),
     })
   }
 }
@@ -299,7 +303,11 @@ fn async_proxy_h2c_call<'a>(
   let mut session = proxy_sessions()
     .lock()
     .expect("h2c proxy session pool mutex poisoned")
-    .remove(&key);
+    .remove(&key)
+    .filter(|session| {
+      session.last_used.elapsed()
+        < Duration::from_millis(request.origin().config().proxy_pool_idle_timeout())
+    });
   if session.is_none() {
     session = match H2cSession::connect(&url, &proxy, request.origin().config(), local_settings) {
       Ok(session) => Some(session),
@@ -308,6 +316,9 @@ fn async_proxy_h2c_call<'a>(
   }
   let mut session = session.expect("new or pooled h2c proxy session");
   let result = PriorKnowledgeClient::new(request).get_on_session(&mut session, local_settings);
+  if result.is_ok() && !session.retired {
+    session.last_used = Instant::now();
+  }
   if cancelled.load(std::sync::atomic::Ordering::Acquire) || result.is_err() || session.retired {
     (result, None)
   } else {

@@ -3186,6 +3186,7 @@ fn prior_knowledge_async_proxy_reuses_a_healthy_session() {
       .get()
       .url("http://127.0.0.1:8081/first")
       .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+      .config(Config::builder().proxy_pool_idle_timeout(500).build())
       .rasync_http2_prior_knowledge()
       .await
   })
@@ -3195,6 +3196,7 @@ fn prior_knowledge_async_proxy_reuses_a_healthy_session() {
       .get()
       .url("http://[::1]:8081/second#ignored")
       .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+      .config(Config::builder().proxy_pool_idle_timeout(500).build())
       .rasync_http2_prior_knowledge()
       .await
   })
@@ -3206,6 +3208,199 @@ fn prior_knowledge_async_proxy_reuses_a_healthy_session() {
     .recv_timeout(Duration::from_secs(1))
     .expect("proxy accept");
   handle.join().expect("proxy peer thread");
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn prior_knowledge_async_proxy_expires_an_idle_session() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy peer");
+  let proxy_addr = listener.local_addr().expect("proxy peer addr");
+  let (accepts_sender, accepts_receiver) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    for expected_stream_id in [1, 1] {
+      let (mut stream, _) = listener.accept().expect("accept proxy client");
+      accepts_sender.send(()).expect("record proxy accept");
+      complete_h2_handshake_without_request(&mut stream);
+      let request = read_frame(&mut stream);
+      assert_eq!(FRAME_HEADERS, request.frame_type);
+      assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request.flags);
+      assert_eq!(expected_stream_id, request.stream_id);
+      write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        FLAG_END_HEADERS,
+        expected_stream_id,
+        &[0x88],
+      );
+      write_frame(
+        &mut stream,
+        FRAME_DATA,
+        FLAG_END_STREAM,
+        expected_stream_id,
+        b"ok",
+      );
+    }
+  });
+
+  let config = Config::builder().proxy_pool_idle_timeout(10).build();
+  let request = |path| {
+    futures::executor::block_on(async {
+      HttpClient::new()
+        .get()
+        .url(path)
+        .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+        .config(config.clone())
+        .rasync_http2_prior_knowledge()
+        .await
+    })
+  };
+
+  assert_eq!(
+    "ok",
+    request("http://127.0.0.1:8086/first")
+      .unwrap()
+      .body()
+      .string()
+      .unwrap()
+  );
+  thread::sleep(Duration::from_millis(30));
+  assert_eq!(
+    "ok",
+    request("http://127.0.0.1:8086/expired")
+      .unwrap()
+      .body()
+      .string()
+      .unwrap()
+  );
+  accepts_receiver
+    .recv_timeout(Duration::from_secs(1))
+    .expect("first proxy accept");
+  accepts_receiver
+    .recv_timeout(Duration::from_secs(1))
+    .expect("fresh proxy accept after idle expiry");
+  handle.join().expect("proxy idle expiry peer thread");
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn prior_knowledge_async_proxy_uses_a_fresh_connection_after_idle_expiry() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy peer");
+  let proxy_addr = listener.local_addr().expect("proxy peer addr");
+  let (accepts_sender, accepts_receiver) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    for response_body in [b"first".as_slice(), b"fresh".as_slice()] {
+      let (mut stream, _) = listener.accept().expect("accept proxy client");
+      accepts_sender.send(()).expect("record proxy accept");
+      complete_h2_handshake_without_request(&mut stream);
+      let request = read_frame(&mut stream);
+      assert_eq!(1, request.stream_id);
+      write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+      write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, response_body);
+    }
+  });
+
+  let config = Config::builder().proxy_pool_idle_timeout(1).build();
+  let request = |path| {
+    futures::executor::block_on(async {
+      HttpClient::new()
+        .get()
+        .url(path)
+        .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+        .config(config.clone())
+        .rasync_http2_prior_knowledge()
+        .await
+    })
+  };
+
+  assert_eq!(
+    "first",
+    request("http://127.0.0.1:8087/first")
+      .unwrap()
+      .body()
+      .string()
+      .unwrap()
+  );
+  thread::sleep(Duration::from_millis(20));
+  assert_eq!(
+    "fresh",
+    request("http://127.0.0.1:8087/fresh")
+      .unwrap()
+      .body()
+      .string()
+      .unwrap()
+  );
+  accepts_receiver
+    .recv_timeout(Duration::from_secs(1))
+    .expect("first proxy accept");
+  accepts_receiver
+    .recv_timeout(Duration::from_secs(1))
+    .expect("fresh proxy accept after expiry");
+  handle.join().expect("fresh proxy peer thread");
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn prior_knowledge_async_direct_route_remains_direct_with_proxy_pool_enabled() {
+  let origin_listener = TcpListener::bind("127.0.0.1:0").expect("bind direct h2 peer");
+  let origin_addr = origin_listener.local_addr().expect("direct h2 peer addr");
+  let proxy_listener = TcpListener::bind("127.0.0.1:0").expect("bind unused proxy peer");
+  proxy_listener
+    .set_nonblocking(true)
+    .expect("set proxy listener nonblocking");
+  let (proxy_sender, proxy_receiver) = mpsc::channel();
+
+  let origin_handle = thread::spawn(move || {
+    let (mut stream, _) = origin_listener.accept().expect("accept direct h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+    let request = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request.frame_type);
+    assert_eq!(1, request.stream_id);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"direct");
+  });
+
+  let proxy_handle = thread::spawn(move || {
+    let deadline = std::time::Instant::now() + Duration::from_millis(300);
+    loop {
+      match proxy_listener.accept() {
+        Ok(_) => {
+          proxy_sender
+            .send(())
+            .expect("record unexpected proxy accept");
+          return;
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+          if std::time::Instant::now() >= deadline {
+            return;
+          }
+          thread::yield_now();
+        }
+        Err(error) => panic!("proxy listener failed: {error}"),
+      }
+    }
+  });
+
+  let response = futures::executor::block_on(async {
+    HttpClient::new()
+      .get()
+      .url(format!("http://{origin_addr}/direct"))
+      .config(Config::builder().proxy_pool_idle_timeout(1).build())
+      .rasync_http2_prior_knowledge()
+      .await
+  })
+  .expect("direct async h2c request");
+
+  assert_eq!("direct", response.body().string().unwrap());
+  assert!(
+    proxy_receiver
+      .recv_timeout(Duration::from_millis(100))
+      .is_err(),
+    "direct request must not contact a proxy"
+  );
+  origin_handle.join().expect("direct h2 peer thread");
+  proxy_handle.join().expect("unused proxy peer thread");
 }
 
 #[cfg(feature = "async")]
