@@ -3058,6 +3058,75 @@ fn prior_knowledge_routes_through_configured_http_proxy() {
   assert!(!err.is_builder());
 }
 
+#[test]
+fn prior_knowledge_proxy_normalizes_authority_and_absolute_path() {
+  let cases = [
+    (
+      "http://127.0.0.1:8081",
+      "http://127.0.0.1:8081/",
+      "127.0.0.1:8081",
+    ),
+    (
+      "http://127.0.0.1:8081/resource?via=h2#ignored",
+      "http://127.0.0.1:8081/resource?via=h2",
+      "127.0.0.1:8081",
+    ),
+    ("http://[::1]:8081", "http://[::1]:8081/", "[::1]:8081"),
+    (
+      "http://[::1]:8081/resource?via=h2#ignored",
+      "http://[::1]:8081/resource?via=h2",
+      "[::1]:8081",
+    ),
+  ];
+
+  for (url, expected_path, expected_authority) in cases {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 proxy peer");
+    let proxy_addr = listener.local_addr().expect("h2 proxy peer addr");
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2 proxy client");
+      complete_h2_handshake_without_request(&mut stream);
+
+      let request_headers = read_frame(&mut stream);
+      assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+      assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+      assert_eq!(1, request_headers.stream_id);
+      assert_eq!(
+        expected_path.as_bytes(),
+        find_header_value(&request_headers.payload, b":path")
+          .expect("request path")
+          .value
+          .as_slice()
+      );
+      assert_eq!(
+        expected_authority.as_bytes(),
+        find_header_value(&request_headers.payload, b":authority")
+          .expect("request authority")
+          .value
+          .as_slice()
+      );
+
+      write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        FLAG_END_STREAM | FLAG_END_HEADERS,
+        1,
+        &[0x88],
+      );
+    });
+
+    let response = HttpClient::new()
+      .get()
+      .url(url)
+      .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+      .emit_http2_prior_knowledge()
+      .expect("proxied h2c response");
+
+    assert_eq!(200, response.code());
+    assert_eq!(b"", response.body().binary());
+    handle.join().expect("h2 proxy peer thread");
+  }
+}
+
 #[cfg(feature = "async")]
 #[test]
 fn prior_knowledge_async_proxy_reuses_a_healthy_session() {
