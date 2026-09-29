@@ -218,6 +218,7 @@ struct H2cSession {
   next_stream_id: u32,
   request_hpack: RequestHpackEncoder,
   response_hpack: HpackDecoder,
+  retired: bool,
 }
 
 #[cfg(feature = "async")]
@@ -241,6 +242,7 @@ impl H2cSession {
       response_hpack: HpackDecoder::new(local_settings.header_table_size),
       peer_settings,
       next_stream_id: STREAM_ID,
+      retired: false,
     })
   }
 }
@@ -306,7 +308,7 @@ fn async_proxy_h2c_call<'a>(
   }
   let mut session = session.expect("new or pooled h2c proxy session");
   let result = PriorKnowledgeClient::new(request).get_on_session(&mut session, local_settings);
-  if cancelled.load(std::sync::atomic::Ordering::Acquire) || result.is_err() {
+  if cancelled.load(std::sync::atomic::Ordering::Acquire) || result.is_err() || session.retired {
     (result, None)
   } else {
     (result, Some((key, session)))
@@ -394,6 +396,7 @@ impl<'a> PriorKnowledgeClient<'a> {
         None,
         None,
         None,
+        None,
       )?,
     };
     self.request.origin_mut().closed_set(true);
@@ -441,6 +444,7 @@ impl<'a> PriorKnowledgeClient<'a> {
         Some(&mut session.response_hpack),
         Some(&mut session.peer_settings),
         Some(&mut session.request_hpack),
+        Some(&mut session.retired),
       )?,
     };
     session.next_stream_id = stream_id
@@ -509,6 +513,7 @@ impl<'a> UpgradeClient<'a> {
         !is_head,
         local_settings,
         UPGRADED_STREAM_ID,
+        None,
         None,
         None,
         None,
@@ -1496,6 +1501,7 @@ fn read_until_send_window_available(
           response_hpack.take(),
           Some(peer_settings),
           Some(hpack),
+          None,
         )
         .map(Some);
       }
@@ -1847,6 +1853,7 @@ fn read_single_stream_response(
   response_hpack: Option<&mut HpackDecoder>,
   peer_settings: Option<&mut PeerSettings>,
   request_hpack: Option<&mut RequestHpackEncoder>,
+  retired: Option<&mut bool>,
 ) -> error::Result<Response> {
   let mut owned_hpack = None;
   let hpack = response_hpack.unwrap_or_else(|| {
@@ -1863,6 +1870,7 @@ fn read_single_stream_response(
     hpack,
     peer_settings,
     request_hpack,
+    retired,
   )
 }
 
@@ -1876,6 +1884,7 @@ fn read_single_stream_response_from_frame(
   response_hpack: Option<&mut HpackDecoder>,
   peer_settings: Option<&mut PeerSettings>,
   request_hpack: Option<&mut RequestHpackEncoder>,
+  retired: Option<&mut bool>,
 ) -> error::Result<Response> {
   let mut owned_hpack = None;
   let hpack = response_hpack.unwrap_or_else(|| {
@@ -1892,6 +1901,7 @@ fn read_single_stream_response_from_frame(
     hpack,
     peer_settings,
     request_hpack,
+    retired,
   )
 }
 
@@ -1906,6 +1916,7 @@ fn read_single_stream_response_with_first_frame(
   hpack: &mut HpackDecoder,
   peer_settings: Option<&mut PeerSettings>,
   request_hpack: Option<&mut RequestHpackEncoder>,
+  mut retired: Option<&mut bool>,
 ) -> error::Result<Response> {
   let mut peer_settings = peer_settings;
   let mut request_hpack = request_hpack;
@@ -2086,6 +2097,9 @@ fn read_single_stream_response_with_first_frame(
             received_goaway.error_code,
             http2_error_code_name(received_goaway.error_code),
           )));
+        }
+        if let Some(retired) = retired.as_deref_mut() {
+          *retired = true;
         }
         goaway = Some(received_goaway);
       }

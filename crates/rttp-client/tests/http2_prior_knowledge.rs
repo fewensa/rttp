@@ -3141,6 +3141,89 @@ fn prior_knowledge_async_proxy_reuses_a_healthy_session() {
 
 #[cfg(feature = "async")]
 #[test]
+fn prior_knowledge_async_proxy_goaway_finishes_in_flight_and_reuses_fresh_connection() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy peer");
+  let proxy_addr = listener.local_addr().expect("proxy peer addr");
+  let (accepts_sender, accepts_receiver) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    let (mut first_stream, _) = listener.accept().expect("accept first proxy client");
+    accepts_sender.send(()).expect("record first proxy accept");
+    complete_h2_handshake_without_request(&mut first_stream);
+
+    let first_request = read_frame(&mut first_stream);
+    assert_eq!(FRAME_HEADERS, first_request.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, first_request.flags);
+    assert_eq!(1, first_request.stream_id);
+    write_frame(&mut first_stream, FRAME_GOAWAY, 0, 0, &goaway_payload(1, 0));
+    write_frame(
+      &mut first_stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &[0x88],
+    );
+    write_frame(
+      &mut first_stream,
+      FRAME_DATA,
+      FLAG_END_STREAM,
+      1,
+      b"in-flight",
+    );
+    first_stream
+      .set_read_timeout(Some(Duration::from_millis(300)))
+      .expect("set first connection read timeout");
+    assert!(
+      try_read_frame(&mut first_stream)
+        .expect("check for refused stream after GOAWAY")
+        .is_none(),
+      "client must not open stream 3 after GOAWAY last_stream_id=1"
+    );
+
+    let (mut second_stream, _) = listener.accept().expect("accept fresh proxy client");
+    accepts_sender.send(()).expect("record fresh proxy accept");
+    complete_h2_handshake_without_request(&mut second_stream);
+    let second_request = read_frame(&mut second_stream);
+    assert_eq!(FRAME_HEADERS, second_request.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, second_request.flags);
+    assert_eq!(1, second_request.stream_id);
+    write_frame(
+      &mut second_stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &[0x88],
+    );
+    write_frame(&mut second_stream, FRAME_DATA, FLAG_END_STREAM, 1, b"fresh");
+  });
+
+  let request = |path| {
+    futures::executor::block_on(async {
+      HttpClient::new()
+        .get()
+        .url(path)
+        .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+        .rasync_http2_prior_knowledge()
+        .await
+    })
+  };
+  let first = request("http://127.0.0.1:8085/in-flight")
+    .expect("GOAWAY must not interrupt the in-flight response");
+  assert_eq!("in-flight", first.body().string().unwrap());
+  let second = request("http://127.0.0.1:8085/fresh")
+    .expect("request after GOAWAY must use a fresh connection");
+  assert_eq!("fresh", second.body().string().unwrap());
+  accepts_receiver
+    .recv_timeout(Duration::from_secs(1))
+    .expect("first proxy accept");
+  accepts_receiver
+    .recv_timeout(Duration::from_secs(1))
+    .expect("fresh proxy accept");
+  handle.join().expect("proxy GOAWAY peer thread");
+}
+
+#[cfg(feature = "async")]
+#[test]
 fn prior_knowledge_async_proxy_applies_settings_before_reusing_a_session() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy peer");
   let proxy_addr = listener.local_addr().expect("proxy peer addr");
@@ -6186,6 +6269,14 @@ fn settings_payload(identifier: u16, value: u32) -> Vec<u8> {
   let mut payload = Vec::with_capacity(6);
   payload.extend_from_slice(&identifier.to_be_bytes());
   payload.extend_from_slice(&value.to_be_bytes());
+  payload
+}
+
+#[cfg(feature = "async")]
+fn goaway_payload(last_stream_id: u32, error_code: u32) -> [u8; 8] {
+  let mut payload = [0; 8];
+  payload[..4].copy_from_slice(&(last_stream_id & 0x7fff_ffff).to_be_bytes());
+  payload[4..].copy_from_slice(&error_code.to_be_bytes());
   payload
 }
 
