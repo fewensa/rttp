@@ -5,15 +5,20 @@ use rttp_test_support as support;
 use std::collections::HashMap;
 
 #[cfg(feature = "async")]
+use async_io::Timer;
+#[cfg(feature = "async")]
 use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
 #[cfg(feature = "async")]
 use flate2::Compression;
-#[cfg(feature = "async")]
 use futures::channel::oneshot;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
 #[cfg(feature = "async")]
+use futures::future::{select, Either};
+#[cfg(feature = "async")]
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, Cursor as AsyncCursor};
+#[cfg(feature = "async")]
+use futures::pin_mut;
 #[cfg(feature = "async")]
 use rttp_client::types::{Header, Proxy, StatusCode};
 #[cfg(feature = "async")]
@@ -3906,6 +3911,117 @@ fn test_async_https_proxy_stalled_connect_response_times_out_and_closes_connecti
   assert_eq!(1, report.accept_count);
   assert_eq!(1, report.request_count);
   assert!(report.closed_connections[0]);
+}
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_proxy_cancelled_connect_setup_closes_connection() {
+  let (target_addr, _target_handle) = support::spawn_tls_server();
+  let (proxy_addr, proxy_handle) = support::spawn_connect_proxy_server(vec![
+    support::ConnectProxyStage::stalled(Duration::from_millis(250)),
+    support::ConnectProxyStage::success(target_addr),
+  ]);
+  let proxy = Proxy::http("127.0.0.1", u32::from(proxy_addr.port()));
+
+  block_on(async {
+    {
+      let mut first_client = client();
+      let first = first_client
+        .get()
+        .url(format!("https://localhost:{}/first", target_addr.port()))
+        .proxy(proxy.clone());
+      let request = first.rasync();
+      pin_mut!(request);
+      let timer = Timer::after(Duration::from_millis(100));
+      pin_mut!(timer);
+      assert!(matches!(select(request, timer).await, Either::Right(_)));
+    }
+
+    let response = client()
+      .get()
+      .url(format!("https://localhost:{}/second", target_addr.port()))
+      .proxy(proxy)
+      .config(
+        Config::builder()
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
+      .rasync()
+      .await
+      .expect("fresh CONNECT should succeed after cancellation");
+    assert_eq!("OK", response.body().string().unwrap());
+  });
+
+  let report = proxy_handle.join().expect("cancelled CONNECT proxy");
+  assert_eq!(2, report.accept_count);
+  assert_eq!(2, report.request_count);
+  assert!(report.closed_connections[0], "{report:?}");
+}
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_proxy_cancelled_response_body_closes_tunnel_and_uses_fresh_connection() {
+  let gated = support::spawn_gated_tls_response_server(b"partial", b"remaining");
+  let (fresh_target_addr, fresh_target_handle) = support::spawn_tls_server();
+  let (proxy_addr, proxy_handle) = support::spawn_connect_proxy_server(vec![
+    support::ConnectProxyStage::success(gated.addr()),
+    support::ConnectProxyStage::success(fresh_target_addr),
+  ]);
+  let proxy = Proxy::http("127.0.0.1", u32::from(proxy_addr.port()));
+
+  block_on(async {
+    {
+      let mut first_client = client();
+      let first = first_client
+        .get()
+        .url(format!("https://localhost:{}/first", gated.addr().port()))
+        .proxy(proxy.clone())
+        .config(
+          Config::builder()
+            .verify_ssl_cert(false)
+            .verify_ssl_hostname(false),
+        );
+      let request = first.rasync();
+      pin_mut!(request);
+      let timer = Timer::after(Duration::from_millis(100));
+      pin_mut!(timer);
+      assert!(matches!(select(request, timer).await, Either::Right(_)));
+    }
+  });
+
+  gated
+    .wait_for_partial_body(Duration::from_secs(1))
+    .expect("TLS target should send partial response before cancellation");
+  gated
+    .wait_for_shutdown(Duration::from_secs(1))
+    .expect("cancelled tunneled TLS stream should shut down promptly");
+
+  let response = block_on(async {
+    client()
+      .get()
+      .url(format!(
+        "https://localhost:{}/second",
+        fresh_target_addr.port()
+      ))
+      .proxy(proxy)
+      .config(
+        Config::builder()
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
+      .rasync()
+      .await
+  })
+  .expect("fresh CONNECT should succeed after response cancellation");
+  assert_eq!("OK", response.body().string().unwrap());
+
+  gated.join().expect("gated TLS target");
+  fresh_target_handle.join().expect("fresh TLS target");
+  let report = proxy_handle.join().expect("cancelled response proxy");
+  assert_eq!(2, report.accept_count);
+  assert_eq!(2, report.request_count);
+  assert_eq!(2, report.requests.len());
+  assert!(report.closed_connections.iter().all(|closed| *closed));
 }
 
 #[test]
