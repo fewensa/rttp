@@ -220,8 +220,6 @@ mod config;
 mod connection;
 #[cfg(feature = "http2")]
 pub mod http2;
-#[cfg(feature = "http2")]
-pub use self::http2::Http2StreamingResponse;
 mod request;
 
 pub mod error;
