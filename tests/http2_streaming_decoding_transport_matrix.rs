@@ -573,6 +573,11 @@ fn http2_streaming_decoding_exposes_trailers_after_eof() {
     let mut response = transport
       .emit_streaming(&mut client)
       .expect("streaming trailer response");
+    assert!(
+      response.trailers().is_empty(),
+      "{} trailers must remain hidden before body EOF",
+      transport.name()
+    );
     assert_eq!(
       b"trailer after completion".to_vec(),
       read_streaming_body(&mut response).expect("streaming trailer body")
@@ -588,6 +593,45 @@ fn http2_streaming_decoding_exposes_trailers_after_eof() {
         .map(|header| header.value())
     );
     wait_for_server(done, handle, "streaming trailers");
+  }
+}
+
+#[test]
+fn http2_streaming_decoding_preserves_empty_and_invalid_content_encoding() {
+  for (name, encoding) in [
+    ("empty-gzip", "gzip"),
+    ("invalid-content-encoding", "gzip,"),
+  ] {
+    for transport in transports() {
+      let (addr, done, handle) = serve_response(encoding, Vec::new(), false);
+      let mut client = client_for(None);
+      client.get().url(format!("http://{addr}/{name}"));
+      let mut response = transport
+        .emit_streaming(&mut client)
+        .unwrap_or_else(|error| {
+          panic!(
+            "{}/{} response setup failed: {error}",
+            transport.name(),
+            name
+          )
+        });
+      assert_eq!(
+        Vec::<u8>::new(),
+        read_streaming_body(&mut response).expect("preserved streaming body")
+      );
+      assert_eq!(
+        Some(encoding),
+        response
+          .headers()
+          .iter()
+          .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"))
+          .map(|header| header.value().as_str()),
+        "{}/{} Content-Encoding",
+        transport.name(),
+        name
+      );
+      wait_for_server(done, handle, name);
+    }
   }
 }
 
