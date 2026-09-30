@@ -111,6 +111,7 @@ fn truncated_zlib() -> Vec<u8> {
 
 fn fixtures() -> Vec<Fixture> {
   let gzip_ok = gzip_bytes(b"OK");
+  let concatenated_gzip = [gzip_bytes(b"first "), gzip_bytes(b"second")].concat();
   let zlib_ok = zlib_bytes(b"OK");
   let exact_limit = vec![b'a'; 64];
   vec![
@@ -119,6 +120,14 @@ fn fixtures() -> Vec<Fixture> {
       encoding: "gzip",
       body: gzip_ok.clone(),
       expected_body: b"OK".to_vec(),
+      decoded_limit: None,
+      outcome: Outcome::Decoded,
+    },
+    Fixture {
+      name: "concatenated-gzip",
+      encoding: "gzip",
+      body: concatenated_gzip,
+      expected_body: b"first second".to_vec(),
       decoded_limit: None,
       outcome: Outcome::Decoded,
     },
