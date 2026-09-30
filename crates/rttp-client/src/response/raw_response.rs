@@ -286,7 +286,7 @@ impl Parser {
           ContentDecoder::Gzip => {
             let mut decoded = Vec::new();
             read_decoded_body_to_end(
-              &mut flate2::read::GzDecoder::new(current.as_slice()),
+              &mut flate2::read::MultiGzDecoder::new(current.as_slice()),
               &mut decoded,
               self.max_body_bytes,
             )?;

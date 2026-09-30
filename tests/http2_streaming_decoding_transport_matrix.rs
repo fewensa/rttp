@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{self, Read, Write};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
@@ -8,7 +8,7 @@ use flate2::Compression;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
 use rttp_client::response::Response;
-use rttp_client::{Config, HttpClient};
+use rttp_client::{Config, Http2StreamingResponse, HttpClient};
 use rttp_server::server::{HttpResponse, HttpServer};
 
 #[derive(Clone, Copy)]
@@ -41,6 +41,20 @@ impl Transport {
       Self::PriorKnowledgeAsync => block_on(client.rasync_http2_prior_knowledge()),
       #[cfg(feature = "async")]
       Self::UpgradeAsync => block_on(client.rasync_http2_upgrade()),
+    }
+  }
+
+  fn emit_streaming(
+    self,
+    client: &mut HttpClient,
+  ) -> Result<Http2StreamingResponse, rttp_client::error::Error> {
+    match self {
+      Self::PriorKnowledge => client.emit_http2_prior_knowledge_streaming(),
+      Self::Upgrade => client.emit_http2_upgrade_streaming(),
+      #[cfg(feature = "async")]
+      Self::PriorKnowledgeAsync => block_on(client.rasync_http2_prior_knowledge_streaming()),
+      #[cfg(feature = "async")]
+      Self::UpgradeAsync => block_on(client.rasync_http2_upgrade_streaming()),
     }
   }
 }
@@ -83,15 +97,17 @@ fn raw_deflate(bytes: &[u8]) -> Vec<u8> {
 
 fn fixtures() -> Vec<Fixture> {
   let body = b"bounded HTTP/2 streaming decoding".to_vec();
-  let gzip_body = gzip(b"bounded HTTP/2 streaming decoding");
+  let first = gzip(b"concatenated ");
+  let second = gzip(b"members");
+  let gzip_body = [first, second].concat();
   let zlib_body = zlib(&body);
   let raw_body = raw_deflate(&body);
   vec![
     Fixture {
-      name: "gzip",
+      name: "concatenated-gzip",
       encoding: "gzip",
       wire_body: gzip_body,
-      decoded_body: body.clone(),
+      decoded_body: b"concatenated members".to_vec(),
     },
     Fixture {
       name: "zlib-deflate",
@@ -150,6 +166,35 @@ fn serve_response(
       .accept_one(|_| response)
       .expect("serve h2c streaming response");
     done_tx.send(()).expect("signal h2c response completion");
+  });
+  (addr, done_rx, handle)
+}
+
+fn serve_early_drop_response() -> (
+  std::net::SocketAddr,
+  Receiver<io::Result<()>>,
+  thread::JoinHandle<()>,
+) {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c early-drop server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2c early-drop server address");
+  let (done_tx, done_rx) = mpsc::channel();
+  let mut body = Vec::with_capacity(256 * 1024);
+  let mut state = 0x1234_5678u32;
+  for _ in 0..256 * 1024 {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    body.push(state as u8);
+  }
+  let body = gzip(&body);
+  let handle = thread::spawn(move || {
+    let result = server.accept_one(|_| HttpResponse::ok(body).header("Content-Encoding", "gzip"));
+    done_tx
+      .send(result)
+      .expect("signal h2c early-drop completion");
   });
   (addr, done_rx, handle)
 }
@@ -329,5 +374,37 @@ fn http2_buffered_decoding_exposes_trailers() {
         .map(|header| header.value())
     );
     wait_for_server(done, handle, "trailers");
+  }
+}
+
+#[test]
+fn http2_streaming_decoding_early_drop_finishes_server() {
+  for transport in transports() {
+    let (addr, done, handle) = serve_early_drop_response();
+    let mut client = client_for(None);
+    client.get().url(format!("http://{addr}/early-drop"));
+    let mut response = transport
+      .emit_streaming(&mut client)
+      .unwrap_or_else(|error| panic!("{} early-drop response: {error}", transport.name()));
+    let mut prefix = [0u8; 3];
+    assert!(response.read(&mut prefix).expect("read early-drop prefix") > 0);
+    drop(response);
+    let result = done
+      .recv_timeout(Duration::from_secs(2))
+      .expect("early-drop server did not terminate");
+    assert!(
+      result.is_ok()
+        || result.as_ref().err().is_some_and(|error| {
+          matches!(
+            error.kind(),
+            io::ErrorKind::BrokenPipe
+              | io::ErrorKind::ConnectionReset
+              | io::ErrorKind::UnexpectedEof
+          )
+        }),
+      "{} server cleanup failed: {result:?}",
+      transport.name()
+    );
+    handle.join().expect("h2c early-drop server thread");
   }
 }
