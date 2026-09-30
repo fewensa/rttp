@@ -2335,6 +2335,19 @@ mod tests {
   }
 
   #[test]
+  fn streaming_decode_limits_outer_deflate_buffer_in_stacked_encoding() {
+    use crate::response::content_decode::{ContentDecoder, StreamingDecodeStack};
+
+    let mut decoder =
+      StreamingDecodeStack::new(vec![ContentDecoder::Gzip, ContentDecoder::Deflate], 64);
+    let error = decoder
+      .feed_wire(&[0u8; 65])
+      .expect_err("outer deflate input must be bounded");
+    assert!(error.is_body_too_large());
+    assert_eq!(Some(64), error.body_limit());
+  }
+
+  #[test]
   fn streaming_decode_partial_read_then_materialize_enforces_wire_limit() {
     let decoded = b"abcdefghij";
     let body = gzip_bytes(decoded);

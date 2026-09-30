@@ -111,25 +111,80 @@ pub(crate) struct StreamingDecodeStack {
   layers_finished: bool,
   output_finished: bool,
   wire_capture: Vec<u8>,
+  capture_wire: bool,
+  wire_input_seen: bool,
 }
 
 enum DecoderLayer {
-  Gzip { decoder: MultiGzDecoder<Vec<u8>> },
-  Deflate { compressed: Vec<u8> },
+  Gzip(Box<MultiGzDecoder<CappedOutput>>),
+  Deflate(Vec<u8>),
+}
+
+struct CappedOutput {
+  output: Vec<u8>,
+  limit: usize,
+  exceeded: bool,
+}
+
+impl CappedOutput {
+  fn new(limit: usize) -> Self {
+    Self {
+      output: Vec::new(),
+      limit,
+      exceeded: false,
+    }
+  }
+
+  fn set_limit(&mut self, limit: usize) {
+    debug_assert!(self.output.is_empty());
+    self.limit = limit;
+    self.exceeded = false;
+  }
+}
+
+impl Write for CappedOutput {
+  fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    let remaining = self.limit.saturating_sub(self.output.len());
+    if buf.len() > remaining {
+      self.output.extend_from_slice(&buf[..remaining]);
+      self.exceeded = true;
+      return Err(io::Error::other("decoded body exceeded configured limit"));
+    }
+    self.output.extend_from_slice(buf);
+    Ok(buf.len())
+  }
+
+  fn flush(&mut self) -> io::Result<()> {
+    Ok(())
+  }
 }
 
 impl StreamingDecodeStack {
   pub(crate) fn new(decoders: Vec<ContentDecoder>, max_decoded: usize) -> Self {
+    Self::new_with_wire_capture(decoders, max_decoded, true)
+  }
+
+  #[cfg(feature = "http2")]
+  pub(crate) fn new_without_wire_capture(
+    decoders: Vec<ContentDecoder>,
+    max_decoded: usize,
+  ) -> Self {
+    Self::new_with_wire_capture(decoders, max_decoded, false)
+  }
+
+  fn new_with_wire_capture(
+    decoders: Vec<ContentDecoder>,
+    max_decoded: usize,
+    capture_wire: bool,
+  ) -> Self {
     let layers = decoders
       .into_iter()
       .rev()
       .map(|decoder| match decoder {
-        ContentDecoder::Gzip => DecoderLayer::Gzip {
-          decoder: MultiGzDecoder::new(Vec::new()),
-        },
-        ContentDecoder::Deflate => DecoderLayer::Deflate {
-          compressed: Vec::new(),
-        },
+        ContentDecoder::Gzip => DecoderLayer::Gzip(Box::new(MultiGzDecoder::new(
+          CappedOutput::new(max_decoded),
+        ))),
+        ContentDecoder::Deflate => DecoderLayer::Deflate(Vec::new()),
       })
       .collect();
     Self {
@@ -142,6 +197,8 @@ impl StreamingDecodeStack {
       layers_finished: false,
       output_finished: false,
       wire_capture: Vec::new(),
+      capture_wire,
+      wire_input_seen: false,
     }
   }
 
@@ -164,13 +221,16 @@ impl StreamingDecodeStack {
     Some(copy)
   }
 
-  #[cfg(feature = "async")]
+  #[cfg(any(feature = "async", feature = "http2"))]
   pub(crate) fn output_finished(&self) -> bool {
     self.output_finished
   }
 
   pub(crate) fn feed_wire(&mut self, chunk: &[u8]) -> error::Result<()> {
-    self.wire_capture.extend_from_slice(chunk);
+    self.wire_input_seen = true;
+    if self.capture_wire {
+      self.wire_capture.extend_from_slice(chunk);
+    }
     self.feed_layers(chunk)
   }
 
@@ -180,7 +240,7 @@ impl StreamingDecodeStack {
     }
     self.input_finished = true;
     if !self.layers_finished {
-      if self.wire_capture.is_empty() {
+      if !self.wire_input_seen {
         // Empty framed body: match buffered "empty bodies are not decoded".
         self.layers_finished = true;
         self.output_finished = true;
@@ -253,17 +313,28 @@ impl StreamingDecodeStack {
   }
 
   fn feed_layer(&mut self, index: usize, input: &[u8]) -> error::Result<Vec<u8>> {
+    let last = self.layers.len() - 1;
     match &mut self.layers[index] {
-      DecoderLayer::Gzip { decoder } => {
-        decoder.write_all(input).map_err(error::decode)?;
-        Ok(std::mem::take(decoder.get_mut()))
+      DecoderLayer::Gzip(decoder) => {
+        let limit = if index == last {
+          self.max_decoded.saturating_sub(self.decoded_total)
+        } else {
+          self.max_decoded
+        };
+        decoder.get_mut().set_limit(limit);
+        if let Err(err) = decoder.write_all(input) {
+          if decoder.get_mut().exceeded {
+            return Err(error::body_too_large(self.max_decoded));
+          }
+          return Err(error::decode(err));
+        }
+        Ok(std::mem::take(&mut decoder.get_mut().output))
       }
-      DecoderLayer::Deflate { compressed } => {
-        if index > 0
-          && compressed
-            .len()
-            .checked_add(input.len())
-            .is_none_or(|len| len > self.max_decoded)
+      DecoderLayer::Deflate(compressed) => {
+        if compressed
+          .len()
+          .checked_add(input.len())
+          .is_none_or(|len| len > self.max_decoded)
         {
           return Err(error::body_too_large(self.max_decoded));
         }
@@ -288,21 +359,37 @@ impl StreamingDecodeStack {
   }
 
   fn finish_layer(&mut self, index: usize, carried: &[u8]) -> error::Result<Vec<u8>> {
+    let last = self.layers.len() - 1;
     match &mut self.layers[index] {
-      DecoderLayer::Gzip { decoder } => {
+      DecoderLayer::Gzip(decoder) => {
+        let limit = if index == last {
+          self.max_decoded.saturating_sub(self.decoded_total)
+        } else {
+          self.max_decoded
+        };
+        decoder.get_mut().set_limit(limit);
         if !carried.is_empty() {
-          decoder.write_all(carried).map_err(error::decode)?;
+          if let Err(err) = decoder.write_all(carried) {
+            if decoder.get_mut().exceeded {
+              return Err(error::body_too_large(self.max_decoded));
+            }
+            return Err(error::decode(err));
+          }
         }
-        decoder.try_finish().map_err(error::decode)?;
-        Ok(std::mem::take(decoder.get_mut()))
+        if let Err(err) = decoder.try_finish() {
+          if decoder.get_mut().exceeded {
+            return Err(error::body_too_large(self.max_decoded));
+          }
+          return Err(error::decode(err));
+        }
+        Ok(std::mem::take(&mut decoder.get_mut().output))
       }
-      DecoderLayer::Deflate { compressed } => {
+      DecoderLayer::Deflate(compressed) => {
         if !carried.is_empty() {
-          if index > 0
-            && compressed
-              .len()
-              .checked_add(carried.len())
-              .is_none_or(|len| len > self.max_decoded)
+          if compressed
+            .len()
+            .checked_add(carried.len())
+            .is_none_or(|len| len > self.max_decoded)
           {
             return Err(error::body_too_large(self.max_decoded));
           }

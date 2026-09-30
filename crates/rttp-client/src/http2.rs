@@ -23,6 +23,10 @@ use url::Url;
 
 use crate::connection::connect_tcp_stream_with_io_timeouts;
 use crate::request::RawRequest;
+use crate::response::content_decode::{
+  content_decoders, streaming_decode_io_error, strip_stale_representation_headers,
+  StreamingDecodeStack,
+};
 use crate::response::Response;
 use crate::types::{Header, RoUrl, ToUrl};
 use crate::types::{Proxy, ProxyType};
@@ -154,6 +158,50 @@ pub(crate) fn async_h2c_call(
   AsyncH2cCall {
     receiver,
     cancelled,
+  }
+}
+
+#[cfg(feature = "async")]
+pub(crate) fn async_h2c_streaming_call(
+  mut origin: crate::request::Request,
+  url: crate::types::RoUrl,
+  header: String,
+  body: Option<crate::request::RequestBody>,
+  upgrade: bool,
+) -> AsyncH2cStreamingCall {
+  let (sender, receiver) = futures::channel::oneshot::channel();
+  std::thread::spawn(move || {
+    let request = RawRequest {
+      origin: &mut origin,
+      url,
+      header,
+      body,
+    };
+    let result = if upgrade {
+      UpgradeClient::new(request).get_streaming()
+    } else {
+      PriorKnowledgeClient::new(request).get_streaming()
+    };
+    let _ = sender.send(result);
+  });
+  AsyncH2cStreamingCall { receiver }
+}
+
+#[cfg(feature = "async")]
+pub(crate) struct AsyncH2cStreamingCall {
+  receiver: futures::channel::oneshot::Receiver<error::Result<Http2StreamingResponse>>,
+}
+
+#[cfg(feature = "async")]
+impl Future for AsyncH2cStreamingCall {
+  type Output = error::Result<Http2StreamingResponse>;
+
+  fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    match Pin::new(&mut self.get_mut().receiver).poll(cx) {
+      Poll::Ready(Ok(result)) => Poll::Ready(result),
+      Poll::Ready(Err(_)) => Poll::Ready(Err(error::connection_closed())),
+      Poll::Pending => Poll::Pending,
+    }
   }
 }
 
@@ -332,6 +380,332 @@ pub struct PriorKnowledgeClient<'a> {
   request: RawRequest<'a>,
 }
 
+/// A pull-based response for a bounded HTTP/2 exchange.
+///
+/// The response owns the connection until EOF or drop. Dropping it therefore
+/// closes the active exchange instead of requiring the caller to buffer the
+/// complete response first.
+pub struct Http2StreamingResponse {
+  stream: TcpStream,
+  stream_id: u32,
+  local_settings: LocalSettings,
+  hpack: HpackDecoder,
+  headers: Vec<Header>,
+  trailers: Vec<Header>,
+  decoder: Option<StreamingDecodeStack>,
+  pending_frame: Option<Frame>,
+  buffered_body: Option<Vec<u8>>,
+  buffered_body_offset: usize,
+  eof: bool,
+  no_body: bool,
+  connection_receive_window: ReceiveWindow,
+  stream_receive_window: ReceiveWindow,
+}
+
+impl Http2StreamingResponse {
+  fn from_first_frame(
+    stream: TcpStream,
+    stream_id: u32,
+    local_settings: LocalSettings,
+    mut hpack: HpackDecoder,
+    first_frame: Frame,
+    expect_no_body: bool,
+  ) -> error::Result<Self> {
+    if first_frame.frame_type != FRAME_HEADERS || first_frame.stream_id != stream_id {
+      return Err(error::bad_response(
+        "HTTP/2 response did not begin with response headers",
+      ));
+    }
+    let mut stream = stream;
+    let mut status = None;
+    let mut raw_headers = Vec::new();
+    let mut trailers = Vec::new();
+    let mut next_frame = Some(first_frame);
+    let final_frame_end_stream = loop {
+      let mut frame = match next_frame.take() {
+        Some(frame) => frame,
+        None => read_first_response_frame(&mut stream, local_settings, stream_id)?,
+      };
+      if frame.frame_type != FRAME_HEADERS || frame.stream_id != stream_id {
+        return Err(error::bad_response(
+          "HTTP/2 response did not begin with response headers",
+        ));
+      }
+      let end_stream = frame.flags & FLAG_END_STREAM != 0;
+      let mut block = header_block_fragment(&frame)?.to_vec();
+      while frame.flags & FLAG_END_HEADERS == 0 {
+        frame = read_frame(&mut stream, local_settings)?;
+        if frame.frame_type != FRAME_CONTINUATION || frame.stream_id != stream_id {
+          return Err(error::bad_response(
+            "expected HTTP/2 CONTINUATION frame for response headers",
+          ));
+        }
+        block.extend_from_slice(&frame.payload);
+      }
+      if apply_header_block(
+        HeaderBlockKind::ResponseHeaders,
+        &block,
+        &mut status,
+        &mut raw_headers,
+        &mut trailers,
+        &mut hpack,
+      )? {
+        break end_stream;
+      }
+      if end_stream {
+        return Err(error::bad_response("missing HTTP/2 response status"));
+      }
+    };
+    let headers: Vec<Header> = raw_headers
+      .iter()
+      .map(|(name, value)| Header::new(name, value))
+      .collect();
+    let no_body = final_frame_end_stream
+      || expect_no_body
+      || status.is_some_and(response_status_has_no_body)
+      || headers.iter().any(|header| {
+        header.name().eq_ignore_ascii_case("Content-Length") && header.value().trim() == "0"
+      });
+    let decoder = if no_body {
+      None
+    } else {
+      content_decoders(&headers).map(|decoders| {
+        StreamingDecodeStack::new_without_wire_capture(
+          decoders,
+          local_settings.max_buffered_response_body_bytes,
+        )
+      })
+    };
+    let mut headers = headers;
+    if decoder.is_some() {
+      strip_stale_representation_headers(&mut headers);
+    }
+    Ok(Self {
+      stream,
+      stream_id,
+      local_settings,
+      hpack,
+      headers,
+      trailers,
+      decoder,
+      pending_frame: None,
+      buffered_body: None,
+      buffered_body_offset: 0,
+      eof: final_frame_end_stream,
+      no_body,
+      connection_receive_window: ReceiveWindow::new(),
+      stream_receive_window: ReceiveWindow::new(),
+    })
+  }
+
+  fn from_buffered_response(
+    stream: TcpStream,
+    stream_id: u32,
+    local_settings: LocalSettings,
+    response: Response,
+  ) -> Self {
+    Self {
+      stream,
+      stream_id,
+      hpack: HpackDecoder::new(local_settings.header_table_size),
+      local_settings,
+      headers: response.headers().clone(),
+      trailers: response.trailers().clone(),
+      decoder: None,
+      pending_frame: None,
+      buffered_body: Some(response.body().binary().to_vec()),
+      buffered_body_offset: 0,
+      eof: true,
+      no_body: true,
+      connection_receive_window: ReceiveWindow::new(),
+      stream_receive_window: ReceiveWindow::new(),
+    }
+  }
+
+  pub fn headers(&self) -> &Vec<Header> {
+    &self.headers
+  }
+
+  pub fn trailers(&self) -> &Vec<Header> {
+    &self.trailers
+  }
+
+  fn next_data(&mut self) -> error::Result<Option<Vec<u8>>> {
+    loop {
+      let frame = if let Some(frame) = self.pending_frame.take() {
+        let end_stream = frame.flags & FLAG_END_STREAM != 0;
+        let data = frame.payload;
+        if end_stream {
+          self.eof = true;
+        }
+        if !data.is_empty() {
+          return Ok(Some(data));
+        }
+        continue;
+      } else {
+        if self.eof {
+          return Ok(None);
+        }
+        read_frame(&mut self.stream, self.local_settings)?
+      };
+      match (frame.frame_type, frame.stream_id) {
+        (FRAME_SETTINGS, _) => {
+          validate_settings_frame(&frame)?;
+          if frame.flags & FLAG_ACK == 0 {
+            write_frame(&mut self.stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
+            self.stream.flush().map_err(error::request)?;
+          }
+        }
+        (FRAME_DATA, id) if id == self.stream_id => {
+          let end_stream = frame.flags & FLAG_END_STREAM != 0;
+          let data = data_payload(&frame)?.to_vec();
+          let stream_update = self.stream_receive_window.consume(frame.payload.len())?;
+          let connection_update = self
+            .connection_receive_window
+            .consume(frame.payload.len())?;
+          if stream_update > 0 {
+            write_window_update_best_effort(&mut self.stream, self.stream_id, stream_update)?;
+            self.stream_receive_window.release(stream_update)?;
+          }
+          if connection_update > 0 {
+            write_window_update_best_effort(&mut self.stream, 0, connection_update)?;
+            self.connection_receive_window.release(connection_update)?;
+          }
+          flush_best_effort(&mut self.stream)?;
+          if end_stream {
+            self.eof = true;
+          }
+          if !data.is_empty() && !self.no_body {
+            return Ok(Some(data));
+          }
+        }
+        (FRAME_HEADERS, id) if id == self.stream_id => {
+          let end_stream = frame.flags & FLAG_END_STREAM != 0;
+          let mut header_frame = frame;
+          let mut block = header_block_fragment(&header_frame)?.to_vec();
+          loop {
+            if header_frame.flags & FLAG_END_HEADERS != 0 {
+              break;
+            }
+            header_frame = read_frame(&mut self.stream, self.local_settings)?;
+            if header_frame.frame_type != FRAME_CONTINUATION
+              || header_frame.stream_id != self.stream_id
+            {
+              return Err(error::bad_response(
+                "expected HTTP/2 CONTINUATION frame for response trailers",
+              ));
+            }
+            block.extend_from_slice(&header_frame.payload);
+          }
+          let mut status = None;
+          let mut headers = Vec::new();
+          apply_header_block(
+            HeaderBlockKind::Trailers,
+            &block,
+            &mut status,
+            &mut headers,
+            &mut self.trailers,
+            &mut self.hpack,
+          )?;
+          if end_stream {
+            self.eof = true;
+          }
+        }
+        (FRAME_WINDOW_UPDATE, 0) => {
+          window_update_increment(&frame)?;
+        }
+        (FRAME_PING, 0) => handle_ping_frame(&mut self.stream, &frame)?,
+        (FRAME_RST_STREAM, id) if id == self.stream_id => {
+          return Err(response_stream_reset_error(
+            rst_stream_error_code(&frame)?,
+            true,
+          ));
+        }
+        (FRAME_GOAWAY, _) => {
+          goaway_metadata(&frame)?;
+        }
+        (_, _) => {}
+      }
+    }
+  }
+}
+
+impl Read for Http2StreamingResponse {
+  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    if buf.is_empty() {
+      return Ok(0);
+    }
+    if let Some(body) = self.buffered_body.as_ref() {
+      if self.buffered_body_offset == body.len() {
+        return Ok(0);
+      }
+      let read = (body.len() - self.buffered_body_offset).min(buf.len());
+      buf[..read]
+        .copy_from_slice(&body[self.buffered_body_offset..self.buffered_body_offset + read]);
+      self.buffered_body_offset += read;
+      return Ok(read);
+    }
+    loop {
+      if self.decoder.is_some() {
+        if let Some(read) = self
+          .decoder
+          .as_mut()
+          .expect("decoder exists")
+          .fill_pending(buf)
+        {
+          return Ok(read);
+        }
+        if self
+          .decoder
+          .as_ref()
+          .expect("decoder exists")
+          .output_finished()
+        {
+          return Ok(0);
+        }
+        if self.eof {
+          self
+            .decoder
+            .as_mut()
+            .expect("decoder exists")
+            .finish_input()
+            .map_err(streaming_decode_io_error)?;
+          continue;
+        }
+        let data = self
+          .next_data()
+          .map_err(|error| io::Error::other(error.to_string()))?;
+        if let Some(data) = data {
+          self
+            .decoder
+            .as_mut()
+            .expect("decoder exists")
+            .feed_wire(&data)
+            .map_err(streaming_decode_io_error)?;
+        }
+      } else {
+        let Some(data) = self
+          .next_data()
+          .map_err(|error| io::Error::other(error.to_string()))?
+        else {
+          return Ok(0);
+        };
+        let read = data.len().min(buf.len());
+        buf[..read].copy_from_slice(&data[..read]);
+        if read < data.len() {
+          self.pending_frame = Some(Frame {
+            frame_type: FRAME_DATA,
+            flags: if self.eof { FLAG_END_STREAM } else { 0 },
+            stream_id: self.stream_id,
+            payload: data[read..].to_vec(),
+          });
+        }
+        return Ok(read);
+      }
+    }
+  }
+}
+
 impl<'a> PriorKnowledgeClient<'a> {
   pub(crate) fn new(request: RawRequest<'a>) -> Self {
     Self { request }
@@ -412,6 +786,85 @@ impl<'a> PriorKnowledgeClient<'a> {
         None,
         None,
       )?,
+    };
+    self.request.origin_mut().closed_set(true);
+    Ok(response)
+  }
+
+  pub fn get_streaming(mut self) -> error::Result<Http2StreamingResponse> {
+    validate_bounded_h2c_request(&self.request, false)?;
+    if let Some(proxy) = self.request.origin().proxy() {
+      if self
+        .request
+        .origin()
+        .http2_extended_connect_protocol()
+        .is_some()
+        && proxy.type_() == &ProxyType::HTTP
+      {
+        return Err(error::builder_with_message(
+          "HTTP/2 prior-knowledge client does not support proxies for extended CONNECT",
+        ));
+      }
+      if proxy.type_() != &ProxyType::HTTP {
+        return Err(error::builder_with_message(
+          "HTTP/2 prior-knowledge supports only HTTP proxies; CONNECT and SOCKS tunnels are unsupported",
+        ));
+      }
+    }
+    let url = self.request.url().to_url().map_err(error::builder)?;
+    let is_head = self.request.origin().method().eq_ignore_ascii_case("HEAD");
+    if url.scheme() != "http" {
+      return Err(error::url_bad_scheme(url));
+    }
+    let local_settings = LocalSettings::from_config(
+      self.request.origin().config(),
+      self
+        .request
+        .origin()
+        .http2_extended_connect_protocol()
+        .is_some(),
+    )?;
+    let mut stream = connect_h2c_stream(
+      &url,
+      self.request.origin().proxy(),
+      self.request.origin().config(),
+    )?;
+    write_connection_preface(&mut stream, local_settings)?;
+    let mut peer_settings = read_settings_and_ack(&mut stream, local_settings)?;
+    reject_goaway_before_opening_request_stream(
+      &mut stream,
+      &mut peer_settings,
+      local_settings,
+      STREAM_ID,
+      None,
+    )?;
+    let early_response = write_request(
+      &mut stream,
+      &self.request,
+      &url,
+      self.request.url().clone(),
+      &mut peer_settings,
+      local_settings,
+      STREAM_ID,
+      None,
+      None,
+      None,
+    )?;
+    let response = match early_response {
+      Some(response) => {
+        Http2StreamingResponse::from_buffered_response(stream, STREAM_ID, local_settings, response)
+      }
+      None => {
+        let first_frame = read_first_response_frame(&mut stream, local_settings, STREAM_ID)?;
+        Http2StreamingResponse::from_first_frame(
+          stream,
+          STREAM_ID,
+          local_settings,
+          HpackDecoder::new(local_settings.header_table_size),
+          first_frame,
+          is_head,
+        )?
+      }
     };
     self.request.origin_mut().closed_set(true);
     Ok(response)
@@ -534,6 +987,77 @@ impl<'a> UpgradeClient<'a> {
         None,
         None,
       )?,
+    };
+    self.request.origin_mut().closed_set(true);
+    Ok(response)
+  }
+
+  pub fn get_streaming(mut self) -> error::Result<Http2StreamingResponse> {
+    validate_bounded_h2c_request(&self.request, true)?;
+    if self
+      .request
+      .origin()
+      .http2_extended_connect_protocol()
+      .is_some()
+    {
+      return Err(error::builder_with_message(
+        "HTTP/2 extended CONNECT streaming is unsupported",
+      ));
+    }
+    if self.request.origin().proxy().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 h2c upgrade client does not support proxies",
+      ));
+    }
+    let url = self.request.url().to_url().map_err(error::builder)?;
+    let is_head = self.request.origin().method().eq_ignore_ascii_case("HEAD");
+    if url.scheme() != "http" {
+      return Err(error::url_bad_scheme(url));
+    }
+    let local_settings = LocalSettings::from_config(self.request.origin().config(), false)?;
+    let mut stream = connect_tcp_stream(addr(&url)?, self.request.origin().config())?;
+    write_h2c_upgrade_request(&mut stream, &self.request, local_settings)?;
+    read_h2c_upgrade_response(&mut stream)?;
+    write_connection_preface(&mut stream, local_settings)?;
+    let mut peer_settings = read_settings_and_ack(&mut stream, local_settings)?;
+    reject_goaway_before_opening_request_stream(
+      &mut stream,
+      &mut peer_settings,
+      local_settings,
+      UPGRADED_STREAM_ID,
+      None,
+    )?;
+    let early_response = write_request(
+      &mut stream,
+      &self.request,
+      &url,
+      self.request.url().clone(),
+      &mut peer_settings,
+      local_settings,
+      UPGRADED_STREAM_ID,
+      None,
+      None,
+      None,
+    )?;
+    let response = match early_response {
+      Some(response) => Http2StreamingResponse::from_buffered_response(
+        stream,
+        UPGRADED_STREAM_ID,
+        local_settings,
+        response,
+      ),
+      None => {
+        let first_frame =
+          read_first_response_frame(&mut stream, local_settings, UPGRADED_STREAM_ID)?;
+        Http2StreamingResponse::from_first_frame(
+          stream,
+          UPGRADED_STREAM_ID,
+          local_settings,
+          HpackDecoder::new(local_settings.header_table_size),
+          first_frame,
+          is_head,
+        )?
+      }
     };
     self.request.origin_mut().closed_set(true);
     Ok(response)
@@ -2437,6 +2961,10 @@ fn is_informational_status(status: u32) -> bool {
   (100..200).contains(&status)
 }
 
+fn response_status_has_no_body(status: u32) -> bool {
+  (100..200).contains(&status) || status == 204 || status == 304
+}
+
 struct GoawayMetadata {
   last_stream_id: u32,
   error_code: u32,
@@ -2491,6 +3019,45 @@ struct Frame {
   flags: u8,
   stream_id: u32,
   payload: Vec<u8>,
+}
+
+fn read_first_response_frame(
+  stream: &mut TcpStream,
+  local_settings: LocalSettings,
+  stream_id: u32,
+) -> error::Result<Frame> {
+  loop {
+    let frame = read_frame(stream, local_settings)?;
+    match (frame.frame_type, frame.stream_id) {
+      (FRAME_SETTINGS, _) => {
+        validate_settings_frame(&frame)?;
+        if frame.flags & FLAG_ACK == 0 {
+          write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
+          stream.flush().map_err(error::request)?;
+        }
+      }
+      (FRAME_WINDOW_UPDATE, _) => {
+        window_update_increment(&frame)?;
+      }
+      (FRAME_PING, 0) => handle_ping_frame(stream, &frame)?,
+      (FRAME_HEADERS, id) | (FRAME_DATA, id) | (FRAME_CONTINUATION, id) if id == stream_id => {
+        return Ok(frame)
+      }
+      (FRAME_GOAWAY, _) => {
+        let goaway = goaway_metadata(&frame)?;
+        if goaway.last_stream_id < stream_id {
+          return Err(response_connection_abort_error(false, Some(&goaway)));
+        }
+      }
+      (FRAME_RST_STREAM, id) if id == stream_id => {
+        return Err(response_stream_reset_error(
+          rst_stream_error_code(&frame)?,
+          false,
+        ));
+      }
+      _ => {}
+    }
+  }
 }
 
 fn read_frame(stream: &mut TcpStream, local_settings: LocalSettings) -> error::Result<Frame> {
@@ -3156,6 +3723,56 @@ fn is_forbidden_response_trailer_name(name: &str) -> bool {
 #[allow(clippy::items_after_test_module)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn buffered_response_consumes_trailers_after_a_no_body_status() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind response test");
+    let addr = listener.local_addr().expect("response test address");
+    let local_settings =
+      LocalSettings::from_config(&Config::default(), false).expect("default local HTTP/2 settings");
+    let server = std::thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept response test");
+      write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        FLAG_END_HEADERS,
+        STREAM_ID,
+        &[0x8b],
+      )
+      .expect("write no-body response headers");
+      write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        FLAG_END_STREAM | FLAG_END_HEADERS,
+        STREAM_ID,
+        &[
+          0x00, 0x07, b'x', b'-', b't', b'r', b'a', b'c', b'e', 0x0d, b'a', b'f', b't', b'e', b'r',
+          b'-', b'n', b'o', b'-', b'b', b'o', b'd', b'y',
+        ],
+      )
+      .expect("write no-body response trailers");
+      stream.flush().expect("flush no-body response");
+    });
+    let mut stream = TcpStream::connect(addr).expect("connect response test");
+    let response = read_single_stream_response(
+      &mut stream,
+      RoUrl::with("http://example.test/no-body"),
+      true,
+      local_settings,
+      STREAM_ID,
+      None,
+      None,
+      None,
+      None,
+    )
+    .expect("read no-body response");
+    assert!(response.body().binary().is_empty());
+    assert_eq!(
+      Some(&"after-no-body".to_string()),
+      response.trailer_value("x-trace")
+    );
+    server.join().expect("response test server");
+  }
 
   #[test]
   fn http1_status_code_accepts_ascii_sp_status_lines() {

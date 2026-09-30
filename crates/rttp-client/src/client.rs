@@ -2332,6 +2332,21 @@ impl HttpClient {
     Ok(response)
   }
 
+  /// Perform an h2c exchange asynchronously and return its live body reader.
+  #[cfg(all(feature = "async", feature = "http2"))]
+  pub async fn rasync_http2_prior_knowledge_streaming(
+    &mut self,
+  ) -> error::Result<crate::http2::Http2StreamingResponse> {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    let request = RawRequest::async_new(&mut self.request).await?;
+    let (origin, url, header, body) = request.async_h2c_parts();
+    let response = crate::http2::async_h2c_streaming_call(origin, url, header, body, false).await?;
+    self.request.closed_set(true);
+    Ok(response)
+  }
+
   #[cfg(feature = "http2")]
   pub fn emit_http2_prior_knowledge(&mut self) -> error::Result<Response> {
     if self.request.closed() {
@@ -2339,6 +2354,18 @@ impl HttpClient {
     }
     let request = RawRequest::block_new(&mut self.request)?;
     crate::http2::PriorKnowledgeClient::new(request).get()
+  }
+
+  /// Perform a bounded HTTP/2 h2c exchange and expose its live body reader.
+  #[cfg(feature = "http2")]
+  pub fn emit_http2_prior_knowledge_streaming(
+    &mut self,
+  ) -> error::Result<crate::http2::Http2StreamingResponse> {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    let request = RawRequest::block_new(&mut self.request)?;
+    crate::http2::PriorKnowledgeClient::new(request).get_streaming()
   }
 
   /// Perform a buffered h2c upgrade exchange without blocking the async
@@ -2365,6 +2392,31 @@ impl HttpClient {
     Ok(response)
   }
 
+  /// Perform an h2c upgrade asynchronously and return its live body reader.
+  #[cfg(all(feature = "async", feature = "http2"))]
+  pub async fn rasync_http2_upgrade_streaming(
+    &mut self,
+  ) -> error::Result<crate::http2::Http2StreamingResponse> {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    if self.request.http2_extended_connect_protocol().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 extended CONNECT is only supported by the prior-knowledge h2c client",
+      ));
+    }
+    if self.request.proxy().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 h2c upgrade client does not support proxies",
+      ));
+    }
+    let request = RawRequest::async_new(&mut self.request).await?;
+    let (origin, url, header, body) = request.async_h2c_parts();
+    let response = crate::http2::async_h2c_streaming_call(origin, url, header, body, true).await?;
+    self.request.closed_set(true);
+    Ok(response)
+  }
+
   #[cfg(feature = "http2")]
   pub fn emit_http2_upgrade(&mut self) -> error::Result<Response> {
     if self.request.closed() {
@@ -2382,6 +2434,28 @@ impl HttpClient {
     }
     let request = RawRequest::block_new(&mut self.request)?;
     crate::http2::UpgradeClient::new(request).get()
+  }
+
+  /// Perform a bounded h2c upgrade and expose its live body reader.
+  #[cfg(feature = "http2")]
+  pub fn emit_http2_upgrade_streaming(
+    &mut self,
+  ) -> error::Result<crate::http2::Http2StreamingResponse> {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    if self.request.http2_extended_connect_protocol().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 extended CONNECT is only supported by the prior-knowledge h2c client",
+      ));
+    }
+    if self.request.proxy().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 h2c upgrade client does not support proxies",
+      ));
+    }
+    let request = RawRequest::block_new(&mut self.request)?;
+    crate::http2::UpgradeClient::new(request).get_streaming()
   }
 
   pub fn emit_streaming_fixed<R>(
