@@ -116,12 +116,8 @@ pub(crate) struct StreamingDecodeStack {
 }
 
 enum DecoderLayer {
-  Gzip {
-    decoder: Box<MultiGzDecoder<CappedOutput>>,
-  },
-  Deflate {
-    compressed: Vec<u8>,
-  },
+  Gzip(Box<MultiGzDecoder<CappedOutput>>),
+  Deflate(Vec<u8>),
 }
 
 struct CappedOutput {
@@ -185,12 +181,10 @@ impl StreamingDecodeStack {
       .into_iter()
       .rev()
       .map(|decoder| match decoder {
-        ContentDecoder::Gzip => DecoderLayer::Gzip {
-          decoder: Box::new(MultiGzDecoder::new(CappedOutput::new(max_decoded))),
-        },
-        ContentDecoder::Deflate => DecoderLayer::Deflate {
-          compressed: Vec::new(),
-        },
+        ContentDecoder::Gzip => DecoderLayer::Gzip(Box::new(MultiGzDecoder::new(
+          CappedOutput::new(max_decoded),
+        ))),
+        ContentDecoder::Deflate => DecoderLayer::Deflate(Vec::new()),
       })
       .collect();
     Self {
@@ -321,7 +315,7 @@ impl StreamingDecodeStack {
   fn feed_layer(&mut self, index: usize, input: &[u8]) -> error::Result<Vec<u8>> {
     let last = self.layers.len() - 1;
     match &mut self.layers[index] {
-      DecoderLayer::Gzip { decoder } => {
+      DecoderLayer::Gzip(decoder) => {
         let limit = if index == last {
           self.max_decoded.saturating_sub(self.decoded_total)
         } else {
@@ -336,7 +330,7 @@ impl StreamingDecodeStack {
         }
         Ok(std::mem::take(&mut decoder.get_mut().output))
       }
-      DecoderLayer::Deflate { compressed } => {
+      DecoderLayer::Deflate(compressed) => {
         if compressed
           .len()
           .checked_add(input.len())
@@ -367,7 +361,7 @@ impl StreamingDecodeStack {
   fn finish_layer(&mut self, index: usize, carried: &[u8]) -> error::Result<Vec<u8>> {
     let last = self.layers.len() - 1;
     match &mut self.layers[index] {
-      DecoderLayer::Gzip { decoder } => {
+      DecoderLayer::Gzip(decoder) => {
         let limit = if index == last {
           self.max_decoded.saturating_sub(self.decoded_total)
         } else {
@@ -390,7 +384,7 @@ impl StreamingDecodeStack {
         }
         Ok(std::mem::take(&mut decoder.get_mut().output))
       }
-      DecoderLayer::Deflate { compressed } => {
+      DecoderLayer::Deflate(compressed) => {
         if !carried.is_empty() {
           if compressed
             .len()
