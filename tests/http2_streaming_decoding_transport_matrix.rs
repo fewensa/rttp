@@ -285,6 +285,58 @@ fn http2_streaming_decoding_transport_matrix() {
 }
 
 #[test]
+fn http2_streaming_decoding_live_transport_matrix() {
+  for fixture in fixtures() {
+    for transport in transports() {
+      let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
+      let mut client = client_for(None);
+      client.get().url(format!("http://{addr}/{}", fixture.name));
+      let mut response = transport
+        .emit_streaming(&mut client)
+        .unwrap_or_else(|error| {
+          panic!(
+            "{}/{} streaming response should succeed: {error}",
+            transport.name(),
+            fixture.name
+          )
+        });
+      assert!(
+        response
+          .headers()
+          .iter()
+          .all(|header| !header.name().eq_ignore_ascii_case("Content-Encoding")),
+        "{}/{} stale Content-Encoding header",
+        transport.name(),
+        fixture.name
+      );
+      assert!(
+        response
+          .headers()
+          .iter()
+          .all(|header| !header.name().eq_ignore_ascii_case("Content-Length")),
+        "{}/{} stale Content-Length header",
+        transport.name(),
+        fixture.name
+      );
+      assert_eq!(
+        fixture.decoded_body,
+        read_streaming_body(&mut response).unwrap_or_else(|error| {
+          panic!(
+            "{}/{} streaming body should decode: {error}",
+            transport.name(),
+            fixture.name
+          )
+        }),
+        "{}/{} streaming body",
+        transport.name(),
+        fixture.name
+      );
+      wait_for_server(done, handle, fixture.name);
+    }
+  }
+}
+
+#[test]
 fn http2_streaming_decoding_unsupported_stack_preserves_wire() {
   let fixture = unsupported_fixture();
   for transport in transports() {
@@ -338,6 +390,51 @@ fn http2_streaming_decoding_malformed_streams_are_atomic() {
   }
 }
 
+fn assert_streaming_decode_failure(
+  transport: Transport,
+  body: Vec<u8>,
+  encoding: &str,
+  name: &str,
+) {
+  let (addr, done, handle) = serve_response(encoding, body, false);
+  let mut client = client_for(None);
+  client.get().url(format!("http://{addr}/{name}"));
+  let mut response = transport
+    .emit_streaming(&mut client)
+    .unwrap_or_else(|error| {
+      panic!(
+        "{}/{} response setup failed: {error}",
+        transport.name(),
+        name
+      )
+    });
+  let error = read_streaming_body(&mut response).expect_err(&format!(
+    "{}/{} streaming response must fail decode",
+    transport.name(),
+    name
+  ));
+  assert!(
+    error
+      .to_string()
+      .starts_with("error decoding response body"),
+    "{}/{} unexpected streaming decode error: {error}",
+    transport.name(),
+    name
+  );
+  drop(response);
+  wait_for_server(done, handle, name);
+}
+
+#[test]
+fn http2_streaming_decoding_live_malformed_streams_are_atomic() {
+  for transport in transports() {
+    assert_streaming_decode_failure(transport, b"not-gzip".to_vec(), "gzip", "malformed-gzip");
+    let mut truncated = zlib(b"truncated");
+    truncated.pop();
+    assert_streaming_decode_failure(transport, truncated, "deflate", "truncated-deflate");
+  }
+}
+
 #[test]
 fn http2_streaming_decoding_enforces_exact_and_over_limits() {
   let exact = vec![b'x'; 64];
@@ -365,6 +462,42 @@ fn http2_streaming_decoding_enforces_exact_and_over_limits() {
     );
     assert_eq!(Some(exact.len()), error.body_limit());
     wait_for_server(done, handle, "over limit");
+  }
+}
+
+#[test]
+fn http2_streaming_decoding_live_enforces_exact_and_over_limits() {
+  let exact = vec![b'x'; 64];
+  for transport in transports() {
+    let (addr, done, handle) = serve_response("gzip", gzip(&exact), false);
+    let mut client = client_for(Some(exact.len()));
+    client.get().url(format!("http://{addr}/exact"));
+    let mut response = transport
+      .emit_streaming(&mut client)
+      .expect("streaming exact limit response");
+    assert_eq!(
+      exact,
+      read_streaming_body(&mut response).expect("streaming exact limit body")
+    );
+    wait_for_server(done, handle, "streaming exact limit");
+
+    let (addr, done, handle) = serve_response("gzip", gzip(&[b'x'; 65]), false);
+    let mut client = client_for(Some(exact.len()));
+    client.get().url(format!("http://{addr}/over"));
+    let mut response = transport
+      .emit_streaming(&mut client)
+      .expect("streaming over-limit response");
+    let error = read_streaming_body(&mut response)
+      .expect_err("streaming over limit should fail while reading");
+    assert!(
+      error
+        .to_string()
+        .contains("buffered response body exceeded 64 bytes"),
+      "{} unexpected streaming limit error: {error}",
+      transport.name()
+    );
+    drop(response);
+    wait_for_server(done, handle, "streaming over limit");
   }
 }
 
