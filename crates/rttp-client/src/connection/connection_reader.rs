@@ -2341,7 +2341,7 @@ mod tests {
     let mut decoder =
       StreamingDecodeStack::new(vec![ContentDecoder::Gzip, ContentDecoder::Deflate], 64);
     let error = decoder
-      .feed_wire(&vec![0u8; 65])
+      .feed_wire(&[0u8; 65])
       .expect_err("outer deflate input must be bounded");
     assert!(error.is_body_too_large());
     assert_eq!(Some(64), error.body_limit());

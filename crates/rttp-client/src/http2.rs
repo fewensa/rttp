@@ -406,6 +406,7 @@ impl Http2StreamingResponse {
     local_settings: LocalSettings,
     mut hpack: HpackDecoder,
     first_frame: Frame,
+    expect_no_body: bool,
   ) -> error::Result<Self> {
     if first_frame.frame_type != FRAME_HEADERS || first_frame.stream_id != stream_id {
       return Err(error::bad_response(
@@ -457,6 +458,7 @@ impl Http2StreamingResponse {
       .map(|(name, value)| Header::new(name, value))
       .collect();
     let no_body = final_frame_end_stream
+      || expect_no_body
       || status.is_some_and(response_status_has_no_body)
       || headers.iter().any(|header| {
         header.name().eq_ignore_ascii_case("Content-Length") && header.value().trim() == "0"
@@ -481,7 +483,7 @@ impl Http2StreamingResponse {
       trailers,
       decoder,
       pending_frame: None,
-      eof: final_frame_end_stream,
+      eof: no_body,
       connection_receive_window: ReceiveWindow::new(),
       stream_receive_window: ReceiveWindow::new(),
     })
@@ -756,6 +758,7 @@ impl<'a> PriorKnowledgeClient<'a> {
       }
     }
     let url = self.request.url().to_url().map_err(error::builder)?;
+    let is_head = self.request.origin().method().eq_ignore_ascii_case("HEAD");
     if url.scheme() != "http" {
       return Err(error::url_bad_scheme(url));
     }
@@ -800,6 +803,7 @@ impl<'a> PriorKnowledgeClient<'a> {
       local_settings,
       HpackDecoder::new(local_settings.header_table_size),
       first_frame,
+      is_head,
     )?;
     self.request.origin_mut().closed_set(true);
     Ok(response)
@@ -945,6 +949,7 @@ impl<'a> UpgradeClient<'a> {
       ));
     }
     let url = self.request.url().to_url().map_err(error::builder)?;
+    let is_head = self.request.origin().method().eq_ignore_ascii_case("HEAD");
     if url.scheme() != "http" {
       return Err(error::url_bad_scheme(url));
     }
@@ -980,6 +985,7 @@ impl<'a> UpgradeClient<'a> {
       local_settings,
       HpackDecoder::new(local_settings.header_table_size),
       first_frame,
+      is_head,
     )?;
     self.request.origin_mut().closed_set(true);
     Ok(response)
@@ -3718,6 +3724,7 @@ mod tests {
       local_settings,
       HpackDecoder::new(local_settings.header_table_size),
       first_frame,
+      false,
     )
     .expect("construct streaming response");
     assert!(response
@@ -3734,6 +3741,53 @@ mod tests {
       .expect("read empty response");
     assert!(body.is_empty());
     server.join().expect("response test server");
+  }
+
+  #[test]
+  fn streaming_response_suppresses_bodyless_statuses_and_head_data() {
+    for (status, expect_no_body) in [([0x89], false), ([0x8b], false), ([0x88], true)] {
+      let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind response test");
+      let addr = listener.local_addr().expect("response test address");
+      let local_settings = LocalSettings::from_config(&Config::default(), false)
+        .expect("default local HTTP/2 settings");
+      let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept response test");
+        write_frame(
+          &mut stream,
+          FRAME_HEADERS,
+          FLAG_END_HEADERS,
+          STREAM_ID,
+          &status,
+        )
+        .expect("write response headers");
+        write_frame(
+          &mut stream,
+          FRAME_DATA,
+          FLAG_END_STREAM,
+          STREAM_ID,
+          b"unexpected body",
+        )
+        .expect("write response data");
+        stream.flush().expect("flush response");
+      });
+      let mut stream = TcpStream::connect(addr).expect("connect response test");
+      let first_frame = read_frame(&mut stream, local_settings).expect("read response headers");
+      let mut response = Http2StreamingResponse::from_first_frame(
+        stream,
+        STREAM_ID,
+        local_settings,
+        HpackDecoder::new(local_settings.header_table_size),
+        first_frame,
+        expect_no_body,
+      )
+      .expect("construct streaming response");
+      let mut body = Vec::new();
+      response
+        .read_to_end(&mut body)
+        .expect("read bodyless response");
+      assert!(body.is_empty());
+      server.join().expect("response test server");
+    }
   }
 
   #[test]
