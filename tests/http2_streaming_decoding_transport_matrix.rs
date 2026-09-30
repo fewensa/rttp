@@ -136,13 +136,22 @@ fn fixtures() -> Vec<Fixture> {
   ]
 }
 
-fn unsupported_fixture() -> Fixture {
-  Fixture {
-    name: "unsupported-stack",
-    encoding: "gzip, br",
-    wire_body: gzip(b"bounded HTTP/2 streaming decoding"),
-    decoded_body: Vec::new(),
-  }
+fn unsupported_fixtures() -> Vec<Fixture> {
+  let gzip_body = gzip(b"bounded HTTP/2 streaming decoding");
+  vec![
+    Fixture {
+      name: "unsupported-stack",
+      encoding: "gzip, br",
+      wire_body: gzip_body,
+      decoded_body: Vec::new(),
+    },
+    Fixture {
+      name: "unsupported-coding",
+      encoding: "br",
+      wire_body: b"wire-preserved br body".to_vec(),
+      decoded_body: Vec::new(),
+    },
+  ]
 }
 
 fn serve_response(
@@ -338,57 +347,62 @@ fn http2_streaming_decoding_live_transport_matrix() {
 
 #[test]
 fn http2_streaming_decoding_unsupported_stack_preserves_wire() {
-  let fixture = unsupported_fixture();
-  for transport in transports() {
-    let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
-    let mut client = client_for(None);
-    client.get().url(format!("http://{addr}/unsupported"));
-    let response = transport.emit(&mut client).unwrap_or_else(|error| {
-      panic!(
-        "{} should preserve unsupported coding: {error}",
-        transport.name()
-      )
-    });
-    assert_eq!(fixture.wire_body, response.body().binary());
-    assert_eq!(
-      Some(fixture.encoding),
-      response
-        .header_value("Content-Encoding")
-        .map(String::as_str)
-    );
-    assert_eq!(fixture.wire_body, response.body().binary());
-    wait_for_server(done, handle, "unsupported coding");
+  for fixture in unsupported_fixtures() {
+    for transport in transports() {
+      let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
+      let mut client = client_for(None);
+      client.get().url(format!("http://{addr}/{}", fixture.name));
+      let response = transport.emit(&mut client).unwrap_or_else(|error| {
+        panic!(
+          "{}/{} should preserve unsupported coding: {error}",
+          transport.name(),
+          fixture.name
+        )
+      });
+      assert_eq!(fixture.wire_body, response.body().binary());
+      assert_eq!(
+        Some(fixture.encoding),
+        response
+          .header_value("Content-Encoding")
+          .map(String::as_str)
+      );
+      wait_for_server(done, handle, fixture.name);
+    }
   }
 }
 
 #[test]
 fn http2_streaming_decoding_live_unsupported_stack_preserves_wire() {
-  let fixture = unsupported_fixture();
-  for transport in transports() {
-    let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
-    let mut client = client_for(None);
-    client.get().url(format!("http://{addr}/unsupported-live"));
-    let mut response = transport
-      .emit_streaming(&mut client)
-      .unwrap_or_else(|error| {
-        panic!(
-          "{} should preserve unsupported coding in streaming response: {error}",
-          transport.name()
-        )
-      });
-    assert_eq!(
-      Some(fixture.encoding),
-      response
-        .headers()
-        .iter()
-        .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"))
-        .map(|header| header.value().as_str())
-    );
-    assert_eq!(
-      fixture.wire_body,
-      read_streaming_body(&mut response).unwrap()
-    );
-    wait_for_server(done, handle, "unsupported coding live");
+  for fixture in unsupported_fixtures() {
+    for transport in transports() {
+      let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
+      let mut client = client_for(None);
+      client
+        .get()
+        .url(format!("http://{addr}/{}-live", fixture.name));
+      let mut response = transport
+        .emit_streaming(&mut client)
+        .unwrap_or_else(|error| {
+          panic!(
+            "{}/{} should preserve unsupported coding in streaming response: {error}",
+            transport.name(),
+            fixture.name
+          )
+        });
+      assert_eq!(
+        Some(fixture.encoding),
+        response
+          .headers()
+          .iter()
+          .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"))
+          .map(|header| header.value().as_str())
+      );
+      assert_eq!(
+        fixture.wire_body,
+        read_streaming_body(&mut response).unwrap()
+      );
+      wait_for_server(done, handle, fixture.name);
+    }
   }
 }
 
@@ -418,6 +432,12 @@ fn http2_streaming_decoding_malformed_streams_are_atomic() {
     let mut truncated = zlib(b"truncated");
     truncated.pop();
     assert_decode_failure(transport, truncated, "deflate", "truncated-deflate");
+    assert_decode_failure(
+      transport,
+      zlib(b"not-gzip"),
+      "gzip, deflate",
+      "malformed-inner-stack",
+    );
   }
 }
 
@@ -463,6 +483,12 @@ fn http2_streaming_decoding_live_malformed_streams_are_atomic() {
     let mut truncated = zlib(b"truncated");
     truncated.pop();
     assert_streaming_decode_failure(transport, truncated, "deflate", "truncated-deflate");
+    assert_streaming_decode_failure(
+      transport,
+      zlib(b"not-gzip"),
+      "gzip, deflate",
+      "malformed-inner-stack",
+    );
   }
 }
 
