@@ -402,6 +402,42 @@ fn http2_streaming_decoding_unsupported_stack_preserves_wire() {
 }
 
 #[test]
+fn http2_live_streaming_decoding_unsupported_stack_preserves_wire() {
+  let fixture = unsupported_fixture();
+  for transport in transports() {
+    let (addr, done, handle) = serve_response(&fixture.encoding, fixture.wire_body.clone(), false);
+    let mut client = client_for(None);
+    client.get().url(format!("http://{addr}/unsupported"));
+    let mut response = transport
+      .emit_streaming(&mut client)
+      .unwrap_or_else(|error| {
+        panic!(
+          "{} should preserve unsupported coding while streaming: {error}",
+          transport.name()
+        )
+      });
+    assert_eq!(
+      Some(fixture.encoding),
+      response
+        .headers()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"))
+        .map(|header| header.value().as_str())
+    );
+    assert_eq!(
+      fixture.wire_body,
+      read_streaming_body(&mut response).expect("unsupported streaming body")
+    );
+    let mut eof = [0u8; 1];
+    assert_eq!(
+      0,
+      response.read(&mut eof).expect("unsupported streaming EOF")
+    );
+    wait_for_server(done, handle, "unsupported streaming coding");
+  }
+}
+
+#[test]
 fn http2_streaming_plain_response_preserves_final_data_across_reads() {
   let body = (0..64).map(|byte| byte as u8).collect::<Vec<_>>();
   for transport in transports() {
