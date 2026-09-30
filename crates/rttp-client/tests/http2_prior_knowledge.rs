@@ -6610,6 +6610,27 @@ fn prior_knowledge_enforces_decoded_deflate_body_limit() {
 }
 
 #[test]
+fn prior_knowledge_bounds_high_expansion_gzip_before_buffering_output() {
+  let decoded = vec![b'a'; 1024 * 1024];
+  let compressed = gzip_bytes(&decoded);
+  assert!(compressed.len() < decoded.len() / 100);
+  let (addr, _handle) = spawn_h2_encoded_peer(b"gzip", compressed);
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/gzip"))
+    .config(
+      Config::builder()
+        .max_buffered_response_body_bytes(64)
+        .build(),
+    )
+    .emit_http2_prior_knowledge()
+    .expect_err("high-expansion gzip must be rejected at the configured limit");
+
+  assert!(error.is_body_too_large(), "unexpected error: {error}");
+  assert_eq!(Some(64), error.body_limit());
+}
+
+#[test]
 fn prior_knowledge_decodes_single_gzip_response() {
   let (addr, _handle) = spawn_h2_encoded_peer(b"gzip", gzip_bytes(b"decoded"));
   let response = HttpClient::new()
