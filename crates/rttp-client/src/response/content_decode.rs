@@ -111,6 +111,8 @@ pub(crate) struct StreamingDecodeStack {
   layers_finished: bool,
   output_finished: bool,
   wire_capture: Vec<u8>,
+  capture_wire: bool,
+  wire_input_seen: bool,
 }
 
 enum DecoderLayer {
@@ -120,6 +122,22 @@ enum DecoderLayer {
 
 impl StreamingDecodeStack {
   pub(crate) fn new(decoders: Vec<ContentDecoder>, max_decoded: usize) -> Self {
+    Self::new_with_wire_capture(decoders, max_decoded, true)
+  }
+
+  #[cfg(feature = "http2")]
+  pub(crate) fn new_without_wire_capture(
+    decoders: Vec<ContentDecoder>,
+    max_decoded: usize,
+  ) -> Self {
+    Self::new_with_wire_capture(decoders, max_decoded, false)
+  }
+
+  fn new_with_wire_capture(
+    decoders: Vec<ContentDecoder>,
+    max_decoded: usize,
+    capture_wire: bool,
+  ) -> Self {
     let layers = decoders
       .into_iter()
       .rev()
@@ -142,6 +160,8 @@ impl StreamingDecodeStack {
       layers_finished: false,
       output_finished: false,
       wire_capture: Vec::new(),
+      capture_wire,
+      wire_input_seen: false,
     }
   }
 
@@ -164,12 +184,16 @@ impl StreamingDecodeStack {
     Some(copy)
   }
 
+  #[cfg(feature = "http2")]
   pub(crate) fn output_finished(&self) -> bool {
     self.output_finished
   }
 
   pub(crate) fn feed_wire(&mut self, chunk: &[u8]) -> error::Result<()> {
-    self.wire_capture.extend_from_slice(chunk);
+    self.wire_input_seen = true;
+    if self.capture_wire {
+      self.wire_capture.extend_from_slice(chunk);
+    }
     self.feed_layers(chunk)
   }
 
@@ -179,7 +203,7 @@ impl StreamingDecodeStack {
     }
     self.input_finished = true;
     if !self.layers_finished {
-      if self.wire_capture.is_empty() {
+      if !self.wire_input_seen {
         // Empty framed body: match buffered "empty bodies are not decoded".
         self.layers_finished = true;
         self.output_finished = true;

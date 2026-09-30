@@ -395,6 +395,7 @@ pub struct Http2StreamingResponse {
   decoder: Option<StreamingDecodeStack>,
   pending_frame: Option<Frame>,
   eof: bool,
+  no_body: bool,
   connection_receive_window: ReceiveWindow,
   stream_receive_window: ReceiveWindow,
 }
@@ -467,7 +468,10 @@ impl Http2StreamingResponse {
       None
     } else {
       content_decoders(&headers).map(|decoders| {
-        StreamingDecodeStack::new(decoders, local_settings.max_buffered_response_body_bytes)
+        StreamingDecodeStack::new_without_wire_capture(
+          decoders,
+          local_settings.max_buffered_response_body_bytes,
+        )
       })
     };
     let mut headers = headers;
@@ -483,7 +487,8 @@ impl Http2StreamingResponse {
       trailers,
       decoder,
       pending_frame: None,
-      eof: no_body,
+      eof: final_frame_end_stream,
+      no_body,
       connection_receive_window: ReceiveWindow::new(),
       stream_receive_window: ReceiveWindow::new(),
     })
@@ -542,7 +547,7 @@ impl Http2StreamingResponse {
           if end_stream {
             self.eof = true;
           }
-          if !data.is_empty() {
+          if !data.is_empty() && !self.no_body {
             return Ok(Some(data));
           }
         }
@@ -2972,7 +2977,16 @@ fn read_first_response_frame(
         return Ok(frame)
       }
       (FRAME_GOAWAY, _) => {
-        goaway_metadata(&frame)?;
+        let goaway = goaway_metadata(&frame)?;
+        if goaway.last_stream_id < stream_id {
+          return Err(response_connection_abort_error(false, Some(&goaway)));
+        }
+      }
+      (FRAME_RST_STREAM, id) if id == stream_id => {
+        return Err(response_stream_reset_error(
+          rst_stream_error_code(&frame)?,
+          false,
+        ));
       }
       _ => {}
     }
