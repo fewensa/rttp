@@ -573,6 +573,11 @@ fn http2_streaming_decoding_exposes_trailers_after_eof() {
     let mut response = transport
       .emit_streaming(&mut client)
       .expect("streaming trailer response");
+    assert!(
+      response.trailers().is_empty(),
+      "{} trailers must remain deferred until EOF",
+      transport.name()
+    );
     assert_eq!(
       b"trailer after completion".to_vec(),
       read_streaming_body(&mut response).expect("streaming trailer body")
