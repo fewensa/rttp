@@ -1900,6 +1900,9 @@ mod tests {
         "HTTP/1.1\u{2003}200 Connection Established\r\n\r\n",
         "HTTP/1.1200 Connection Established\r\n\r\n",
         "HTTP/1.1-200 Connection Established\r\n\r\n",
+        "HTTP/1.1 200 Connection\tEstablished\r\n\r\n",
+        "HTTP/1.1 200 Connection\u{00a0}Established\r\n\r\n",
+        "HTTP/1.1 200 Connection\u{2003}Established\r\n\r\n",
       ] {
         let mut stream = AllowStdIo::new(Cursor::new(header.as_bytes().to_vec()));
         let error = async_read_proxy_connect_response(&mut stream)

@@ -675,6 +675,13 @@ fn proxy_connect_status_line(header: &[u8]) -> error::Result<String> {
 }
 
 fn proxy_connect_status_code_from_line(status_line: &str) -> error::Result<u16> {
+  if status_line
+    .chars()
+    .any(|character| character != ' ' && character.is_whitespace())
+  {
+    return Err(error::bad_proxy("Proxy server response error."));
+  }
+
   let (_version, code, _reason) = rttp_protocol::http1::split_status_line(status_line)
     .ok_or_else(|| error::bad_proxy("Proxy server response error."))?;
 
@@ -1404,11 +1411,6 @@ mod tests {
   fn test_parse_proxy_connect_response_accepts_ascii_sp_separator() {
     parse_proxy_connect_response(b"HTTP/1.1 200 Connection Established\r\n\r\n").unwrap();
     parse_proxy_connect_response(b"HTTP/1.1 200\r\n\r\n").unwrap();
-    parse_proxy_connect_response(b"HTTP/1.1 200 Connection\tEstablished\r\n\r\n").unwrap();
-    parse_proxy_connect_response("HTTP/1.1 200 Connection\u{00a0}Established\r\n\r\n".as_bytes())
-      .unwrap();
-    parse_proxy_connect_response("HTTP/1.1 200 Connection\u{2003}Established\r\n\r\n".as_bytes())
-      .unwrap();
   }
 
   #[test]
@@ -1422,6 +1424,9 @@ mod tests {
       "HTTP/1.1200 Connection Established\r\n\r\n",
       "HTTP/1.1-200 Connection Established\r\n\r\n",
       "HTTP/1.1/200 Connection Established\r\n\r\n",
+      "HTTP/1.1 200 Connection\tEstablished\r\n\r\n",
+      "HTTP/1.1 200 Connection\u{00a0}Established\r\n\r\n",
+      "HTTP/1.1 200 Connection\u{2003}Established\r\n\r\n",
     ] {
       let error = parse_proxy_connect_response(header.as_bytes())
         .expect_err("non-SP CONNECT status-line separator should be rejected");
