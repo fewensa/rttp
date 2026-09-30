@@ -23,6 +23,7 @@ use url::Url;
 
 use crate::connection::connect_tcp_stream_with_io_timeouts;
 use crate::request::RawRequest;
+use crate::response::content_decode::{content_decoders, StreamingDecodeStack};
 use crate::response::Response;
 use crate::types::{Header, RoUrl, ToUrl};
 use crate::types::{Proxy, ProxyType};
@@ -1950,6 +1951,11 @@ fn read_single_stream_response_with_first_frame(
   let mut headers = Vec::new();
   let mut trailers = Vec::new();
   let mut body = Vec::new();
+  // Keep the HTTP/2 wire representation for Response materialization, while
+  // driving the shared decoder stack as DATA arrives. This makes decoder
+  // failures and decoded-size limits observable during frame consumption
+  // instead of after the entire response has been buffered.
+  let mut decoder = None;
   let mut status = None;
   let mut pending_header_block = None;
   let mut final_response_started = false;
@@ -2055,6 +2061,18 @@ fn read_single_stream_response_with_first_frame(
         let data = data_payload(&frame)?;
         response_body_started = true;
         if include_data_payload {
+          if decoder.is_none() {
+            let header_values: Vec<Header> = headers
+              .iter()
+              .map(|(name, value)| Header::new(name, value))
+              .collect();
+            decoder = content_decoders(&header_values).map(|decoders| {
+              StreamingDecodeStack::new(decoders, local_settings.max_buffered_response_body_bytes)
+            });
+          }
+          if let Some(decoder) = decoder.as_mut() {
+            decoder.feed_wire(data)?;
+          }
           if data.len()
             > local_settings
               .max_buffered_response_body_bytes
@@ -2145,6 +2163,9 @@ fn read_single_stream_response_with_first_frame(
   }
 
   let status = status.ok_or_else(|| error::bad_response("missing HTTP/2 :status header"))?;
+  if let Some(decoder) = decoder.as_mut() {
+    decoder.finish_input()?;
+  }
   build_response(
     url,
     status,
