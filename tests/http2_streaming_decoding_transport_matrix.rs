@@ -336,8 +336,7 @@ fn assert_streaming_decoded_response(
 fn http2_streaming_decoding_transport_matrix() {
   for fixture in fixtures() {
     for transport in transports() {
-      let (addr, done, handle) =
-        serve_response(&fixture.encoding, fixture.wire_body.clone(), false);
+      let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
       let mut client = client_for(None);
       client.get().url(format!("http://{addr}/{}", fixture.name));
       let response = transport.emit(&mut client).unwrap_or_else(|error| {
@@ -357,8 +356,7 @@ fn http2_streaming_decoding_transport_matrix() {
 fn http2_live_streaming_decoding_transport_matrix() {
   for fixture in fixtures() {
     for transport in transports() {
-      let (addr, done, handle) =
-        serve_response(&fixture.encoding, fixture.wire_body.clone(), false);
+      let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
       let mut client = client_for(None);
       client.get().url(format!("http://{addr}/{}", fixture.name));
       let mut response = transport
@@ -380,7 +378,7 @@ fn http2_live_streaming_decoding_transport_matrix() {
 fn http2_streaming_decoding_unsupported_stack_preserves_wire() {
   let fixture = unsupported_fixture();
   for transport in transports() {
-    let (addr, done, handle) = serve_response(&fixture.encoding, fixture.wire_body.clone(), false);
+    let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
     let mut client = client_for(None);
     client.get().url(format!("http://{addr}/unsupported"));
     let response = transport.emit(&mut client).unwrap_or_else(|error| {
@@ -405,7 +403,7 @@ fn http2_streaming_decoding_unsupported_stack_preserves_wire() {
 fn http2_live_streaming_decoding_unsupported_stack_preserves_wire() {
   let fixture = unsupported_fixture();
   for transport in transports() {
-    let (addr, done, handle) = serve_response(&fixture.encoding, fixture.wire_body.clone(), false);
+    let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
     let mut client = client_for(None);
     client.get().url(format!("http://{addr}/unsupported"));
     let mut response = transport

@@ -412,19 +412,21 @@ impl Http2StreamingResponse {
         "HTTP/2 response did not begin with response headers",
       ));
     }
-    let mut block = header_block_fragment(&first_frame)?.to_vec();
+    let first_frame_end_stream = first_frame.flags & FLAG_END_STREAM != 0;
+    let mut frame = first_frame;
+    let mut block = header_block_fragment(&frame)?.to_vec();
     let mut stream = stream;
-    while first_frame.flags & FLAG_END_HEADERS == 0 {
-      let frame = read_frame(&mut stream, local_settings)?;
+    loop {
+      if frame.flags & FLAG_END_HEADERS != 0 {
+        break;
+      }
+      frame = read_frame(&mut stream, local_settings)?;
       if frame.frame_type != FRAME_CONTINUATION || frame.stream_id != stream_id {
         return Err(error::bad_response(
           "expected HTTP/2 CONTINUATION frame for response headers",
         ));
       }
       block.extend_from_slice(&frame.payload);
-      if frame.flags & FLAG_END_HEADERS != 0 {
-        break;
-      }
     }
     let mut status = None;
     let mut raw_headers = Vec::new();
@@ -460,7 +462,7 @@ impl Http2StreamingResponse {
       trailers,
       decoder,
       pending_frame: None,
-      eof: first_frame.flags & FLAG_END_STREAM != 0,
+      eof: first_frame_end_stream,
       connection_receive_window: ReceiveWindow::new(),
       stream_receive_window: ReceiveWindow::new(),
     })
@@ -524,21 +526,22 @@ impl Http2StreamingResponse {
           }
         }
         (FRAME_HEADERS, id) if id == self.stream_id => {
-          let mut block = header_block_fragment(&frame)?.to_vec();
           let end_stream = frame.flags & FLAG_END_STREAM != 0;
-          while frame.flags & FLAG_END_HEADERS == 0 {
-            let continuation = read_frame(&mut self.stream, self.local_settings)?;
-            if continuation.frame_type != FRAME_CONTINUATION
-              || continuation.stream_id != self.stream_id
+          let mut header_frame = frame;
+          let mut block = header_block_fragment(&header_frame)?.to_vec();
+          loop {
+            if header_frame.flags & FLAG_END_HEADERS != 0 {
+              break;
+            }
+            header_frame = read_frame(&mut self.stream, self.local_settings)?;
+            if header_frame.frame_type != FRAME_CONTINUATION
+              || header_frame.stream_id != self.stream_id
             {
               return Err(error::bad_response(
                 "expected HTTP/2 CONTINUATION frame for response trailers",
               ));
             }
-            block.extend_from_slice(&continuation.payload);
-            if continuation.flags & FLAG_END_HEADERS != 0 {
-              break;
-            }
+            block.extend_from_slice(&header_frame.payload);
           }
           let mut status = None;
           let mut headers = Vec::new();
