@@ -2494,6 +2494,120 @@ fn prior_knowledge_post_returns_early_response_while_blocked_on_send_window() {
   handle.join().expect("h2 peer thread");
 }
 
+fn spawn_streaming_early_response_peer(upgrade: bool) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 early response peer");
+  let addr = listener.local_addr().expect("h2 early response peer addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 early response client");
+    if upgrade {
+      let request =
+        String::from_utf8(read_http1_request_head(&mut stream)).expect("read h2c upgrade request");
+      assert!(request.starts_with("POST /streaming-early-reject HTTP/1.1\r\n"));
+      stream
+        .write_all(
+          b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n",
+        )
+        .expect("write h2c upgrade response");
+    }
+    complete_h2_handshake_without_request_with_settings(
+      &mut stream,
+      &settings_payload(SETTING_INITIAL_WINDOW_SIZE, 5),
+    );
+
+    let stream_id = if upgrade { 3 } else { 1 };
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(stream_id, request_headers.stream_id);
+    let first_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, first_body.frame_type);
+    assert_eq!(0, first_body.flags);
+    assert_eq!(stream_id, first_body.stream_id);
+    assert_eq!(b"abcde", first_body.payload.as_slice());
+
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      stream_id,
+      &h2_literal_new_name(b":status", b"413"),
+    );
+    write_frame(
+      &mut stream,
+      FRAME_DATA,
+      FLAG_END_STREAM,
+      stream_id,
+      b"rejected",
+    );
+  });
+  (addr, handle)
+}
+
+fn assert_streaming_early_response(upgrade: bool) {
+  let (addr, handle) = spawn_streaming_early_response_peer(upgrade);
+  let mut client = HttpClient::new();
+  client
+    .post()
+    .url(format!("http://{addr}/streaming-early-reject"))
+    .raw("abcdefghijkl");
+  let mut response = if upgrade {
+    client
+      .emit_http2_upgrade_streaming()
+      .expect("h2c upgrade streaming early response")
+  } else {
+    client
+      .emit_http2_prior_knowledge_streaming()
+      .expect("prior-knowledge streaming early response")
+  };
+  let mut body = Vec::new();
+  response
+    .read_to_end(&mut body)
+    .expect("read streaming early response body");
+  assert_eq!(b"rejected", body.as_slice());
+  handle.join().expect("h2 early response peer thread");
+}
+
+#[test]
+fn streaming_post_preserves_early_response_while_blocked_on_send_window() {
+  assert_streaming_early_response(false);
+  assert_streaming_early_response(true);
+
+  #[cfg(feature = "async")]
+  {
+    let (addr, handle) = spawn_streaming_early_response_peer(false);
+    let mut client = HttpClient::new();
+    client
+      .post()
+      .url(format!("http://{addr}/streaming-early-reject"))
+      .raw("abcdefghijkl");
+    let mut response =
+      futures::executor::block_on(async { client.rasync_http2_prior_knowledge_streaming().await })
+        .expect("async prior-knowledge streaming early response");
+    let mut body = Vec::new();
+    response
+      .read_to_end(&mut body)
+      .expect("read async prior-knowledge early response body");
+    assert_eq!(b"rejected", body.as_slice());
+    handle.join().expect("async h2 early response peer thread");
+
+    let (addr, handle) = spawn_streaming_early_response_peer(true);
+    let mut client = HttpClient::new();
+    client
+      .post()
+      .url(format!("http://{addr}/streaming-early-reject"))
+      .raw("abcdefghijkl");
+    let mut response =
+      futures::executor::block_on(async { client.rasync_http2_upgrade_streaming().await })
+        .expect("async h2c upgrade streaming early response");
+    let mut body = Vec::new();
+    response
+      .read_to_end(&mut body)
+      .expect("read async h2c upgrade early response body");
+    assert_eq!(b"rejected", body.as_slice());
+    handle.join().expect("async h2c early response peer thread");
+  }
+}
+
 #[test]
 fn prior_knowledge_post_uses_later_max_frame_size_after_send_window_resumes() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");

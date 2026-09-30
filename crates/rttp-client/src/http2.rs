@@ -394,6 +394,8 @@ pub struct Http2StreamingResponse {
   trailers: Vec<Header>,
   decoder: Option<StreamingDecodeStack>,
   pending_frame: Option<Frame>,
+  buffered_body: Option<Vec<u8>>,
+  buffered_body_offset: usize,
   eof: bool,
   no_body: bool,
   connection_receive_window: ReceiveWindow,
@@ -487,11 +489,37 @@ impl Http2StreamingResponse {
       trailers,
       decoder,
       pending_frame: None,
+      buffered_body: None,
+      buffered_body_offset: 0,
       eof: final_frame_end_stream,
       no_body,
       connection_receive_window: ReceiveWindow::new(),
       stream_receive_window: ReceiveWindow::new(),
     })
+  }
+
+  fn from_buffered_response(
+    stream: TcpStream,
+    stream_id: u32,
+    local_settings: LocalSettings,
+    response: Response,
+  ) -> Self {
+    Self {
+      stream,
+      stream_id,
+      hpack: HpackDecoder::new(local_settings.header_table_size),
+      local_settings,
+      headers: response.headers().clone(),
+      trailers: response.trailers().clone(),
+      decoder: None,
+      pending_frame: None,
+      buffered_body: Some(response.body().binary().to_vec()),
+      buffered_body_offset: 0,
+      eof: true,
+      no_body: true,
+      connection_receive_window: ReceiveWindow::new(),
+      stream_receive_window: ReceiveWindow::new(),
+    }
   }
 
   pub fn headers(&self) -> &Vec<Header> {
@@ -606,6 +634,16 @@ impl Read for Http2StreamingResponse {
   fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
     if buf.is_empty() {
       return Ok(0);
+    }
+    if let Some(body) = self.buffered_body.as_ref() {
+      if self.buffered_body_offset == body.len() {
+        return Ok(0);
+      }
+      let read = (body.len() - self.buffered_body_offset).min(buf.len());
+      buf[..read]
+        .copy_from_slice(&body[self.buffered_body_offset..self.buffered_body_offset + read]);
+      self.buffered_body_offset += read;
+      return Ok(read);
     }
     loop {
       if self.decoder.is_some() {
@@ -789,7 +827,7 @@ impl<'a> PriorKnowledgeClient<'a> {
       STREAM_ID,
       None,
     )?;
-    write_request(
+    let early_response = write_request(
       &mut stream,
       &self.request,
       &url,
@@ -801,15 +839,22 @@ impl<'a> PriorKnowledgeClient<'a> {
       None,
       None,
     )?;
-    let first_frame = read_first_response_frame(&mut stream, local_settings, STREAM_ID)?;
-    let response = Http2StreamingResponse::from_first_frame(
-      stream,
-      STREAM_ID,
-      local_settings,
-      HpackDecoder::new(local_settings.header_table_size),
-      first_frame,
-      is_head,
-    )?;
+    let response = match early_response {
+      Some(response) => {
+        Http2StreamingResponse::from_buffered_response(stream, STREAM_ID, local_settings, response)
+      }
+      None => {
+        let first_frame = read_first_response_frame(&mut stream, local_settings, STREAM_ID)?;
+        Http2StreamingResponse::from_first_frame(
+          stream,
+          STREAM_ID,
+          local_settings,
+          HpackDecoder::new(local_settings.header_table_size),
+          first_frame,
+          is_head,
+        )?
+      }
+    };
     self.request.origin_mut().closed_set(true);
     Ok(response)
   }
@@ -971,7 +1016,7 @@ impl<'a> UpgradeClient<'a> {
       UPGRADED_STREAM_ID,
       None,
     )?;
-    write_request(
+    let early_response = write_request(
       &mut stream,
       &self.request,
       &url,
@@ -983,15 +1028,26 @@ impl<'a> UpgradeClient<'a> {
       None,
       None,
     )?;
-    let first_frame = read_first_response_frame(&mut stream, local_settings, UPGRADED_STREAM_ID)?;
-    let response = Http2StreamingResponse::from_first_frame(
-      stream,
-      UPGRADED_STREAM_ID,
-      local_settings,
-      HpackDecoder::new(local_settings.header_table_size),
-      first_frame,
-      is_head,
-    )?;
+    let response = match early_response {
+      Some(response) => Http2StreamingResponse::from_buffered_response(
+        stream,
+        UPGRADED_STREAM_ID,
+        local_settings,
+        response,
+      ),
+      None => {
+        let first_frame =
+          read_first_response_frame(&mut stream, local_settings, UPGRADED_STREAM_ID)?;
+        Http2StreamingResponse::from_first_frame(
+          stream,
+          UPGRADED_STREAM_ID,
+          local_settings,
+          HpackDecoder::new(local_settings.header_table_size),
+          first_frame,
+          is_head,
+        )?
+      }
+    };
     self.request.origin_mut().closed_set(true);
     Ok(response)
   }
