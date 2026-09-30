@@ -476,13 +476,22 @@ impl Http2StreamingResponse {
 
   fn next_data(&mut self) -> error::Result<Option<Vec<u8>>> {
     loop {
-      if self.eof {
-        return Ok(None);
-      }
-      let frame = self
-        .pending_frame
-        .take()
-        .unwrap_or(read_frame(&mut self.stream, self.local_settings)?);
+      let frame = if let Some(frame) = self.pending_frame.take() {
+        let end_stream = frame.flags & FLAG_END_STREAM != 0;
+        let data = frame.payload;
+        if end_stream {
+          self.eof = true;
+        }
+        if !data.is_empty() {
+          return Ok(Some(data));
+        }
+        continue;
+      } else {
+        if self.eof {
+          return Ok(None);
+        }
+        read_frame(&mut self.stream, self.local_settings)?
+      };
       match (frame.frame_type, frame.stream_id) {
         (FRAME_SETTINGS, _) => {
           validate_settings_frame(&frame)?;
@@ -619,7 +628,7 @@ impl Read for Http2StreamingResponse {
         if read < data.len() {
           self.pending_frame = Some(Frame {
             frame_type: FRAME_DATA,
-            flags: 0,
+            flags: if self.eof { FLAG_END_STREAM } else { 0 },
             stream_id: self.stream_id,
             payload: data[read..].to_vec(),
           });

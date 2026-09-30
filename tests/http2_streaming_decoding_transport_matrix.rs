@@ -170,6 +170,28 @@ fn serve_response(
   (addr, done_rx, handle)
 }
 
+fn serve_plain_response(
+  body: Vec<u8>,
+) -> (std::net::SocketAddr, Receiver<()>, thread::JoinHandle<()>) {
+  let server = HttpServer::bind("127.0.0.1:0")
+    .expect("bind h2c plain streaming server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("h2c plain streaming server address");
+  let (done_tx, done_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| HttpResponse::ok(body))
+      .expect("serve h2c plain streaming response");
+    done_tx
+      .send(())
+      .expect("signal h2c plain response completion");
+  });
+  (addr, done_rx, handle)
+}
+
 fn serve_early_drop_response() -> (
   std::net::SocketAddr,
   Receiver<io::Result<()>>,
@@ -295,6 +317,33 @@ fn http2_streaming_decoding_unsupported_stack_preserves_wire() {
     );
     assert_eq!(fixture.wire_body, response.body().binary());
     wait_for_server(done, handle, "unsupported coding");
+  }
+}
+
+#[test]
+fn http2_streaming_plain_response_preserves_final_data_across_reads() {
+  let body = (0..64).map(|byte| byte as u8).collect::<Vec<_>>();
+  for transport in transports() {
+    let (addr, done, handle) = serve_plain_response(body.clone());
+    let mut client = client_for(None);
+    client.get().url(format!("http://{addr}/plain-streaming"));
+    let mut response = transport
+      .emit_streaming(&mut client)
+      .unwrap_or_else(|error| panic!("{} plain response: {error}", transport.name()));
+    let mut received = Vec::new();
+    let mut buffer = [0u8; 3];
+    loop {
+      let read = response
+        .read(&mut buffer)
+        .unwrap_or_else(|error| panic!("{} body read: {error}", transport.name()));
+      if read == 0 {
+        break;
+      }
+      received.extend_from_slice(&buffer[..read]);
+    }
+    assert_eq!(body, received, "{} body", transport.name());
+    assert_eq!(0, response.read(&mut buffer).expect("plain response EOF"));
+    wait_for_server(done, handle, "plain response");
   }
 }
 
