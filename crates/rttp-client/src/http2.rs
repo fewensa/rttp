@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 #[cfg(feature = "async")]
 use std::future::Future;
-use std::io::{self, Read, Write};
+use std::io::{self, Cursor, Read, Write};
 use std::net::TcpStream;
 #[cfg(feature = "async")]
 use std::pin::Pin;
@@ -326,6 +326,52 @@ fn async_proxy_h2c_call<'a>(
     (result, None)
   } else {
     (result, Some((key, session)))
+  }
+}
+
+/// A bounded HTTP/2 response body reader.
+///
+/// The response is materialized by the h2 framing layer before this value is
+/// returned, but its body is exposed through `Read` so callers can use the
+/// same pull-based contract as HTTP/1.1 streaming responses. Dropping it is
+/// safe: the h2 connection is owned by the completed exchange.
+pub struct Http2StreamingResponse {
+  response: Response,
+  body: Cursor<Vec<u8>>,
+}
+
+impl Http2StreamingResponse {
+  pub(crate) fn new(response: Response) -> Self {
+    Self {
+      body: Cursor::new(response.body().binary().to_vec()),
+      response,
+    }
+  }
+
+  pub fn response(&self) -> &Response {
+    &self.response
+  }
+
+  pub fn headers(&self) -> &Vec<Header> {
+    self.response.headers()
+  }
+
+  pub fn trailers(&self) -> &Vec<Header> {
+    self.response.trailers()
+  }
+
+  pub fn into_response(self) -> Response {
+    self.response
+  }
+
+  pub fn read_to_end(&mut self, body: &mut Vec<u8>) -> io::Result<usize> {
+    self.body.read_to_end(body)
+  }
+}
+
+impl Read for Http2StreamingResponse {
+  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    self.body.read(buf)
   }
 }
 
@@ -1951,10 +1997,10 @@ fn read_single_stream_response_with_first_frame(
   let mut headers = Vec::new();
   let mut trailers = Vec::new();
   let mut body = Vec::new();
-  // Keep the HTTP/2 wire representation for Response materialization, while
-  // driving the shared decoder stack as DATA arrives. This makes decoder
-  // failures and decoded-size limits observable during frame consumption
-  // instead of after the entire response has been buffered.
+  let mut decoded_body = Vec::new();
+  // Keep consuming DATA incrementally. The wire bytes remain bounded in `body`
+  // for the undecoded path, while supported content codings are surfaced as
+  // decoded bytes to the Response parser below.
   let mut decoder = None;
   let mut status = None;
   let mut pending_header_block = None;
@@ -2072,17 +2118,31 @@ fn read_single_stream_response_with_first_frame(
           }
           if let Some(decoder) = decoder.as_mut() {
             decoder.feed_wire(data)?;
+            let mut decoded = [0u8; 8 * 1024];
+            while let Some(read) = decoder.fill_pending(&mut decoded) {
+              if read
+                > local_settings
+                  .max_buffered_response_body_bytes
+                  .saturating_sub(decoded_body.len())
+              {
+                return Err(error::body_too_large(
+                  local_settings.max_buffered_response_body_bytes,
+                ));
+              }
+              decoded_body.extend_from_slice(&decoded[..read]);
+            }
+          } else {
+            if data.len()
+              > local_settings
+                .max_buffered_response_body_bytes
+                .saturating_sub(body.len())
+            {
+              return Err(error::body_too_large(
+                local_settings.max_buffered_response_body_bytes,
+              ));
+            }
+            body.extend_from_slice(data);
           }
-          if data.len()
-            > local_settings
-              .max_buffered_response_body_bytes
-              .saturating_sub(body.len())
-          {
-            return Err(error::body_too_large(
-              local_settings.max_buffered_response_body_bytes,
-            ));
-          }
-          body.extend_from_slice(data);
         }
         let stream_update = stream_receive_window.consume(frame.payload.len())?;
         let connection_update = connection_receive_window.consume(frame.payload.len())?;
@@ -2165,6 +2225,22 @@ fn read_single_stream_response_with_first_frame(
   let status = status.ok_or_else(|| error::bad_response("missing HTTP/2 :status header"))?;
   if let Some(decoder) = decoder.as_mut() {
     decoder.finish_input()?;
+    let mut decoded = [0u8; 8 * 1024];
+    while let Some(read) = decoder.fill_pending(&mut decoded) {
+      if read
+        > local_settings
+          .max_buffered_response_body_bytes
+          .saturating_sub(decoded_body.len())
+      {
+        return Err(error::body_too_large(
+          local_settings.max_buffered_response_body_bytes,
+        ));
+      }
+      decoded_body.extend_from_slice(&decoded[..read]);
+    }
+  }
+  if decoder.is_some() {
+    body = decoded_body;
   }
   build_response(
     url,
@@ -2494,8 +2570,19 @@ fn build_response(
   // The shared response parser validates HTTP/1 status lines. HTTP/2 has no
   // wire status line, so use the parser-compatible synthetic form and restore
   // the public HTTP/2 version after parsing.
+  let header_values: Vec<Header> = headers
+    .iter()
+    .map(|(name, value)| Header::new(name, value))
+    .collect();
+  let decoded = content_decoders(&header_values).is_some();
   let mut binary = format!("HTTP/1.1 {}\r\n", status).into_bytes();
   for (name, value) in headers {
+    if decoded
+      && (name.eq_ignore_ascii_case("Content-Encoding")
+        || name.eq_ignore_ascii_case("Content-Length"))
+    {
+      continue;
+    }
     binary.extend_from_slice(name.as_bytes());
     binary.extend_from_slice(b": ");
     binary.extend_from_slice(value.as_bytes());
