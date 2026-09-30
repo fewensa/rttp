@@ -520,6 +520,15 @@ fn http2_streaming_decoding_live_enforces_exact_and_over_limits() {
       .expect("streaming over-limit response");
     let error = read_streaming_body(&mut response)
       .expect_err("streaming over limit should fail while reading");
+    let inner = error
+      .get_ref()
+      .and_then(|source| source.downcast_ref::<rttp_client::error::Error>())
+      .expect("streaming limit error should preserve its typed cause");
+    assert!(
+      inner.is_body_too_large(),
+      "unexpected typed limit error: {inner}"
+    );
+    assert_eq!(Some(exact.len()), inner.body_limit());
     assert!(
       error
         .to_string()
