@@ -117,7 +117,7 @@ pub(crate) struct StreamingDecodeStack {
 
 enum DecoderLayer {
   Gzip {
-    decoder: MultiGzDecoder<CappedOutput>,
+    decoder: Box<MultiGzDecoder<CappedOutput>>,
   },
   Deflate {
     compressed: Vec<u8>,
@@ -186,7 +186,7 @@ impl StreamingDecodeStack {
       .rev()
       .map(|decoder| match decoder {
         ContentDecoder::Gzip => DecoderLayer::Gzip {
-          decoder: MultiGzDecoder::new(CappedOutput::new(max_decoded)),
+          decoder: Box::new(MultiGzDecoder::new(CappedOutput::new(max_decoded))),
         },
         ContentDecoder::Deflate => DecoderLayer::Deflate {
           compressed: Vec::new(),
