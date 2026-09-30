@@ -258,11 +258,10 @@ impl StreamingDecodeStack {
         Ok(std::mem::take(decoder.get_mut()))
       }
       DecoderLayer::Deflate { compressed } => {
-        if index > 0
-          && compressed
-            .len()
-            .checked_add(input.len())
-            .is_none_or(|len| len > self.max_decoded)
+        if compressed
+          .len()
+          .checked_add(input.len())
+          .is_none_or(|len| len > self.max_decoded)
         {
           return Err(error::body_too_large(self.max_decoded));
         }
@@ -297,11 +296,10 @@ impl StreamingDecodeStack {
       }
       DecoderLayer::Deflate { compressed } => {
         if !carried.is_empty() {
-          if index > 0
-            && compressed
-              .len()
-              .checked_add(carried.len())
-              .is_none_or(|len| len > self.max_decoded)
+          if compressed
+            .len()
+            .checked_add(carried.len())
+            .is_none_or(|len| len > self.max_decoded)
           {
             return Err(error::body_too_large(self.max_decoded));
           }

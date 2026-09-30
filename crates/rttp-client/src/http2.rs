@@ -412,43 +412,62 @@ impl Http2StreamingResponse {
         "HTTP/2 response did not begin with response headers",
       ));
     }
-    let first_frame_end_stream = first_frame.flags & FLAG_END_STREAM != 0;
-    let mut frame = first_frame;
-    let mut block = header_block_fragment(&frame)?.to_vec();
     let mut stream = stream;
-    loop {
-      if frame.flags & FLAG_END_HEADERS != 0 {
-        break;
-      }
-      frame = read_frame(&mut stream, local_settings)?;
-      if frame.frame_type != FRAME_CONTINUATION || frame.stream_id != stream_id {
-        return Err(error::bad_response(
-          "expected HTTP/2 CONTINUATION frame for response headers",
-        ));
-      }
-      block.extend_from_slice(&frame.payload);
-    }
     let mut status = None;
     let mut raw_headers = Vec::new();
     let mut trailers = Vec::new();
-    if !apply_header_block(
-      HeaderBlockKind::ResponseHeaders,
-      &block,
-      &mut status,
-      &mut raw_headers,
-      &mut trailers,
-      &mut hpack,
-    )? || status.is_none()
-    {
-      return Err(error::bad_response("missing HTTP/2 response status"));
-    }
+    let mut next_frame = Some(first_frame);
+    let final_frame_end_stream = loop {
+      let mut frame = match next_frame.take() {
+        Some(frame) => frame,
+        None => read_first_response_frame(&mut stream, local_settings, stream_id)?,
+      };
+      if frame.frame_type != FRAME_HEADERS || frame.stream_id != stream_id {
+        return Err(error::bad_response(
+          "HTTP/2 response did not begin with response headers",
+        ));
+      }
+      let end_stream = frame.flags & FLAG_END_STREAM != 0;
+      let mut block = header_block_fragment(&frame)?.to_vec();
+      while frame.flags & FLAG_END_HEADERS == 0 {
+        frame = read_frame(&mut stream, local_settings)?;
+        if frame.frame_type != FRAME_CONTINUATION || frame.stream_id != stream_id {
+          return Err(error::bad_response(
+            "expected HTTP/2 CONTINUATION frame for response headers",
+          ));
+        }
+        block.extend_from_slice(&frame.payload);
+      }
+      if apply_header_block(
+        HeaderBlockKind::ResponseHeaders,
+        &block,
+        &mut status,
+        &mut raw_headers,
+        &mut trailers,
+        &mut hpack,
+      )? {
+        break end_stream;
+      }
+      if end_stream {
+        return Err(error::bad_response("missing HTTP/2 response status"));
+      }
+    };
     let headers: Vec<Header> = raw_headers
       .iter()
       .map(|(name, value)| Header::new(name, value))
       .collect();
-    let decoder = content_decoders(&headers).map(|decoders| {
-      StreamingDecodeStack::new(decoders, local_settings.max_buffered_response_body_bytes)
-    });
+    let no_body = final_frame_end_stream
+      || status.is_some_and(response_status_has_no_body)
+      || headers.iter().any(|header| {
+        header.name().eq_ignore_ascii_case("Content-Length") && header.value().trim() == "0"
+      });
+    let decoder = if no_body {
+      None
+    } else {
+      content_decoders(&headers).map(|decoders| {
+        StreamingDecodeStack::new(decoders, local_settings.max_buffered_response_body_bytes)
+      })
+    };
     let mut headers = headers;
     if decoder.is_some() {
       strip_stale_representation_headers(&mut headers);
@@ -462,7 +481,7 @@ impl Http2StreamingResponse {
       trailers,
       decoder,
       pending_frame: None,
-      eof: first_frame_end_stream,
+      eof: final_frame_end_stream,
       connection_receive_window: ReceiveWindow::new(),
       stream_receive_window: ReceiveWindow::new(),
     })
@@ -2864,6 +2883,10 @@ fn is_informational_status(status: u32) -> bool {
   (100..200).contains(&status)
 }
 
+fn response_status_has_no_body(status: u32) -> bool {
+  (100..200).contains(&status) || status == 204 || status == 304
+}
+
 struct GoawayMetadata {
   last_stream_id: u32,
   error_code: u32,
@@ -3647,6 +3670,70 @@ mod tests {
     assert_eq!(FRAME_HEADERS, first.frame_type);
     assert_eq!(STREAM_ID, first.stream_id);
     server.join().expect("settings test server");
+  }
+
+  #[test]
+  fn streaming_response_skips_informational_headers_and_preserves_empty_encoding_metadata() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind response test");
+    let addr = listener.local_addr().expect("response test address");
+    let local_settings =
+      LocalSettings::from_config(&Config::default(), false).expect("default local HTTP/2 settings");
+    let server = std::thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept response test");
+      write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        0,
+        STREAM_ID,
+        &[0x00, 0x07, b':', b's', b't', b'a', b't', b'u'],
+      )
+      .expect("write informational response");
+      write_frame(
+        &mut stream,
+        FRAME_CONTINUATION,
+        FLAG_END_HEADERS,
+        STREAM_ID,
+        &[b's', 0x03, b'1', b'0', b'3'],
+      )
+      .expect("continue informational response");
+      write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        FLAG_END_STREAM | FLAG_END_HEADERS,
+        STREAM_ID,
+        &[
+          0x88, 0x00, 0x10, b'c', b'o', b'n', b't', b'e', b'n', b't', b'-', b'e', b'n', b'c', b'o',
+          b'd', b'i', b'n', b'g', 0x04, b'g', b'z', b'i', b'p', 0x00, 0x0e, b'c', b'o', b'n', b't',
+          b'e', b'n', b't', b'-', b'l', b'e', b'n', b'g', b't', b'h', 0x01, b'0',
+        ],
+      )
+      .expect("write final response");
+      stream.flush().expect("flush response");
+    });
+    let mut stream = TcpStream::connect(addr).expect("connect response test");
+    let first_frame = read_frame(&mut stream, local_settings).expect("read informational response");
+    let mut response = Http2StreamingResponse::from_first_frame(
+      stream,
+      STREAM_ID,
+      local_settings,
+      HpackDecoder::new(local_settings.header_table_size),
+      first_frame,
+    )
+    .expect("construct streaming response");
+    assert!(response
+      .headers()
+      .iter()
+      .any(|header| header.name().eq_ignore_ascii_case("Content-Encoding")));
+    assert!(response
+      .headers()
+      .iter()
+      .any(|header| header.name().eq_ignore_ascii_case("Content-Length")));
+    let mut body = Vec::new();
+    response
+      .read_to_end(&mut body)
+      .expect("read empty response");
+    assert!(body.is_empty());
+    server.join().expect("response test server");
   }
 
   #[test]
