@@ -15,6 +15,7 @@ rttp_test_support = { path = "../crates/rttp-test-support" }
 
 [features]
 async = ["rttp_client/async"]
+http2 = ["rttp/http2", "rttp_client/http2"]
 
 [[test]]
 name = "http11_client_server_matrix"
@@ -51,6 +52,10 @@ path = "content_negotiation_metadata_matrix.rs"
 [[test]]
 name = "response_decoding_transport_matrix"
 path = "response_decoding_transport_matrix.rs"
+
+[[test]]
+name = "http2_streaming_decoding_transport_matrix"
+path = "http2_streaming_decoding_transport_matrix.rs"
 
 [[test]]
 name = "http11_connection_lifetime_matrix"
