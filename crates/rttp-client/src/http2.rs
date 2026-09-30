@@ -794,6 +794,17 @@ impl<'a> PriorKnowledgeClient<'a> {
   pub fn get_streaming(mut self) -> error::Result<Http2StreamingResponse> {
     validate_bounded_h2c_request(&self.request, false)?;
     if let Some(proxy) = self.request.origin().proxy() {
+      if self
+        .request
+        .origin()
+        .http2_extended_connect_protocol()
+        .is_some()
+        && proxy.type_() == &ProxyType::HTTP
+      {
+        return Err(error::builder_with_message(
+          "HTTP/2 prior-knowledge client does not support proxies for extended CONNECT",
+        ));
+      }
       if proxy.type_() != &ProxyType::HTTP {
         return Err(error::builder_with_message(
           "HTTP/2 prior-knowledge supports only HTTP proxies; CONNECT and SOCKS tunnels are unsupported",

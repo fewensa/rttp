@@ -1336,6 +1336,71 @@ fn extended_connect_with_proxy_is_rejected_before_connecting() {
 }
 
 #[test]
+fn extended_connect_streaming_with_proxy_is_rejected_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 proxy");
+  listener
+    .set_nonblocking(true)
+    .expect("set proxy listener nonblocking");
+  let proxy_addr = listener.local_addr().expect("proxy listener address");
+
+  let result = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url("http://example.invalid/chat")
+    .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()))
+    .emit_http2_prior_knowledge_streaming();
+  let err = match result {
+    Ok(_) => panic!("extended CONNECT streaming with proxy must be rejected"),
+    Err(err) => err,
+  };
+
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 prior-knowledge client does not support proxies for extended CONNECT"),
+    "unexpected error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "extended CONNECT streaming with proxy must not open a proxy connection"
+  );
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn extended_connect_async_streaming_with_proxy_is_rejected_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 proxy");
+  listener
+    .set_nonblocking(true)
+    .expect("set proxy listener nonblocking");
+  let proxy_addr = listener.local_addr().expect("proxy listener address");
+
+  let mut client = HttpClient::new();
+  client
+    .http2_extended_connect("websocket")
+    .url("http://example.invalid/chat")
+    .proxy(Proxy::http("127.0.0.1", proxy_addr.port().into()));
+  let result =
+    futures::executor::block_on(async { client.rasync_http2_prior_knowledge_streaming().await });
+  let err = match result {
+    Ok(_) => panic!("extended CONNECT async streaming with proxy must be rejected"),
+    Err(err) => err,
+  };
+
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 prior-knowledge client does not support proxies for extended CONNECT"),
+    "unexpected error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "extended CONNECT async streaming with proxy must not open a proxy connection"
+  );
+}
+
+#[test]
 fn prior_knowledge_options_without_body_sends_headers_end_stream() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");

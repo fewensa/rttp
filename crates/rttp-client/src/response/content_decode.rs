@@ -221,7 +221,6 @@ impl StreamingDecodeStack {
     Some(copy)
   }
 
-  #[cfg(feature = "http2")]
   pub(crate) fn output_finished(&self) -> bool {
     self.output_finished
   }
