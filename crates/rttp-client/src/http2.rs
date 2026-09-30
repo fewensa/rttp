@@ -2927,6 +2927,10 @@ fn read_first_response_frame(
     match (frame.frame_type, frame.stream_id) {
       (FRAME_SETTINGS, _) => {
         validate_settings_frame(&frame)?;
+        if frame.flags & FLAG_ACK == 0 {
+          write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
+          stream.flush().map_err(error::request)?;
+        }
       }
       (FRAME_WINDOW_UPDATE, _) => {
         window_update_increment(&frame)?;
@@ -3606,6 +3610,41 @@ fn is_forbidden_response_trailer_name(name: &str) -> bool {
 #[allow(clippy::items_after_test_module)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn read_first_response_frame_acknowledges_peer_settings() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind settings test");
+    let addr = listener.local_addr().expect("settings test address");
+    let local_settings =
+      LocalSettings::from_config(&Config::default(), false).expect("default local HTTP/2 settings");
+    let server = std::thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept settings test");
+      write_frame(&mut stream, FRAME_SETTINGS, 0, 0, &[]).expect("write peer settings");
+      stream.flush().expect("flush peer settings");
+
+      let ack = read_frame(&mut stream, local_settings).expect("read settings ack");
+      assert_eq!(FRAME_SETTINGS, ack.frame_type);
+      assert_eq!(FLAG_ACK, ack.flags);
+      assert_eq!(0, ack.stream_id);
+      assert!(ack.payload.is_empty());
+
+      write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        FLAG_END_STREAM | FLAG_END_HEADERS,
+        STREAM_ID,
+        &[],
+      )
+      .expect("write response headers");
+      stream.flush().expect("flush response headers");
+    });
+    let mut stream = TcpStream::connect(addr).expect("connect settings test");
+    let first = read_first_response_frame(&mut stream, local_settings, STREAM_ID)
+      .expect("read response after acknowledging settings");
+    assert_eq!(FRAME_HEADERS, first.frame_type);
+    assert_eq!(STREAM_ID, first.stream_id);
+    server.join().expect("settings test server");
+  }
 
   #[test]
   fn http1_status_code_accepts_ascii_sp_status_lines() {

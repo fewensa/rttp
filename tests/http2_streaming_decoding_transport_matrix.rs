@@ -274,6 +274,64 @@ fn assert_decoded_response(response: &Response, fixture: &Fixture, transport: Tr
   );
 }
 
+fn read_streaming_body(response: &mut Http2StreamingResponse) -> io::Result<Vec<u8>> {
+  let mut body = Vec::new();
+  let mut buffer = [0u8; 3];
+  loop {
+    let read = response.read(&mut buffer)?;
+    if read == 0 {
+      return Ok(body);
+    }
+    body.extend_from_slice(&buffer[..read]);
+  }
+}
+
+fn assert_streaming_decoded_response(
+  response: &mut Http2StreamingResponse,
+  fixture: &Fixture,
+  transport: Transport,
+) {
+  assert!(
+    response
+      .headers()
+      .iter()
+      .all(|header| !header.name().eq_ignore_ascii_case("Content-Encoding")),
+    "{}/{} stale Content-Encoding header",
+    transport.name(),
+    fixture.name
+  );
+  assert!(
+    response
+      .headers()
+      .iter()
+      .all(|header| !header.name().eq_ignore_ascii_case("Content-Length")),
+    "{}/{} stale Content-Length header",
+    transport.name(),
+    fixture.name
+  );
+  assert_eq!(
+    fixture.decoded_body,
+    read_streaming_body(response).unwrap_or_else(|error| {
+      panic!(
+        "{}/{} streaming body read: {error}",
+        transport.name(),
+        fixture.name
+      )
+    }),
+    "{}/{} streaming body",
+    transport.name(),
+    fixture.name
+  );
+  let mut eof = [0u8; 1];
+  assert_eq!(
+    0,
+    response.read(&mut eof).expect("streaming response EOF"),
+    "{}/{} streaming EOF",
+    transport.name(),
+    fixture.name
+  );
+}
+
 #[test]
 fn http2_streaming_decoding_transport_matrix() {
   for fixture in fixtures() {
@@ -290,6 +348,29 @@ fn http2_streaming_decoding_transport_matrix() {
         )
       });
       assert_decoded_response(&response, &fixture, transport);
+      wait_for_server(done, handle, fixture.name);
+    }
+  }
+}
+
+#[test]
+fn http2_live_streaming_decoding_transport_matrix() {
+  for fixture in fixtures() {
+    for transport in transports() {
+      let (addr, done, handle) =
+        serve_response(&fixture.encoding, fixture.wire_body.clone(), false);
+      let mut client = client_for(None);
+      client.get().url(format!("http://{addr}/{}", fixture.name));
+      let mut response = transport
+        .emit_streaming(&mut client)
+        .unwrap_or_else(|error| {
+          panic!(
+            "{}/{} streaming response should succeed: {error}",
+            transport.name(),
+            fixture.name
+          )
+        });
+      assert_streaming_decoded_response(&mut response, &fixture, transport);
       wait_for_server(done, handle, fixture.name);
     }
   }
@@ -347,7 +428,7 @@ fn http2_streaming_plain_response_preserves_final_data_across_reads() {
   }
 }
 
-fn assert_decode_failure(transport: Transport, body: Vec<u8>, encoding: &str, name: &str) {
+fn assert_buffered_decode_failure(transport: Transport, body: Vec<u8>, encoding: &str, name: &str) {
   let (addr, done, handle) = serve_response(encoding, body, false);
   let mut client = client_for(None);
   client.get().url(format!("http://{addr}/{name}"));
@@ -366,13 +447,49 @@ fn assert_decode_failure(transport: Transport, body: Vec<u8>, encoding: &str, na
   wait_for_server(done, handle, name);
 }
 
+fn assert_streaming_decode_failure(
+  transport: Transport,
+  body: Vec<u8>,
+  encoding: &str,
+  name: &str,
+) {
+  let (addr, done, handle) = serve_response(encoding, body, false);
+  let mut client = client_for(None);
+  client.get().url(format!("http://{addr}/{name}"));
+  let mut response = transport
+    .emit_streaming(&mut client)
+    .unwrap_or_else(|error| panic!("{}/{} response setup: {error}", transport.name(), name));
+  let error = read_streaming_body(&mut response)
+    .expect_err("malformed streaming response must fail while reading");
+  assert_eq!(io::ErrorKind::InvalidData, error.kind());
+  assert!(
+    error
+      .to_string()
+      .starts_with("error decoding response body"),
+    "{}/{} unexpected streaming decode error: {error}",
+    transport.name(),
+    name
+  );
+  wait_for_server(done, handle, name);
+}
+
 #[test]
 fn http2_streaming_decoding_malformed_streams_are_atomic() {
   for transport in transports() {
-    assert_decode_failure(transport, b"not-gzip".to_vec(), "gzip", "malformed-gzip");
+    assert_buffered_decode_failure(transport, b"not-gzip".to_vec(), "gzip", "malformed-gzip");
     let mut truncated = zlib(b"truncated");
     truncated.pop();
-    assert_decode_failure(transport, truncated, "deflate", "truncated-deflate");
+    assert_buffered_decode_failure(transport, truncated, "deflate", "truncated-deflate");
+  }
+}
+
+#[test]
+fn http2_live_streaming_decoding_malformed_streams_fail_during_read() {
+  for transport in transports() {
+    assert_streaming_decode_failure(transport, b"not-gzip".to_vec(), "gzip", "malformed-gzip");
+    let mut truncated = zlib(b"truncated");
+    truncated.pop();
+    assert_streaming_decode_failure(transport, truncated, "deflate", "truncated-deflate");
   }
 }
 
@@ -407,6 +524,39 @@ fn http2_streaming_decoding_enforces_exact_and_over_limits() {
 }
 
 #[test]
+fn http2_live_streaming_decoding_enforces_exact_and_over_limits() {
+  let exact = vec![b'x'; 64];
+  for transport in transports() {
+    let (addr, done, handle) = serve_response("gzip", gzip(&exact), false);
+    let mut client = client_for(Some(exact.len()));
+    client.get().url(format!("http://{addr}/exact"));
+    let mut response = transport
+      .emit_streaming(&mut client)
+      .expect("exact streaming limit should set up");
+    assert_eq!(
+      exact,
+      read_streaming_body(&mut response).expect("exact limit body")
+    );
+    wait_for_server(done, handle, "exact streaming limit");
+
+    let (addr, done, handle) = serve_response("gzip", gzip(&[b'x'; 65]), false);
+    let mut client = client_for(Some(exact.len()));
+    client.get().url(format!("http://{addr}/over"));
+    let mut response = transport
+      .emit_streaming(&mut client)
+      .expect("over streaming limit should set up");
+    let error = read_streaming_body(&mut response)
+      .expect_err("over streaming limit should fail while reading");
+    assert!(
+      error.to_string().contains("exceeded 64 bytes"),
+      "{} unexpected streaming limit error: {error}",
+      transport.name()
+    );
+    wait_for_server(done, handle, "over streaming limit");
+  }
+}
+
+#[test]
 fn http2_buffered_decoding_exposes_trailers() {
   for transport in transports() {
     let body = gzip(b"trailer after completion");
@@ -423,6 +573,32 @@ fn http2_buffered_decoding_exposes_trailers() {
         .map(|header| header.value())
     );
     wait_for_server(done, handle, "trailers");
+  }
+}
+
+#[test]
+fn http2_live_streaming_decoding_exposes_trailers_after_eof() {
+  for transport in transports() {
+    let body = gzip(b"trailer after completion");
+    let (addr, done, handle) = serve_response("gzip", body, true);
+    let mut client = client_for(None);
+    client.get().url(format!("http://{addr}/trailers"));
+    let mut response = transport
+      .emit_streaming(&mut client)
+      .expect("streaming trailer response");
+    assert_eq!(
+      b"trailer after completion".to_vec(),
+      read_streaming_body(&mut response).expect("streaming trailer body")
+    );
+    assert_eq!(
+      Some(&"after-eof".to_string()),
+      response
+        .trailers()
+        .iter()
+        .find(|header| { header.name().eq_ignore_ascii_case("x-streaming-trailer") })
+        .map(|header| header.value())
+    );
+    wait_for_server(done, handle, "streaming trailers");
   }
 }
 
