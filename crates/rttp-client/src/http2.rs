@@ -338,12 +338,14 @@ fn async_proxy_h2c_call<'a>(
 pub struct Http2StreamingResponse {
   response: Response,
   body: Cursor<Vec<u8>>,
+  trailers: Vec<Header>,
 }
 
 impl Http2StreamingResponse {
   pub(crate) fn new(response: Response) -> Self {
     Self {
       body: Cursor::new(response.body().binary().to_vec()),
+      trailers: Vec::new(),
       response,
     }
   }
@@ -356,8 +358,9 @@ impl Http2StreamingResponse {
     self.response.headers()
   }
 
+  /// Response trailers become visible after the body reader reaches EOF.
   pub fn trailers(&self) -> &Vec<Header> {
-    self.response.trailers()
+    &self.trailers
   }
 
   pub fn into_response(self) -> Response {
@@ -365,13 +368,19 @@ impl Http2StreamingResponse {
   }
 
   pub fn read_to_end(&mut self, body: &mut Vec<u8>) -> io::Result<usize> {
-    self.body.read_to_end(body)
+    let read = self.body.read_to_end(body)?;
+    self.trailers = self.response.trailers().clone();
+    Ok(read)
   }
 }
 
 impl Read for Http2StreamingResponse {
   fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-    self.body.read(buf)
+    let read = self.body.read(buf)?;
+    if read == 0 {
+      self.trailers = self.response.trailers().clone();
+    }
+    Ok(read)
   }
 }
 
