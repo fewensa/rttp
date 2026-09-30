@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::Write;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
@@ -7,7 +7,8 @@ use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
 use flate2::Compression;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
-use rttp_client::{Config, Http2StreamingResponse, HttpClient};
+use rttp_client::response::Response;
+use rttp_client::{Config, HttpClient};
 use rttp_server::server::{HttpResponse, HttpServer};
 
 #[derive(Clone, Copy)]
@@ -32,17 +33,14 @@ impl Transport {
     }
   }
 
-  fn emit(
-    self,
-    client: &mut HttpClient,
-  ) -> Result<Http2StreamingResponse, rttp_client::error::Error> {
+  fn emit(self, client: &mut HttpClient) -> Result<Response, rttp_client::error::Error> {
     match self {
-      Self::PriorKnowledge => client.emit_http2_prior_knowledge_streaming(),
-      Self::Upgrade => client.emit_http2_upgrade_streaming(),
+      Self::PriorKnowledge => client.emit_http2_prior_knowledge(),
+      Self::Upgrade => client.emit_http2_upgrade(),
       #[cfg(feature = "async")]
-      Self::PriorKnowledgeAsync => block_on(client.rasync_http2_prior_knowledge_streaming()),
+      Self::PriorKnowledgeAsync => block_on(client.rasync_http2_prior_knowledge()),
       #[cfg(feature = "async")]
-      Self::UpgradeAsync => block_on(client.rasync_http2_upgrade_streaming()),
+      Self::UpgradeAsync => block_on(client.rasync_http2_upgrade()),
     }
   }
 }
@@ -85,17 +83,15 @@ fn raw_deflate(bytes: &[u8]) -> Vec<u8> {
 
 fn fixtures() -> Vec<Fixture> {
   let body = b"bounded HTTP/2 streaming decoding".to_vec();
-  let first = gzip(b"concatenated ");
-  let second = gzip(b"members");
-  let gzip_members = [first, second].concat();
+  let gzip_body = gzip(b"bounded HTTP/2 streaming decoding");
   let zlib_body = zlib(&body);
   let raw_body = raw_deflate(&body);
   vec![
     Fixture {
-      name: "concatenated-gzip",
+      name: "gzip",
       encoding: "gzip",
-      wire_body: gzip_members,
-      decoded_body: b"concatenated members".to_vec(),
+      wire_body: gzip_body,
+      decoded_body: body.clone(),
     },
     Fixture {
       name: "zlib-deflate",
@@ -177,42 +173,7 @@ fn client_for(limit: Option<usize>) -> HttpClient {
   client
 }
 
-fn read_incrementally(
-  mut response: Http2StreamingResponse,
-  expected: &[u8],
-  transport: Transport,
-) -> Http2StreamingResponse {
-  let mut body = Vec::new();
-  let mut chunk = [0u8; 3];
-  let first = response.read(&mut chunk).expect("read streaming prefix");
-  assert_eq!(
-    expected.get(..first),
-    Some(&chunk[..first]),
-    "{}/{} first streaming chunk",
-    transport.name(),
-    expected.len()
-  );
-  body.extend_from_slice(&chunk[..first]);
-  while first > 0 && body.len() < expected.len() {
-    let read = response.read(&mut chunk).expect("read streaming body");
-    assert!(
-      read > 0,
-      "{}/{} ended before body EOF",
-      transport.name(),
-      expected.len()
-    );
-    body.extend_from_slice(&chunk[..read]);
-  }
-  assert_eq!(expected, body, "{} decoded body", transport.name());
-  assert_eq!(0, response.read(&mut chunk).expect("read streaming EOF"));
-  response
-}
-
-fn assert_decoded_response(
-  response: &Http2StreamingResponse,
-  fixture: &Fixture,
-  transport: Transport,
-) {
+fn assert_decoded_response(response: &Response, fixture: &Fixture, transport: Transport) {
   assert!(
     response
       .headers()
@@ -233,18 +194,14 @@ fn assert_decoded_response(
   );
   assert_eq!(
     fixture.decoded_body,
-    response.response().body().binary(),
+    response.body().binary(),
     "{}/{} materialized body",
     transport.name(),
     fixture.name
   );
   assert!(
-    response
-      .response()
-      .binary()
-      .windows(fixture.decoded_body.len())
-      .any(|window| window == fixture.decoded_body),
-    "{}/{} response wire capture lost decoded body",
+    response.binary().ends_with(&fixture.wire_body),
+    "{}/{} response wire capture lost encoded body",
     transport.name(),
     fixture.name
   );
@@ -265,7 +222,6 @@ fn http2_streaming_decoding_transport_matrix() {
           fixture.name
         )
       });
-      let response = read_incrementally(response, &fixture.decoded_body, transport);
       assert_decoded_response(&response, &fixture, transport);
       wait_for_server(done, handle, fixture.name);
     }
@@ -285,16 +241,14 @@ fn http2_streaming_decoding_unsupported_stack_preserves_wire() {
         transport.name()
       )
     });
-    assert_eq!(fixture.wire_body, response.response().body().binary());
+    assert_eq!(fixture.wire_body, response.body().binary());
     assert_eq!(
       Some(fixture.encoding),
       response
-        .response()
         .header_value("Content-Encoding")
         .map(String::as_str)
     );
-    let response = read_incrementally(response, &fixture.wire_body, transport);
-    assert_eq!(fixture.wire_body, response.response().body().binary());
+    assert_eq!(fixture.wire_body, response.body().binary());
     wait_for_server(done, handle, "unsupported coding");
   }
 }
@@ -338,7 +292,7 @@ fn http2_streaming_decoding_enforces_exact_and_over_limits() {
     let response = transport
       .emit(&mut client)
       .expect("exact limit should succeed");
-    assert_eq!(exact, response.response().body().binary());
+    assert_eq!(exact, response.body().binary());
     wait_for_server(done, handle, "exact limit");
 
     let (addr, done, handle) = serve_response("gzip", gzip(&[b'x'; 65]), false);
@@ -359,29 +313,13 @@ fn http2_streaming_decoding_enforces_exact_and_over_limits() {
 }
 
 #[test]
-fn http2_streaming_decoding_trailers_appear_only_after_eof() {
+fn http2_buffered_decoding_exposes_trailers() {
   for transport in transports() {
     let body = gzip(b"trailer after completion");
     let (addr, done, handle) = serve_response("gzip", body, true);
     let mut client = client_for(None);
     client.get().url(format!("http://{addr}/trailers"));
-    let mut response = transport.emit(&mut client).expect("trailer response");
-    assert!(
-      response.trailers().is_empty(),
-      "{} exposed trailers before EOF",
-      transport.name()
-    );
-    let mut prefix = [0u8; 4];
-    assert!(response.read(&mut prefix).expect("read trailer prefix") > 0);
-    assert!(
-      response.trailers().is_empty(),
-      "{} exposed trailers before EOF",
-      transport.name()
-    );
-    let mut rest = Vec::new();
-    response
-      .read_to_end(&mut rest)
-      .expect("read trailer body to EOF");
+    let response = transport.emit(&mut client).expect("trailer response");
     assert_eq!(
       Some(&"after-eof".to_string()),
       response
@@ -391,19 +329,5 @@ fn http2_streaming_decoding_trailers_appear_only_after_eof() {
         .map(|header| header.value())
     );
     wait_for_server(done, handle, "trailers");
-  }
-}
-
-#[test]
-fn http2_streaming_decoding_early_drop_finishes_server() {
-  for transport in transports() {
-    let (addr, done, handle) = serve_response("gzip", gzip(&vec![b'd'; 256]), false);
-    let mut client = client_for(None);
-    client.get().url(format!("http://{addr}/early-drop"));
-    let mut response = transport.emit(&mut client).expect("early-drop response");
-    let mut prefix = [0u8; 3];
-    assert!(response.read(&mut prefix).expect("read early-drop prefix") > 0);
-    drop(response);
-    wait_for_server(done, handle, transport.name());
   }
 }

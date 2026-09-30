@@ -2332,16 +2332,6 @@ impl HttpClient {
     Ok(response)
   }
 
-  /// Async counterpart of [`Self::emit_http2_prior_knowledge_streaming`].
-  #[cfg(all(feature = "async", feature = "http2"))]
-  pub async fn rasync_http2_prior_knowledge_streaming(
-    &mut self,
-  ) -> error::Result<crate::http2::Http2StreamingResponse> {
-    Ok(crate::http2::Http2StreamingResponse::new(
-      self.rasync_http2_prior_knowledge().await?,
-    ))
-  }
-
   #[cfg(feature = "http2")]
   pub fn emit_http2_prior_knowledge(&mut self) -> error::Result<Response> {
     if self.request.closed() {
@@ -2349,17 +2339,6 @@ impl HttpClient {
     }
     let request = RawRequest::block_new(&mut self.request)?;
     crate::http2::PriorKnowledgeClient::new(request).get()
-  }
-
-  /// Perform a bounded HTTP/2 h2c exchange and expose the completed body
-  /// through a pull-based reader. Supported content codings are decoded by
-  /// the h2 response path before the reader is returned.
-  #[cfg(feature = "http2")]
-  pub fn emit_http2_prior_knowledge_streaming(
-    &mut self,
-  ) -> error::Result<crate::http2::Http2StreamingResponse> {
-    let response = self.emit_http2_prior_knowledge()?;
-    Ok(crate::http2::Http2StreamingResponse::new(response))
   }
 
   /// Perform a buffered h2c upgrade exchange without blocking the async
@@ -2386,16 +2365,6 @@ impl HttpClient {
     Ok(response)
   }
 
-  /// Async counterpart of [`Self::emit_http2_upgrade_streaming`].
-  #[cfg(all(feature = "async", feature = "http2"))]
-  pub async fn rasync_http2_upgrade_streaming(
-    &mut self,
-  ) -> error::Result<crate::http2::Http2StreamingResponse> {
-    Ok(crate::http2::Http2StreamingResponse::new(
-      self.rasync_http2_upgrade().await?,
-    ))
-  }
-
   #[cfg(feature = "http2")]
   pub fn emit_http2_upgrade(&mut self) -> error::Result<Response> {
     if self.request.closed() {
@@ -2413,16 +2382,6 @@ impl HttpClient {
     }
     let request = RawRequest::block_new(&mut self.request)?;
     crate::http2::UpgradeClient::new(request).get()
-  }
-
-  /// Perform a bounded h2c upgrade exchange and expose the completed body
-  /// through the HTTP/2 streaming response reader.
-  #[cfg(feature = "http2")]
-  pub fn emit_http2_upgrade_streaming(
-    &mut self,
-  ) -> error::Result<crate::http2::Http2StreamingResponse> {
-    let response = self.emit_http2_upgrade()?;
-    Ok(crate::http2::Http2StreamingResponse::new(response))
   }
 
   pub fn emit_streaming_fixed<R>(
