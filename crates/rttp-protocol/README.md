@@ -1590,6 +1590,14 @@ duplicate metadata, Preference-Applied parameters, and bound violations are
 errors. The parser does not check whether a matching request preference was
 sent or apply any preference semantics.
 
+## X-DNS-Prefetch-Control
+
+`x_dns_prefetch_control` parses a singleton `X-DNS-Prefetch-Control` response
+field. Values are bounded to 64 KiB; duplicate fields, comma lists, controls,
+and unsupported tokens are rejected. `on` and `off` are matched
+case-insensitively and serialized in lowercase. Parsing metadata does not
+enable or disable DNS prefetching.
+
 ## X-Frame-Options
 
 `x_frame_options` parses a singleton `X-Frame-Options` response field. Each

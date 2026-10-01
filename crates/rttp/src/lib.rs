@@ -112,7 +112,8 @@ pub use rttp_client::response::{
   WantContentDigestEntry, WantContentDigestParseError, WantReprDigest, WantReprDigestEntry,
   WantReprDigestParseError, Warning, WarningParseError, WarningValue, WwwAuthenticate,
   WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XDnsPrefetchControl,
+  XDnsPrefetchControlParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::response::{
