@@ -4472,6 +4472,89 @@ fn prior_knowledge_server_ignores_reset_stream_blocked_on_response_flow_control(
 }
 
 #[test]
+fn h2c_upgrade_server_ignores_reset_stream_blocked_on_response_flow_control() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_millis(500)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        assert_eq!("HTTP/2", request.version());
+        match request.target() {
+          "/reset" => HttpResponse::ok("x".repeat(H2_DEFAULT_INITIAL_WINDOW_SIZE + 1024)),
+          "/second" => HttpResponse::ok("served second"),
+          target => panic!("unexpected request target {target}"),
+        }
+      })
+      .expect("serve h2c upgrade streams after reset")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2c upgrade server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2c_upgrade(&mut stream, &addr.to_string(), &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/reset", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush reset h2c upgrade request");
+
+  let reset_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, reset_headers.frame_type);
+  assert_eq!(3, reset_headers.stream_id);
+
+  let mut reset_body_len = 0;
+  while reset_body_len < H2_DEFAULT_INITIAL_WINDOW_SIZE {
+    let reset_body = read_h2_frame(&mut stream);
+    assert_eq!(H2_FRAME_DATA, reset_body.frame_type);
+    assert_eq!(3, reset_body.stream_id);
+    reset_body_len += reset_body.payload.len();
+  }
+  assert_eq!(H2_DEFAULT_INITIAL_WINDOW_SIZE, reset_body_len);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_RST_STREAM,
+    0,
+    3,
+    &H2_ERROR_CANCEL.to_be_bytes(),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_WINDOW_UPDATE,
+    0,
+    0,
+    &(H2_DEFAULT_INITIAL_WINDOW_SIZE as u32).to_be_bytes(),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    5,
+    &h2_get_headers(b"/second", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush second h2c upgrade request");
+
+  let second_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, second_headers.frame_type);
+  assert_eq!(5, second_headers.stream_id);
+  let second_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, second_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, second_body.flags);
+  assert_eq!(5, second_body.stream_id);
+  assert_eq!(b"served second", second_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn prior_knowledge_server_rejects_initial_settings_payload_with_invalid_length() {
   assert_malformed_settings_rejected_before_handler(&[0, 1, 0], 0, None);
 }
