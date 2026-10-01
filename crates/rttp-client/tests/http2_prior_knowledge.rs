@@ -612,6 +612,106 @@ fn http2_upgrade_rejects_goaway_before_opening_stream_three() {
 }
 
 #[test]
+fn http2_upgrade_get_continues_after_graceful_goaway_for_active_stream() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+    let request = String::from_utf8(read_http1_request_head(&mut stream)).expect("request utf8");
+    assert!(request.starts_with("GET /upgrade-graceful-goaway HTTP/1.1\r\n"));
+    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings\r\n"));
+    assert!(request.contains("\r\nUpgrade: h2c\r\n"));
+
+    stream
+      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+      .expect("write upgrade response");
+
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(3, request_headers.stream_id);
+
+    write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 3, 0, 0, 0, 0]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 3, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 3, b"still served");
+
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set read timeout");
+    let next_frame = try_read_frame(&mut stream).expect("check for replacement stream headers");
+    assert!(
+      next_frame.is_none(),
+      "client must not open replacement stream 5 after graceful GOAWAY"
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/upgrade-graceful-goaway", addr))
+    .emit_http2_upgrade()
+    .expect("graceful GOAWAY permits active upgraded stream response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("still served", response.body().string().unwrap());
+  handle
+    .join()
+    .expect("h2c upgrade graceful goaway peer thread");
+}
+
+#[test]
+fn http2_upgrade_get_rejects_goaway_when_active_stream_is_excluded() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+    let request = String::from_utf8(read_http1_request_head(&mut stream)).expect("request utf8");
+    assert!(request.starts_with("GET /upgrade-error-goaway HTTP/1.1\r\n"));
+    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings\r\n"));
+    assert!(request.contains("\r\nUpgrade: h2c\r\n"));
+
+    stream
+      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+      .expect("write upgrade response");
+
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(3, request_headers.stream_id);
+
+    write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 1, 0, 0, 0, 7]);
+
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set read timeout");
+    let next_frame = try_read_frame(&mut stream).expect("check for replacement stream headers");
+    assert!(
+      next_frame.is_none(),
+      "client must not open replacement stream 5 after excluding GOAWAY"
+    );
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/upgrade-error-goaway", addr))
+    .emit_http2_upgrade()
+    .expect_err("GOAWAY excluding active upgraded stream must fail the response");
+
+  assert!(
+    error
+      .to_string()
+      .contains("HTTP/2 connection received GOAWAY"),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("h2c upgrade error goaway peer thread");
+}
+
+#[test]
 fn http2_upgrade_post_sends_request_trailers_after_h2_data() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
   let addr = listener.local_addr().expect("h2c upgrade peer addr");
