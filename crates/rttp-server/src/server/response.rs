@@ -319,6 +319,10 @@ pub use rttp_protocol::x_content_type_options::{
   XContentTypeOptions as HttpXContentTypeOptions,
   XContentTypeOptionsParseError as HttpXContentTypeOptionsParseError,
 };
+pub use rttp_protocol::x_dns_prefetch_control::{
+  XDnsPrefetchControl as HttpXDnsPrefetchControl,
+  XDnsPrefetchControlParseError as HttpXDnsPrefetchControlParseError,
+};
 pub use rttp_protocol::x_frame_options::{
   XFrameOptions as HttpXFrameOptions, XFrameOptionsParseError as HttpXFrameOptionsParseError,
 };
@@ -1690,6 +1694,23 @@ impl HttpResponse {
     self.headers.push(HttpHeader::new(
       "X-Content-Type-Options",
       options.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `X-DNS-Prefetch-Control` response metadata
+  /// without applying DNS-prefetch behavior.
+  pub fn with_x_dns_prefetch_control(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpXDnsPrefetchControlParseError> {
+    let control = HttpXDnsPrefetchControl::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("X-DNS-Prefetch-Control"));
+    self.headers.push(HttpHeader::new(
+      "X-DNS-Prefetch-Control",
+      control.header_value(),
     ));
     Ok(self)
   }
@@ -3259,6 +3280,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpXContentTypeOptions::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `X-DNS-Prefetch-Control` response metadata without
+  /// applying DNS-prefetch behavior.
+  pub fn x_dns_prefetch_control(
+    &self,
+  ) -> Result<Option<HttpXDnsPrefetchControl>, HttpXDnsPrefetchControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-DNS-Prefetch-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXDnsPrefetchControl::parse_values(values).map(Some)
   }
 
   /// Parses attached `X-Frame-Options` response metadata without

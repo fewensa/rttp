@@ -101,6 +101,7 @@ use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::variant_vary::VariantVary;
 use rttp_protocol::vary::Vary;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
+use rttp_protocol::x_dns_prefetch_control::XDnsPrefetchControl;
 use rttp_protocol::x_frame_options::XFrameOptions;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
@@ -964,6 +965,18 @@ impl Response {
       return Ok(None);
     }
     XContentTypeOptions::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `X-DNS-Prefetch-Control` response metadata without
+  /// applying DNS-prefetch behavior.
+  pub fn x_dns_prefetch_control(&self) -> error::Result<Option<XDnsPrefetchControl>> {
+    let values = self.header_values("x-dns-prefetch-control");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    XDnsPrefetchControl::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

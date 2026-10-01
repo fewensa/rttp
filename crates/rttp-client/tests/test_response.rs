@@ -11,7 +11,8 @@ use rttp_client::response::{
   ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ScheduleTag,
   SecWebSocketAccept, SecWebSocketExtensions, SecWebSocketProtocol, SecWebSocketVersion,
   ServerTiming, ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
-  SupportsLoadingMode, Tcn, TcnDirective, Via, Warning, XContentTypeOptions, XFrameOptions,
+  SupportsLoadingMode, Tcn, TcnDirective, Via, Warning, XContentTypeOptions, XDnsPrefetchControl,
+  XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use rttp_client::DavClass;
@@ -641,6 +642,44 @@ fn strict_transport_security_metadata_is_absent_without_a_header() {
   let _: Option<StrictTransportSecurity> = response
     .strict_transport_security()
     .expect("header is absent");
+}
+
+#[test]
+fn x_dns_prefetch_control_metadata_parses_without_applying_policy() {
+  for (value, expected) in [
+    (" ON ", XDnsPrefetchControl::On),
+    ("oFf", XDnsPrefetchControl::Off),
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-DNS-Prefetch-Control: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should preserve metadata");
+    assert_eq!(
+      Some(expected),
+      response
+        .x_dns_prefetch_control()
+        .expect("X-DNS-Prefetch-Control should parse")
+    );
+  }
+
+  for value in ["unknown", "on, off", "\"on\""] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-DNS-Prefetch-Control: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should preserve malformed metadata");
+    assert!(response.x_dns_prefetch_control().is_err());
+  }
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nX-DNS-Prefetch-Control: on\r\nx-dns-prefetch-control: off\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should preserve duplicate metadata");
+  assert!(duplicate.x_dns_prefetch_control().is_err());
 }
 
 #[test]

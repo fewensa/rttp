@@ -116,6 +116,7 @@ use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
 use rttp_protocol::warning::Warning;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
+use rttp_protocol::x_dns_prefetch_control::{XDnsPrefetchControl, XDnsPrefetchControlParseError};
 use rttp_protocol::x_forwarded_for::{XForwardedFor, XForwardedForParseError};
 use rttp_protocol::x_forwarded_host::{XForwardedHost, XForwardedHostParseError};
 use rttp_protocol::x_forwarded_proto::{XForwardedProto, XForwardedProtoParseError};
@@ -297,6 +298,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("Signature-Input should parse");
   let x_content_type_options =
     XContentTypeOptions::parse("nosniff").expect("X-Content-Type-Options should parse");
+  let x_dns_prefetch_control =
+    XDnsPrefetchControl::parse("OFF").expect("X-DNS-Prefetch-Control should parse");
+  let _: XDnsPrefetchControlParseError = XDnsPrefetchControl::parse("unknown")
+    .expect_err("unknown X-DNS-Prefetch-Control should be rejected");
   let x_frame_options = XFrameOptions::parse("SAMEORIGIN").expect("X-Frame-Options should parse");
   let cross_origin_embedder_policy =
     CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
@@ -709,6 +714,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     r#"sig1=("@method" "@path");created=1618884473"#
   );
   assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_dns_prefetch_control, XDnsPrefetchControl::Off);
+  assert_eq!(x_dns_prefetch_control.header_value(), "off");
   assert_eq!(x_frame_options.header_value(), "SAMEORIGIN");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
   assert_eq!(

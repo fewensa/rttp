@@ -2631,6 +2631,74 @@ fn strict_transport_security_helpers_preserve_raw_metadata_and_report_parse_erro
 }
 
 #[test]
+fn x_dns_prefetch_control_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("X-DNS-Prefetch-Control", "on")
+    .header("x-dns-prefetch-control", "off")
+    .with_x_dns_prefetch_control("OFF")
+    .expect("X-DNS-Prefetch-Control should be accepted");
+
+  assert_eq!(
+    "off",
+    response
+      .x_dns_prefetch_control()
+      .expect("X-DNS-Prefetch-Control should parse")
+      .expect("X-DNS-Prefetch-Control should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("X-DNS-Prefetch-Control", "off")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn x_dns_prefetch_control_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("X-DNS-Prefetch-Control", " ON ");
+  assert_eq!(
+    "on",
+    raw
+      .x_dns_prefetch_control()
+      .expect("raw X-DNS-Prefetch-Control should parse")
+      .expect("X-DNS-Prefetch-Control should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some(" ON "),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("X-DNS-Prefetch-Control"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("X-DNS-Prefetch-Control", "unknown");
+  assert!(malformed.x_dns_prefetch_control().is_err());
+  assert!(HttpResponse::ok([])
+    .with_x_dns_prefetch_control("unknown")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .x_dns_prefetch_control()
+      .expect("absent X-DNS-Prefetch-Control should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("X-DNS-Prefetch-Control", "on")
+    .header("x-dns-prefetch-control", "off");
+  assert!(duplicate.x_dns_prefetch_control().is_err());
+
+  assert!(HttpResponse::ok([])
+    .with_x_dns_prefetch_control("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
 fn x_content_type_options_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("X-Content-Type-Options", "nosniff")

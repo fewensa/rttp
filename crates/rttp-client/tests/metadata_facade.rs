@@ -36,8 +36,8 @@ use rttp_client::response::{
   TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary,
   VariantVaryParseError, Vary, VaryParseError, Via, ViaParseError, WantContentDigest,
   WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter,
-  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
-  XFrameOptionsParseError,
+  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
+  XDnsPrefetchControl, XDnsPrefetchControlParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -70,6 +70,17 @@ fn client_facade_exports_from_metadata_types() {
   let from: From = From::parse("Ops Team <ops@example.test>").expect("From metadata should parse");
   assert_eq!("Ops Team <ops@example.test>", from.header_value());
   let _: FromParseError = From::parse("invalid").expect_err("invalid From should fail");
+}
+
+#[test]
+fn client_facade_exports_x_dns_prefetch_control_metadata_types() {
+  let on = XDnsPrefetchControl::parse("ON").expect("X-DNS-Prefetch-Control should parse");
+  let off = XDnsPrefetchControl::parse(" off ").expect("X-DNS-Prefetch-Control should parse");
+  assert_eq!(XDnsPrefetchControl::On, on);
+  assert_eq!(XDnsPrefetchControl::Off, off);
+  assert_eq!("on", on.header_value());
+  let _: XDnsPrefetchControlParseError =
+    XDnsPrefetchControl::parse("invalid").expect_err("invalid X-DNS-Prefetch-Control should fail");
 }
 
 #[test]
