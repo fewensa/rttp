@@ -136,13 +136,39 @@ fn fixtures() -> Vec<Fixture> {
   ]
 }
 
-fn unsupported_fixture() -> Fixture {
-  Fixture {
-    name: "unsupported-stack",
-    encoding: "gzip, br",
-    wire_body: gzip(b"bounded HTTP/2 streaming decoding"),
-    decoded_body: Vec::new(),
-  }
+fn unsupported_fixtures() -> Vec<Fixture> {
+  let wire_body = gzip(b"bounded HTTP/2 streaming decoding");
+  vec![
+    Fixture {
+      name: "unsupported-standalone",
+      encoding: "br",
+      wire_body: wire_body.clone(),
+      decoded_body: Vec::new(),
+    },
+    Fixture {
+      name: "unsupported-stack",
+      encoding: "gzip, br",
+      wire_body,
+      decoded_body: Vec::new(),
+    },
+  ]
+}
+
+fn preserved_fixtures() -> Vec<Fixture> {
+  vec![
+    Fixture {
+      name: "empty-gzip",
+      encoding: "gzip",
+      wire_body: Vec::new(),
+      decoded_body: Vec::new(),
+    },
+    Fixture {
+      name: "invalid-content-encoding",
+      encoding: "gzip,",
+      wire_body: gzip(b"bounded HTTP/2 streaming decoding"),
+      decoded_body: Vec::new(),
+    },
+  ]
 }
 
 fn serve_response(
@@ -337,58 +363,67 @@ fn http2_streaming_decoding_live_transport_matrix() {
 }
 
 #[test]
-fn http2_streaming_decoding_unsupported_stack_preserves_wire() {
-  let fixture = unsupported_fixture();
-  for transport in transports() {
-    let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
-    let mut client = client_for(None);
-    client.get().url(format!("http://{addr}/unsupported"));
-    let response = transport.emit(&mut client).unwrap_or_else(|error| {
-      panic!(
-        "{} should preserve unsupported coding: {error}",
-        transport.name()
-      )
-    });
-    assert_eq!(fixture.wire_body, response.body().binary());
-    assert_eq!(
-      Some(fixture.encoding),
-      response
-        .header_value("Content-Encoding")
-        .map(String::as_str)
-    );
-    assert_eq!(fixture.wire_body, response.body().binary());
-    wait_for_server(done, handle, "unsupported coding");
+fn http2_streaming_decoding_preserves_unsupported_and_invalid_wire() {
+  for fixture in unsupported_fixtures()
+    .into_iter()
+    .chain(preserved_fixtures())
+  {
+    for transport in transports() {
+      let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
+      let mut client = client_for(None);
+      client.get().url(format!("http://{addr}/{}", fixture.name));
+      let response = transport.emit(&mut client).unwrap_or_else(|error| {
+        panic!(
+          "{}/{} should preserve coding: {error}",
+          transport.name(),
+          fixture.name
+        )
+      });
+      assert_eq!(fixture.wire_body, response.body().binary());
+      assert_eq!(
+        Some(fixture.encoding),
+        response
+          .header_value("Content-Encoding")
+          .map(String::as_str)
+      );
+      wait_for_server(done, handle, fixture.name);
+    }
   }
 }
 
 #[test]
-fn http2_streaming_decoding_live_unsupported_stack_preserves_wire() {
-  let fixture = unsupported_fixture();
-  for transport in transports() {
-    let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
-    let mut client = client_for(None);
-    client.get().url(format!("http://{addr}/unsupported-live"));
-    let mut response = transport
-      .emit_streaming(&mut client)
-      .unwrap_or_else(|error| {
-        panic!(
-          "{} should preserve unsupported coding in streaming response: {error}",
-          transport.name()
-        )
-      });
-    assert_eq!(
-      Some(fixture.encoding),
-      response
-        .headers()
-        .iter()
-        .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"))
-        .map(|header| header.value().as_str())
-    );
-    assert_eq!(
-      fixture.wire_body,
-      read_streaming_body(&mut response).unwrap()
-    );
-    wait_for_server(done, handle, "unsupported coding live");
+fn http2_streaming_decoding_live_preserves_unsupported_and_invalid_wire() {
+  for fixture in unsupported_fixtures()
+    .into_iter()
+    .chain(preserved_fixtures())
+  {
+    for transport in transports() {
+      let (addr, done, handle) = serve_response(fixture.encoding, fixture.wire_body.clone(), false);
+      let mut client = client_for(None);
+      client.get().url(format!("http://{addr}/{}", fixture.name));
+      let mut response = transport
+        .emit_streaming(&mut client)
+        .unwrap_or_else(|error| {
+          panic!(
+            "{}/{} should preserve coding in streaming response: {error}",
+            transport.name(),
+            fixture.name
+          )
+        });
+      assert_eq!(
+        Some(fixture.encoding),
+        response
+          .headers()
+          .iter()
+          .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"))
+          .map(|header| header.value().as_str())
+      );
+      assert_eq!(
+        fixture.wire_body,
+        read_streaming_body(&mut response).unwrap()
+      );
+      wait_for_server(done, handle, fixture.name);
+    }
   }
 }
 
@@ -418,6 +453,12 @@ fn http2_streaming_decoding_malformed_streams_are_atomic() {
     let mut truncated = zlib(b"truncated");
     truncated.pop();
     assert_decode_failure(transport, truncated, "deflate", "truncated-deflate");
+    assert_decode_failure(
+      transport,
+      gzip(b"not-gzip"),
+      "gzip, gzip",
+      "malformed-inner-gzip",
+    );
   }
 }
 
@@ -439,11 +480,25 @@ fn assert_streaming_decode_failure(
         name
       )
     });
-  let error = read_streaming_body(&mut response).expect_err(&format!(
-    "{}/{} streaming response must fail decode",
+  let mut decoded = Vec::new();
+  let mut buffer = [0u8; 3];
+  let error = loop {
+    match response.read(&mut buffer) {
+      Ok(0) => panic!(
+        "{}/{} streaming response unexpectedly reached EOF",
+        transport.name(),
+        name
+      ),
+      Ok(read) => decoded.extend_from_slice(&buffer[..read]),
+      Err(error) => break error,
+    }
+  };
+  assert!(
+    decoded.is_empty(),
+    "{}/{} malformed inner stream exposed decoded bytes before failing",
     transport.name(),
     name
-  ));
+  );
   assert!(
     error
       .to_string()
@@ -463,6 +518,12 @@ fn http2_streaming_decoding_live_malformed_streams_are_atomic() {
     let mut truncated = zlib(b"truncated");
     truncated.pop();
     assert_streaming_decode_failure(transport, truncated, "deflate", "truncated-deflate");
+    assert_streaming_decode_failure(
+      transport,
+      gzip(b"not-gzip"),
+      "gzip, gzip",
+      "malformed-inner-gzip",
+    );
   }
 }
 
@@ -573,10 +634,21 @@ fn http2_streaming_decoding_exposes_trailers_after_eof() {
     let mut response = transport
       .emit_streaming(&mut client)
       .expect("streaming trailer response");
-    assert_eq!(
-      b"trailer after completion".to_vec(),
-      read_streaming_body(&mut response).expect("streaming trailer body")
+    assert!(
+      response.trailers().is_empty(),
+      "{}/streaming-trailers trailers visible before EOF",
+      transport.name()
     );
+    let mut prefix = [0u8; 3];
+    assert_eq!(
+      3,
+      response
+        .read(&mut prefix)
+        .expect("streaming trailer prefix")
+    );
+    let mut body = prefix.to_vec();
+    body.extend_from_slice(&read_streaming_body(&mut response).expect("streaming trailer body"));
+    assert_eq!(b"trailer after completion".to_vec(), body);
     let mut eof = [0u8; 1];
     assert_eq!(0, response.read(&mut eof).expect("streaming response EOF"));
     assert_eq!(
