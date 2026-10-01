@@ -70,6 +70,14 @@ fn transports() -> Vec<Transport> {
   ]
 }
 
+fn upgrade_transports() -> Vec<Transport> {
+  vec![
+    Transport::Upgrade,
+    #[cfg(feature = "async")]
+    Transport::UpgradeAsync,
+  ]
+}
+
 struct Fixture {
   name: &'static str,
   encoding: &'static str,
@@ -588,6 +596,60 @@ fn http2_streaming_decoding_exposes_trailers_after_eof() {
         .map(|header| header.value())
     );
     wait_for_server(done, handle, "streaming trailers");
+  }
+}
+
+#[test]
+fn http2_h2c_upgrade_streaming_decoder_regressions() {
+  let exact = b"h2c upgrade streaming body".to_vec();
+  for transport in upgrade_transports() {
+    let (addr, done, handle) = serve_response("gzip", gzip(&exact), true);
+    let mut client = client_for(Some(exact.len()));
+    client.get().url(format!("http://{addr}/upgrade-streaming"));
+    let mut response = transport
+      .emit_streaming(&mut client)
+      .unwrap_or_else(|error| panic!("{} upgrade response: {error}", transport.name()));
+    assert_eq!(
+      exact,
+      read_streaming_body(&mut response).expect("upgrade body")
+    );
+    let mut eof = [0u8; 1];
+    assert_eq!(0, response.read(&mut eof).expect("upgrade response EOF"));
+    assert_eq!(
+      Some(&"after-eof".to_string()),
+      response
+        .trailers()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("x-streaming-trailer"))
+        .map(|header| header.value())
+    );
+    wait_for_server(done, handle, "upgrade streaming body");
+
+    assert_streaming_decode_failure(
+      transport,
+      b"not-gzip".to_vec(),
+      "gzip",
+      "upgrade-malformed-gzip",
+    );
+
+    let (addr, done, handle) = serve_response("gzip", gzip(&[b'x'; 65]), false);
+    let mut client = client_for(Some(64));
+    client
+      .get()
+      .url(format!("http://{addr}/upgrade-over-limit"));
+    let mut response = transport
+      .emit_streaming(&mut client)
+      .expect("upgrade over-limit response");
+    let error = read_streaming_body(&mut response)
+      .expect_err("upgrade over-limit response should fail while reading");
+    let inner = error
+      .get_ref()
+      .and_then(|source| source.downcast_ref::<rttp_client::error::Error>())
+      .expect("upgrade limit error should preserve its typed cause");
+    assert!(inner.is_body_too_large());
+    assert_eq!(Some(64), inner.body_limit());
+    drop(response);
+    wait_for_server(done, handle, "upgrade over limit");
   }
 }
 
