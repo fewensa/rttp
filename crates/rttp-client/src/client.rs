@@ -195,15 +195,16 @@ impl HttpClient {
     self
   }
 
-  /// Use RFC 8441 extended CONNECT on the bounded prior-knowledge h2c path.
+  /// Use RFC 8441 extended CONNECT on a bounded h2c path.
   ///
-  /// This is only honored by `emit_http2_prior_knowledge` with the `http2`
-  /// feature enabled. The client opens a direct `socket2` h2c TCP connection,
-  /// advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`, emits `:method
-  /// CONNECT`, and includes the configured `:protocol` pseudo-header. Empty
-  /// bodies end the stream on request HEADERS; non-empty buffered bodies are
-  /// sent as DATA frames. It returns the peer's HTTP/2 response through the
-  /// normal `Response` API; it does not hand an upgraded socket to the caller.
+  /// This is honored by `emit_http2_prior_knowledge` and
+  /// `emit_http2_upgrade` with the `http2` feature enabled. The client opens a
+  /// bounded h2c TCP connection, advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL
+  /// = 1`, emits `:method CONNECT`, and includes the configured `:protocol`
+  /// pseudo-header. Empty bodies end the stream on request HEADERS; non-empty
+  /// buffered bodies are sent as DATA frames. It returns the peer's HTTP/2
+  /// response through the normal `Response` API; it does not hand an upgraded
+  /// socket to the caller.
   #[cfg(feature = "http2")]
   pub fn http2_extended_connect<S: AsRef<str>>(&mut self, protocol: S) -> &mut Self {
     self
@@ -2375,11 +2376,6 @@ impl HttpClient {
     if self.request.closed() {
       return Err(error::connection_closed());
     }
-    if self.request.http2_extended_connect_protocol().is_some() {
-      return Err(error::builder_with_message(
-        "HTTP/2 extended CONNECT is only supported by the prior-knowledge h2c client",
-      ));
-    }
     if self.request.proxy().is_some() {
       return Err(error::builder_with_message(
         "HTTP/2 h2c upgrade client does not support proxies",
@@ -2402,7 +2398,7 @@ impl HttpClient {
     }
     if self.request.http2_extended_connect_protocol().is_some() {
       return Err(error::builder_with_message(
-        "HTTP/2 extended CONNECT is only supported by the prior-knowledge h2c client",
+        "HTTP/2 extended CONNECT streaming is unsupported",
       ));
     }
     if self.request.proxy().is_some() {
@@ -2421,11 +2417,6 @@ impl HttpClient {
   pub fn emit_http2_upgrade(&mut self) -> error::Result<Response> {
     if self.request.closed() {
       return Err(error::connection_closed());
-    }
-    if self.request.http2_extended_connect_protocol().is_some() {
-      return Err(error::builder_with_message(
-        "HTTP/2 extended CONNECT is only supported by the prior-knowledge h2c client",
-      ));
     }
     if self.request.proxy().is_some() {
       return Err(error::builder_with_message(
@@ -2446,7 +2437,7 @@ impl HttpClient {
     }
     if self.request.http2_extended_connect_protocol().is_some() {
       return Err(error::builder_with_message(
-        "HTTP/2 extended CONNECT is only supported by the prior-knowledge h2c client",
+        "HTTP/2 extended CONNECT streaming is unsupported",
       ));
     }
     if self.request.proxy().is_some() {

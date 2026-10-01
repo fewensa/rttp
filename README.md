@@ -2039,8 +2039,9 @@ peers that do not advertise the setting keep the bounded direct-client default.
 It supports GET, HEAD, bodyless DELETE, OPTIONS, or TRACE,
 buffered POST, PUT, or PATCH requests, and the explicit
 `HttpClient::http2_extended_connect(protocol)` mode for bounded RFC 8441
-extended CONNECT request HEADERS. Non-empty buffered request bodies are sent as
-DATA frames for the write methods and for extended CONNECT. GET, HEAD, DELETE,
+extended CONNECT request HEADERS on either h2c entry point. Non-empty buffered
+request bodies are sent as DATA frames for the write methods and for extended
+CONNECT. GET, HEAD, DELETE,
 OPTIONS, and TRACE requests with bodies are rejected. Empty extended CONNECT
 bodies end the stream on HEADERS. HEAD, bodyless DELETE, OPTIONS, and TRACE
 requests do not send request DATA frames, and any HEAD response DATA frames are

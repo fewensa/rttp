@@ -4105,6 +4105,122 @@ fn cross_crate_h2c_extended_connect_matrix_preserves_http11_handoffs() {
   }
 
   let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind cross-crate h2c Upgrade extended CONNECT server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("cross-crate h2c Upgrade extended CONNECT addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.extended_connect_protocol().map(str::to_string),
+          request.body().to_vec(),
+        ))
+        .expect("send empty h2c Upgrade extended CONNECT");
+        HttpResponse::ok("cross-crate h2c Upgrade empty")
+      })
+      .expect("serve empty h2c Upgrade extended CONNECT")
+  });
+  let response = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{addr}/upgrade-chat"))
+    .emit_http2_upgrade()
+    .expect("cross-crate empty h2c Upgrade extended CONNECT response");
+  assert_eq!(200, response.code());
+  assert_eq!(
+    "cross-crate h2c Upgrade empty",
+    response.body().string().unwrap()
+  );
+  assert_eq!(
+    (Some("websocket".to_string()), Vec::new()),
+    rx.recv()
+      .expect("receive empty h2c Upgrade extended CONNECT")
+  );
+  handle
+    .join()
+    .expect("empty h2c Upgrade extended CONNECT server thread");
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind cross-crate h2c Upgrade body server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("cross-crate h2c Upgrade body addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.body().to_vec())
+          .expect("send h2c Upgrade extended CONNECT body");
+        HttpResponse::ok("cross-crate h2c Upgrade body")
+      })
+      .expect("serve h2c Upgrade extended CONNECT body")
+  });
+  let body = b"hello over h2c Upgrade extended CONNECT".to_vec();
+  let response = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{addr}/upgrade-chat"))
+    .raw(String::from_utf8(body.clone()).expect("body utf8"))
+    .emit_http2_upgrade()
+    .expect("cross-crate h2c Upgrade extended CONNECT body response");
+  assert_eq!(200, response.code());
+  assert_eq!(
+    "cross-crate h2c Upgrade body",
+    response.body().string().unwrap()
+  );
+  assert_eq!(
+    body,
+    rx.recv()
+      .expect("receive h2c Upgrade extended CONNECT body")
+  );
+  handle
+    .join()
+    .expect("h2c Upgrade extended CONNECT body server thread");
+
+  #[cfg(feature = "async")]
+  for body in [Vec::new(), b"async h2c Upgrade body".to_vec()] {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind async cross-crate h2c Upgrade server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server
+      .local_addr()
+      .expect("async cross-crate h2c Upgrade addr");
+    let (tx, rx) = mpsc::channel();
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send(request.body().to_vec())
+            .expect("send async h2c Upgrade extended CONNECT body");
+          HttpResponse::ok("async cross-crate h2c Upgrade")
+        })
+        .expect("serve async h2c Upgrade extended CONNECT")
+    });
+    let response = futures::executor::block_on(async {
+      let mut client = HttpClient::new();
+      client
+        .http2_extended_connect("websocket")
+        .url(format!("http://{addr}/async-upgrade-chat"))
+        .raw(String::from_utf8(body.clone()).expect("body utf8"));
+      client.rasync_http2_upgrade().await
+    })
+    .expect("async cross-crate h2c Upgrade extended CONNECT response");
+    assert_eq!(200, response.code());
+    assert_eq!(
+      "async cross-crate h2c Upgrade",
+      response.body().string().unwrap()
+    );
+    assert_eq!(body, rx.recv().expect("receive async h2c Upgrade body"));
+    handle
+      .join()
+      .expect("async h2c Upgrade extended CONNECT server thread");
+  }
+
+  let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind missing-connect-protocol server")
     .with_read_timeout(Some(Duration::from_secs(2)))
     .with_write_timeout(Some(Duration::from_secs(2)));
