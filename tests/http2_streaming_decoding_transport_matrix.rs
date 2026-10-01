@@ -70,6 +70,14 @@ fn transports() -> Vec<Transport> {
   ]
 }
 
+fn upgrade_transports() -> Vec<Transport> {
+  vec![
+    Transport::Upgrade,
+    #[cfg(feature = "async")]
+    Transport::UpgradeAsync,
+  ]
+}
+
 struct Fixture {
   name: &'static str,
   encoding: &'static str,
@@ -467,6 +475,18 @@ fn http2_streaming_decoding_live_malformed_streams_are_atomic() {
 }
 
 #[test]
+fn http2_streaming_decoding_upgrade_malformed_gzip_is_atomic() {
+  for transport in upgrade_transports() {
+    assert_streaming_decode_failure(
+      transport,
+      b"not-gzip".to_vec(),
+      "gzip",
+      "upgrade-malformed-gzip",
+    );
+  }
+}
+
+#[test]
 fn http2_streaming_decoding_enforces_exact_and_over_limits() {
   let exact = vec![b'x'; 64];
   for transport in transports() {
@@ -493,6 +513,34 @@ fn http2_streaming_decoding_enforces_exact_and_over_limits() {
     );
     assert_eq!(Some(exact.len()), error.body_limit());
     wait_for_server(done, handle, "over limit");
+  }
+}
+
+#[test]
+fn http2_streaming_decoding_upgrade_exact_limit_and_completion_trailer() {
+  let exact = vec![b'x'; 64];
+  for transport in upgrade_transports() {
+    let (addr, done, handle) = serve_response("gzip", gzip(&exact), true);
+    let mut client = client_for(Some(exact.len()));
+    client.get().url(format!("http://{addr}/upgrade-exact"));
+    let mut response = transport
+      .emit_streaming(&mut client)
+      .expect("upgrade streaming exact limit response");
+    assert_eq!(
+      exact,
+      read_streaming_body(&mut response).expect("upgrade exact limit body")
+    );
+    let mut eof = [0u8; 1];
+    assert_eq!(0, response.read(&mut eof).expect("upgrade response EOF"));
+    assert_eq!(
+      Some(&"after-eof".to_string()),
+      response
+        .trailers()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("x-streaming-trailer"))
+        .map(|header| header.value())
+    );
+    wait_for_server(done, handle, "upgrade exact limit and trailer");
   }
 }
 
