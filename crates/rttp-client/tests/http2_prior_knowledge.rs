@@ -252,6 +252,64 @@ fn prior_knowledge_client_rejects_malformed_ping_during_response() {
 }
 
 #[test]
+fn http2_upgrade_rejects_malformed_ping_frames() {
+  for (path, flags, stream_id, payload) in [
+    ("ping-stream", 0, 1, b"rttp-png".as_slice()),
+    ("ping-short", 0, 0, b"short".as_slice()),
+    ("ping-ack-short", FLAG_ACK, 0, b"short".as_slice()),
+  ] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+    let addr = listener.local_addr().expect("h2c upgrade peer addr");
+    let payload = payload.to_vec();
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+      let request = String::from_utf8(read_http1_request_head(&mut stream)).expect("request utf8");
+      assert!(request.starts_with(&format!("GET /{path} HTTP/1.1\r\n")));
+      assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings\r\n"));
+      assert!(request.contains("\r\nUpgrade: h2c\r\n"));
+
+      stream
+        .write_all(
+          b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n",
+        )
+        .expect("write upgrade response");
+
+      complete_h2_handshake_without_request(&mut stream);
+
+      let request_headers = read_frame(&mut stream);
+      assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+      assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+      assert_eq!(3, request_headers.stream_id);
+
+      write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+      write_frame(&mut stream, FRAME_PING, flags, stream_id, &payload);
+    });
+
+    let error = HttpClient::new()
+      .get()
+      .url(format!("http://{addr}/{path}"))
+      .emit_http2_upgrade()
+      .expect_err("malformed PING must reject before exposing a response");
+
+    assert!(
+      error.to_string().ends_with(": invalid HTTP/2 PING frame"),
+      "unexpected error: {error}"
+    );
+    assert!(
+      !error.is_builder(),
+      "protocol error must not be a builder error"
+    );
+    assert!(
+      !error.is_status(),
+      "protocol error must not be a status error"
+    );
+
+    handle.join().expect("h2c malformed ping peer thread");
+  }
+}
+
+#[test]
 fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
   let addr = listener.local_addr().expect("h2c upgrade peer addr");
