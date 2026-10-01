@@ -703,12 +703,12 @@ fn http2_upgrade_get_rejects_goaway_when_active_stream_is_excluded() {
     .expect_err("GOAWAY excluding active upgraded stream must fail the response");
 
   assert!(
-    error.to_string().contains("HTTP/2 connection received GOAWAY"),
+    error
+      .to_string()
+      .contains("HTTP/2 connection received GOAWAY"),
     "unexpected error: {error}"
   );
-  handle
-    .join()
-    .expect("h2c upgrade error goaway peer thread");
+  handle.join().expect("h2c upgrade error goaway peer thread");
 }
 
 #[test]
