@@ -994,16 +994,6 @@ impl<'a> UpgradeClient<'a> {
 
   pub fn get_streaming(mut self) -> error::Result<Http2StreamingResponse> {
     validate_bounded_h2c_request(&self.request, true)?;
-    if self
-      .request
-      .origin()
-      .http2_extended_connect_protocol()
-      .is_some()
-    {
-      return Err(error::builder_with_message(
-        "HTTP/2 extended CONNECT streaming is unsupported",
-      ));
-    }
     if self.request.origin().proxy().is_some() {
       return Err(error::builder_with_message(
         "HTTP/2 h2c upgrade client does not support proxies",
@@ -1014,7 +1004,14 @@ impl<'a> UpgradeClient<'a> {
     if url.scheme() != "http" {
       return Err(error::url_bad_scheme(url));
     }
-    let local_settings = LocalSettings::from_config(self.request.origin().config(), false)?;
+    let local_settings = LocalSettings::from_config(
+      self.request.origin().config(),
+      self
+        .request
+        .origin()
+        .http2_extended_connect_protocol()
+        .is_some(),
+    )?;
     let mut stream = connect_tcp_stream(addr(&url)?, self.request.origin().config())?;
     write_h2c_upgrade_request(&mut stream, &self.request, local_settings)?;
     read_h2c_upgrade_response(&mut stream)?;

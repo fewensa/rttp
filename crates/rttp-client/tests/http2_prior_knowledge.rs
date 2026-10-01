@@ -1439,30 +1439,53 @@ fn extended_connect_rejects_empty_protocol_before_connecting() {
 }
 
 #[test]
-fn extended_connect_rejects_h2c_upgrade_path_before_connecting() {
+fn extended_connect_sends_buffered_request_body_over_h2c_upgrade() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
-  listener
-    .set_nonblocking(true)
-    .expect("set listener nonblocking");
   let addr = listener.local_addr().expect("h2 peer addr");
-
-  let err = HttpClient::new()
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 upgrade client");
+    let request = read_http1_request_head(&mut stream);
+    assert!(request.starts_with(b"POST /chat HTTP/1.1\r\n"));
+    assert!(!request.windows(4).any(|window| window == b"body"));
+    stream
+      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+      .expect("write upgrade response");
+    complete_h2_handshake_without_request(&mut stream);
+    let headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, headers.flags);
+    assert_eq!(3, headers.stream_id);
+    assert_eq!(
+      b"CONNECT",
+      find_header_value(&headers.payload, b":method")
+        .unwrap()
+        .value
+        .as_slice()
+    );
+    assert_eq!(
+      b"websocket",
+      find_header_value(&headers.payload, b":protocol")
+        .unwrap()
+        .value
+        .as_slice()
+    );
+    let body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, body.frame_type);
+    assert_eq!(FLAG_END_STREAM, body.flags);
+    assert_eq!(3, body.stream_id);
+    assert_eq!(b"body", body.payload.as_slice());
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 3, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 3, b"response");
+  });
+  let response = HttpClient::new()
     .http2_extended_connect("websocket")
+    .post()
     .url(format!("http://{}/chat", addr))
+    .raw("body")
     .emit_http2_upgrade()
-    .expect_err("extended CONNECT over h2c upgrade must be rejected");
-
-  assert!(err.is_builder());
-  assert!(
-    err
-      .to_string()
-      .contains("HTTP/2 extended CONNECT is only supported by the prior-knowledge h2c client"),
-    "unexpected error: {err}"
-  );
-  assert!(
-    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
-    "extended CONNECT over h2c upgrade must not open a server connection"
-  );
+    .expect("extended CONNECT over h2c upgrade");
+  assert_eq!("response", response.body().string().unwrap());
+  handle.join().expect("h2 upgrade peer thread");
 }
 
 #[test]
