@@ -1898,6 +1898,9 @@ mod tests {
         "HTTP/1.1\u{000c}200 Connection Established\r\n\r\n",
         "HTTP/1.1\u{00a0}200 Connection Established\r\n\r\n",
         "HTTP/1.1\u{2003}200 Connection Established\r\n\r\n",
+        "HTTP/1.1 200 Connection\tEstablished\r\n\r\n",
+        "HTTP/1.1 200 Connection\u{00a0}Established\r\n\r\n",
+        "HTTP/1.1 200 Connection\u{2003}Established\r\n\r\n",
         "HTTP/1.1200 Connection Established\r\n\r\n",
         "HTTP/1.1-200 Connection Established\r\n\r\n",
       ] {
