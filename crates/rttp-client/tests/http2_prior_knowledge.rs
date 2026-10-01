@@ -1439,30 +1439,56 @@ fn extended_connect_rejects_empty_protocol_before_connecting() {
 }
 
 #[test]
-fn extended_connect_rejects_h2c_upgrade_path_before_connecting() {
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
-  listener
-    .set_nonblocking(true)
-    .expect("set listener nonblocking");
-  let addr = listener.local_addr().expect("h2 peer addr");
+fn extended_connect_h2c_upgrade_sends_empty_request_body_on_headers() {
+  let (addr, handle) = spawn_h2c_upgrade_extended_connect_peer(Vec::new());
 
-  let err = HttpClient::new()
+  let response = HttpClient::new()
     .http2_extended_connect("websocket")
-    .url(format!("http://{}/chat", addr))
+    .url(format!("http://{addr}/chat"))
     .emit_http2_upgrade()
-    .expect_err("extended CONNECT over h2c upgrade must be rejected");
+    .expect("empty extended CONNECT over h2c upgrade");
 
-  assert!(err.is_builder());
-  assert!(
-    err
-      .to_string()
-      .contains("HTTP/2 extended CONNECT is only supported by the prior-knowledge h2c client"),
-    "unexpected error: {err}"
-  );
-  assert!(
-    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
-    "extended CONNECT over h2c upgrade must not open a server connection"
-  );
+  assert_eq!(200, response.code());
+  assert_eq!("upgrade connected", response.body().string().unwrap());
+  assert!(handle.join().expect("h2c upgrade peer thread").is_empty());
+}
+
+#[test]
+fn extended_connect_h2c_upgrade_sends_fragmented_request_body() {
+  let body = "x".repeat(16 * 1024 + 7).into_bytes();
+  let (addr, handle) = spawn_h2c_upgrade_extended_connect_peer(body.clone());
+
+  let response = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{addr}/chat"))
+    .raw(String::from_utf8(body.clone()).expect("body utf8"))
+    .emit_http2_upgrade()
+    .expect("non-empty extended CONNECT over h2c upgrade");
+
+  assert_eq!(200, response.code());
+  assert_eq!("upgrade connected", response.body().string().unwrap());
+  assert_eq!(body, handle.join().expect("h2c upgrade peer thread"));
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn extended_connect_h2c_upgrade_async_preserves_empty_and_fragmented_bodies() {
+  for body in [Vec::new(), "y".repeat(16 * 1024 + 7).into_bytes()] {
+    let (addr, handle) = spawn_h2c_upgrade_extended_connect_peer(body.clone());
+    let response = futures::executor::block_on(async {
+      let mut client = HttpClient::new();
+      client
+        .http2_extended_connect("websocket")
+        .url(format!("http://{addr}/chat"))
+        .raw(String::from_utf8(body.clone()).expect("body utf8"));
+      client.rasync_http2_upgrade().await
+    })
+    .expect("async extended CONNECT over h2c upgrade");
+
+    assert_eq!(200, response.code());
+    assert_eq!("upgrade connected", response.body().string().unwrap());
+    assert_eq!(body, handle.join().expect("async h2c upgrade peer thread"));
+  }
 }
 
 #[test]
@@ -7001,6 +7027,85 @@ fn read_http1_request_head(stream: &mut impl Read) -> Vec<u8> {
     request.push(byte[0]);
   }
   request
+}
+
+fn spawn_h2c_upgrade_extended_connect_peer(
+  expected_body: Vec<u8>,
+) -> (SocketAddr, thread::JoinHandle<Vec<u8>>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+    let request = String::from_utf8(read_http1_request_head(&mut stream)).expect("request utf8");
+    assert!(request.starts_with("GET /chat HTTP/1.1\r\n"));
+    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings\r\n"));
+    assert!(request.contains("\r\nUpgrade: h2c\r\n"));
+    assert!(!request.contains("\r\nContent-Length:"));
+    let settings = base64::engine::general_purpose::URL_SAFE_NO_PAD
+      .decode(header_value(&request, "HTTP2-Settings").expect("HTTP2-Settings header"))
+      .expect("decode HTTP2-Settings");
+    assert_eq!(
+      Some(1),
+      h2_setting_value(&settings, SETTING_ENABLE_CONNECT_PROTOCOL)
+    );
+
+    stream
+      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+      .expect("write upgrade response");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(3, request_headers.stream_id);
+    assert_eq!(
+      b"CONNECT",
+      find_header_value(&request_headers.payload, b":method")
+        .expect("request method")
+        .value
+        .as_slice()
+    );
+    assert_eq!(
+      b"websocket",
+      find_header_value(&request_headers.payload, b":protocol")
+        .expect("request protocol")
+        .value
+        .as_slice()
+    );
+
+    let mut received_body = Vec::new();
+    if expected_body.is_empty() {
+      assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+    } else {
+      assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+      let mut data_frame_count = 0;
+      loop {
+        let frame = read_frame(&mut stream);
+        assert_eq!(FRAME_DATA, frame.frame_type);
+        assert_eq!(3, frame.stream_id);
+        data_frame_count += 1;
+        received_body.extend_from_slice(&frame.payload);
+        if frame.flags & FLAG_END_STREAM != 0 {
+          break;
+        }
+      }
+      assert!(data_frame_count >= 2, "request body should be fragmented");
+      assert_eq!(expected_body, received_body);
+    }
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 3, &[0x88]);
+    write_frame(
+      &mut stream,
+      FRAME_DATA,
+      FLAG_END_STREAM,
+      3,
+      b"upgrade connected",
+    );
+    received_body
+  });
+
+  (addr, handle)
 }
 
 fn header_value<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
