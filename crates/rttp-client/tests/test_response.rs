@@ -683,6 +683,22 @@ fn x_dns_prefetch_control_metadata_parses_without_applying_policy() {
 }
 
 #[test]
+fn x_dns_prefetch_control_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    None,
+    response
+      .x_dns_prefetch_control()
+      .expect("absent X-DNS-Prefetch-Control should parse")
+  );
+}
+
+#[test]
 fn x_content_type_options_metadata_parses_nosniff_without_applying_policy() {
   for value in ["nosniff", "NoSniff"] {
     let response = Response::new(
