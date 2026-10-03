@@ -683,6 +683,25 @@ fn x_dns_prefetch_control_metadata_parses_without_applying_policy() {
 }
 
 #[test]
+fn x_dns_prefetch_control_metadata_rejects_identical_duplicate_fields() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nX-DNS-Prefetch-Control: on\r\nx-dns-prefetch-control: on\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should preserve duplicate metadata");
+
+  assert_eq!(
+    vec!["on", "on"],
+    response
+      .header_values("x-dns-prefetch-control")
+      .into_iter()
+      .map(String::as_str)
+      .collect::<Vec<_>>()
+  );
+  assert!(response.x_dns_prefetch_control().is_err());
+}
+
+#[test]
 fn x_dns_prefetch_control_metadata_is_absent_without_a_header() {
   let response = Response::new(
     RoUrl::with("https://example.test"),
