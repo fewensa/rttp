@@ -17,6 +17,7 @@ use rttp_client::response::{
 use rttp_client::types::{Cookie, RoUrl};
 use rttp_client::DavClass;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::x_dns_prefetch_control::MAX_X_DNS_PREFETCH_CONTROL_VALUE_BYTES;
 use std::io::Write;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -698,6 +699,19 @@ fn x_dns_prefetch_control_metadata_rejects_identical_duplicate_fields() {
       .map(String::as_str)
       .collect::<Vec<_>>()
   );
+  assert!(response.x_dns_prefetch_control().is_err());
+}
+
+#[test]
+fn x_dns_prefetch_control_metadata_rejects_oversized_values() {
+  let oversized = "x".repeat(MAX_X_DNS_PREFETCH_CONTROL_VALUE_BYTES + 1);
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nX-DNS-Prefetch-Control: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should preserve oversized metadata");
+
   assert!(response.x_dns_prefetch_control().is_err());
 }
 
